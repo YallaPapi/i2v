@@ -52,7 +52,7 @@ def insert_cache(db: Session, local_path: str, file_hash: str, fal_url: str) -> 
 
 async def upload_to_fal(file_path: Path) -> str:
     """Upload file to Fal CDN using REST API."""
-    url = "https://fal.ai/api/storage/upload"
+    url = "https://fal.run/api/storage/upload/initiate"
 
     with open(file_path, "rb") as f:
         file_content = f.read()

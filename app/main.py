@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 from typing import Optional, List
 import structlog
+import tempfile
+from pathlib import Path
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,7 @@ from app.schemas import (
     ImageJobCreate, ImageJobResponse, ImageModelsResponse
 )
 from app.image_client import list_image_models
+from app.fal_upload import upload_image, SUPPORTED_FORMATS
 
 logger = structlog.get_logger()
 
@@ -171,3 +174,34 @@ async def list_image_jobs(
 
     jobs = query.order_by(ImageJob.created_at.desc()).offset(offset).limit(limit).all()
     return jobs
+
+
+# ============== Upload Endpoints ==============
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload an image file to Fal CDN and return the URL."""
+    # Validate file extension
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format. Supported: {SUPPORTED_FORMATS}"
+        )
+
+    # Save to temp file and upload
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        fal_url = await upload_image(tmp_path)
+        tmp_path.unlink()  # Clean up temp file
+
+        logger.info("File uploaded", filename=file.filename, url=fal_url[:60])
+        return {"url": fal_url, "filename": file.filename}
+
+    except Exception as e:
+        logger.error("Upload failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
