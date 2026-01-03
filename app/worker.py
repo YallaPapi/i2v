@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import re
 import signal
 import sys
 from pathlib import Path
@@ -13,8 +15,45 @@ from app.fal_client import submit_job, get_job_result, FalAPIError
 
 logger = structlog.get_logger()
 
+# Model short codes (2 letters capitalized)
+MODEL_CODES = {
+    "wan": "WA",
+    "wan21": "W1",
+    "wan22": "W2",
+    "wan-pro": "WP",
+    "kling": "KL",
+    "veo2": "V2",
+    "veo31": "V3",
+    "veo31-fast": "VF",
+    "veo31-flf": "VL",
+    "veo31-fast-flf": "VX",
+}
 
-async def download_video(job_id: int, model: str, video_url: str) -> str | None:
+
+def slugify_prompt(prompt: str, max_words: int = 5) -> str:
+    """Convert prompt to filename-safe slug with first N words."""
+    # Lowercase and keep only alphanumeric and spaces
+    clean = re.sub(r'[^a-zA-Z0-9\s]', '', prompt.lower())
+    # Split into words and take first N
+    words = clean.split()[:max_words]
+    # Join with hyphens
+    return '-'.join(words) if words else 'no-prompt'
+
+
+def append_to_csv(job_id: int, model: str, resolution: str, prompt: str, filename: str):
+    """Append job info to downloads index CSV."""
+    csv_path = Path(settings.auto_download_dir) / "index.csv"
+    file_exists = csv_path.exists()
+
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["id", "model", "resolution", "filename", "prompt"])
+        writer.writerow([job_id, model, resolution, filename, prompt])
+
+
+async def download_video(job_id: int, model: str, video_url: str,
+                         prompt: str = "", resolution: str = "") -> str | None:
     """Download a completed video to the auto-download directory.
 
     Returns the local file path if successful, None otherwise.
@@ -25,7 +64,10 @@ async def download_video(job_id: int, model: str, video_url: str) -> str | None:
     download_dir = Path(settings.auto_download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"job_{job_id}_{model}.mp4"
+    # Build filename: job_{id}_{MODEL_CODE}_{prompt_slug}.mp4
+    model_code = MODEL_CODES.get(model, model[:2].upper())
+    prompt_slug = slugify_prompt(prompt)
+    filename = f"job_{job_id}_{model_code}_{prompt_slug}.mp4"
     output_path = download_dir / filename
 
     # Skip if already downloaded
@@ -41,6 +83,10 @@ async def download_video(job_id: int, model: str, video_url: str) -> str | None:
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         f.write(chunk)
         logger.info("Video downloaded", job_id=job_id, path=str(output_path))
+
+        # Append to CSV index
+        append_to_csv(job_id, model, resolution, prompt, filename)
+
         return str(output_path)
     except Exception as e:
         logger.error("Failed to download video", job_id=job_id, error=str(e))
@@ -171,7 +217,13 @@ async def poll_submitted_jobs():
                 logger.info("Job completed", job_id=job.id, video_url=job.wan_video_url)
                 # Auto-download if enabled
                 if settings.auto_download_dir:
-                    local_path = await download_video(job.id, job.model or "wan", result["video_url"])
+                    local_path = await download_video(
+                        job.id,
+                        job.model or "wan",
+                        result["video_url"],
+                        prompt=job.motion_prompt or "",
+                        resolution=job.resolution or ""
+                    )
                     if local_path:
                         job.local_video_path = local_path
 
