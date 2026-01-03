@@ -8,8 +8,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db, init_db
-from app.models import Job
-from app.schemas import JobCreate, JobResponse, HealthResponse
+from app.models import Job, ImageJob
+from app.schemas import (
+    JobCreate, JobResponse, HealthResponse,
+    ImageJobCreate, ImageJobResponse, ImageModelsResponse
+)
+from app.image_client import list_image_models
 
 logger = structlog.get_logger()
 
@@ -31,8 +35,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="i2v - Image to Video Service",
-    description="Backend service for Wan 2.5 image-to-video generation via Fal API",
-    version="1.0.0",
+    description="Backend service for AI image-to-video and image generation via Fal API. Supports Wan, Kling, Veo, Sora models for video and GPT-Image, Kling, Nano-Banana, Flux models for images.",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -58,6 +62,7 @@ async def create_job(job_data: JobCreate, db: Session = Depends(get_db)):
     job = Job(
         image_url=job_data.image_url,
         motion_prompt=job_data.motion_prompt,
+        negative_prompt=job_data.negative_prompt,
         resolution=job_data.resolution,
         duration_sec=job_data.duration_sec,
         model=job_data.model,
@@ -100,4 +105,69 @@ async def list_jobs(
         query = query.filter(Job.wan_status == status)
 
     jobs = query.order_by(Job.created_at.desc()).offset(offset).limit(limit).all()
+    return jobs
+
+
+# ============== Image Generation Endpoints ==============
+
+@app.get("/images/models", response_model=ImageModelsResponse)
+async def get_image_models():
+    """List available image generation models with pricing."""
+    return {"models": list_image_models()}
+
+
+@app.post("/images", response_model=ImageJobResponse, status_code=201)
+async def create_image_job(job_data: ImageJobCreate, db: Session = Depends(get_db)):
+    """Create a new image generation job."""
+    job = ImageJob(
+        source_image_url=job_data.source_image_url,
+        prompt=job_data.prompt,
+        negative_prompt=job_data.negative_prompt,
+        model=job_data.model,
+        aspect_ratio=job_data.aspect_ratio,
+        quality=job_data.quality,
+        num_images=job_data.num_images,
+        status="pending",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    logger.info("Image job created", job_id=job.id, model=job.model, status=job.status)
+    return job
+
+
+@app.get("/images/{job_id}", response_model=ImageJobResponse)
+async def get_image_job(job_id: int, db: Session = Depends(get_db)):
+    """Get a specific image job by ID."""
+    job = db.query(ImageJob).filter(ImageJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Image job not found")
+    return job
+
+
+@app.get("/images", response_model=List[ImageJobResponse])
+async def list_image_jobs(
+    status: Optional[str] = Query(None, description="Filter by status"),
+    model: Optional[str] = Query(None, description="Filter by model"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """List all image jobs with optional filtering and pagination."""
+    query = db.query(ImageJob)
+
+    if status:
+        valid_statuses = ["pending", "submitted", "running", "completed", "failed"]
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Must be one of: {valid_statuses}"
+            )
+        query = query.filter(ImageJob.status == status)
+
+    if model:
+        query = query.filter(ImageJob.model == model)
+
+    jobs = query.order_by(ImageJob.created_at.desc()).offset(offset).limit(limit).all()
     return jobs

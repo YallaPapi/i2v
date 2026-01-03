@@ -31,11 +31,21 @@ MODELS = {
         "status_url": "https://queue.fal.run/fal-ai/wan-pro",
         "pricing": "1080p=$0.16/s (~$0.80/5s)",
     },
-    # Kling model
+    # Kling models
     "kling": {
         "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/kling-video",
         "pricing": "$0.35/5s + $0.07/extra sec",
+    },
+    "kling-master": {
+        "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.1/master/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/kling-video",
+        "pricing": "$1.40/5s + $0.28/extra sec (highest quality)",
+    },
+    "kling-standard": {
+        "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.1/standard/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/kling-video",
+        "pricing": "$0.25/5s + $0.05/extra sec (budget)",
     },
     # Veo models (Google)
     "veo2": {
@@ -66,9 +76,23 @@ MODELS = {
         "pricing": "$0.10/s (no audio), $0.15/s (audio)",
         "first_last_frame": True,
     },
+    # Sora 2 models (OpenAI)
+    "sora-2": {
+        "submit_url": "https://queue.fal.run/fal-ai/sora-2/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/sora-2",
+        "pricing": "$0.10/s (720p only, 4/8/12s)",
+    },
+    "sora-2-pro": {
+        "submit_url": "https://queue.fal.run/fal-ai/sora-2/image-to-video/pro",
+        "status_url": "https://queue.fal.run/fal-ai/sora-2",
+        "pricing": "$0.30/s (720p), $0.50/s (1080p) - 4/8/12s",
+    },
 }
 
-ModelType = Literal["wan", "wan21", "wan22", "wan-pro", "kling", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf"]
+ModelType = Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"]
+
+# Default negative prompt - used when none specified
+DEFAULT_NEGATIVE_PROMPT = "low resolution, error, worst quality, low quality, artifacts, horizontal video, landscape"
 
 
 class FalAPIError(Exception):
@@ -84,28 +108,32 @@ def _get_headers() -> dict:
     }
 
 
-def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str, duration_sec: int) -> dict:
+def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str,
+                   duration_sec: int, negative_prompt: str | None = None) -> dict:
     """Build request payload based on model type."""
+    # Use default negative prompt if none specified
+    neg_prompt = negative_prompt if negative_prompt is not None else DEFAULT_NEGATIVE_PROMPT
+
     # Wan models (wan, wan21, wan22, wan-pro)
     if model in ("wan", "wan21", "wan22", "wan-pro"):
         return {
             "prompt": prompt,
             "image_url": image_url,
             "resolution": resolution,
+            "aspect_ratio": "9:16",
             "duration": str(duration_sec),
-            "negative_prompt": "low resolution, error, worst quality, low quality, artifacts",
+            "negative_prompt": neg_prompt,
             "enable_prompt_expansion": True,
             "enable_safety_checker": True,
         }
-    # Kling model
-    elif model == "kling":
-        aspect_map = {"480p": "9:16", "720p": "9:16", "1080p": "9:16"}
+    # Kling models (all variants)
+    elif model in ("kling", "kling-master", "kling-standard"):
         return {
             "prompt": prompt,
             "image_url": image_url,
             "duration": str(duration_sec),
-            "aspect_ratio": aspect_map.get(resolution, "9:16"),
-            "negative_prompt": "low resolution, error, worst quality, low quality, artifacts",
+            "aspect_ratio": "9:16",
+            "negative_prompt": neg_prompt,
         }
     # Veo2 model
     elif model == "veo2":
@@ -137,6 +165,20 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
             "aspect_ratio": "9:16",
             "enable_audio": False,
         }
+    # Sora 2 models (OpenAI)
+    elif model in ("sora-2", "sora-2-pro"):
+        # Sora supports 4, 8, 12 seconds
+        duration_map = {5: 4, 10: 8}
+        sora_duration = duration_map.get(duration_sec, 4)
+        # Resolution: sora-2 = 720p only, sora-2-pro = 720p or 1080p
+        sora_resolution = "1080p" if model == "sora-2-pro" and resolution == "1080p" else "720p"
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": sora_duration,
+            "resolution": sora_resolution,
+            "aspect_ratio": "9:16",
+        }
     else:
         raise ValueError(f"Unknown model: {model}")
 
@@ -152,6 +194,7 @@ async def submit_job(
     motion_prompt: str,
     resolution: str,
     duration_sec: int,
+    negative_prompt: str | None = None,
 ) -> str:
     """
     Submit a job to Fal's queue.
@@ -162,7 +205,7 @@ async def submit_job(
         raise ValueError(f"Unknown model: {model}")
 
     config = MODELS[model]
-    payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec)
+    payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec, negative_prompt)
 
     logger.debug("Submitting job to Fal", model=model, image_url=image_url, resolution=resolution)
 

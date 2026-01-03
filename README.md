@@ -1,14 +1,15 @@
-# i2v - Image to Video Generation Service
+# i2v - Image to Video & Image Generation Service
 
-Backend service for AI image-to-video generation using Fal.ai (Wan 2.5 & Kling 2.5 Turbo).
+Backend service for AI-powered image-to-video and image generation using Fal.ai.
 
 ## Features
 
-- **Multi-model support**: Wan 2.5 and Kling 2.5 Turbo
-- **Local image upload**: Upload from local folders to Fal CDN (avoids rate limiting)
+- **Multi-model video generation**: Wan, Kling, Veo (Google), Sora (OpenAI)
+- **Multi-model image generation**: GPT-Image, Kling, Nano-Banana, Flux
+- **Local image upload**: Upload from local folders to Fal CDN
 - **Upload caching**: SHA256 deduplication prevents re-uploading same images
-- **Auto-download**: Completed videos automatically saved to local folder
-- **Bulk generation**: Process entire folders of images with multiple prompts
+- **Auto-download**: Completed videos/images automatically saved locally
+- **Bulk generation**: Process entire folders with multiple prompts
 - **REST API**: Full job management via FastAPI
 
 ## Quick Start
@@ -45,38 +46,12 @@ DEFAULT_RESOLUTION=1080p
 DEFAULT_DURATION_SEC=5
 ```
 
-## Bulk Generation (Local Images)
+## Video Generation
 
-Generate videos from a folder of images:
+### API Endpoints
 
 ```bash
-# All combinations (3 images x 4 prompts = 12 videos)
-python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --model wan
-
-# One-to-one pairing (3 images + 3 prompts = 3 videos)
-python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --one-to-one
-
-# Dry run (preview without submitting)
-python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --dry-run
-
-# With specific settings
-python scripts/bulk_generate.py prompts.txt --images-dir ./my_images \
-  --model kling --resolution 480p --duration 5
-```
-
-Prompts file format (separate prompts with `---` or blank lines):
-```
-Camera slowly zooms in on the subject
----
-The subject turns and smiles
----
-Gentle breeze moves through the scene
-```
-
-## API Endpoints
-
-### Create a Job
-```bash
+# Create a video job
 curl -X POST http://localhost:8000/jobs \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,37 +59,19 @@ curl -X POST http://localhost:8000/jobs \
     "motion_prompt": "Camera slowly zooms in",
     "resolution": "1080p",
     "duration_sec": 5,
-    "model": "wan"
+    "model": "kling"
   }'
-```
 
-### Get Job Status
-```bash
+# Get job status
 curl http://localhost:8000/jobs/1
+
+# List jobs (with optional filters)
+curl "http://localhost:8000/jobs?status=completed&limit=10"
 ```
 
-### List Jobs
-```bash
-# All jobs
-curl http://localhost:8000/jobs
+### Video Models & Pricing
 
-# Filter by status
-curl "http://localhost:8000/jobs?status=completed"
-
-# Pagination
-curl "http://localhost:8000/jobs?limit=10&offset=0"
-```
-
-### Health Check
-```bash
-curl http://localhost:8000/health
-```
-
-## Models & Pricing
-
-Run `python scripts/bulk_generate.py --list-models` for pricing summary.
-
-### Wan Models
+#### Wan Models
 
 | Model | Resolution | Per Second | 5s Video | 10s Video |
 |-------|------------|------------|----------|-----------|
@@ -128,44 +85,133 @@ Run `python scripts/bulk_generate.py --list-models` for pricing summary.
 | `wan22` | 720p | $0.08 | $0.40 | $0.80 |
 | `wan-pro` | 1080p | $0.16 | $0.80 | $1.60 |
 
-### Kling Model
+#### Kling Models
 
-| Model | Duration | Cost |
-|-------|----------|------|
-| `kling` | 5s | $0.35 |
-| `kling` | 10s | $0.70 |
-| `kling` | 15s | $1.05 |
-| `kling` | 30s | $2.10 |
+| Model | Tier | 5s Video | 10s Video | Notes |
+|-------|------|----------|-----------|-------|
+| `kling` | v2.5 Turbo Pro | $0.35 | $0.70 | Best speed/quality balance |
+| `kling-master` | v2.1 Master | $1.40 | $2.80 | Highest quality |
+| `kling-standard` | v2.1 Standard | $0.25 | $0.50 | Budget option |
 
-*Base $0.35 for 5s + $0.07/additional second. Resolution does not affect price.*
+*Kling pricing: Base cost for 5s + $0.07/s (turbo), $0.28/s (master), $0.05/s (standard) for additional seconds.*
 
-### Google Veo Models
+#### Google Veo Models
 
-| Model | Audio | Per Second | 4s | 6s | 8s |
-|-------|-------|------------|-----|-----|-----|
-| `veo2` | - | $0.50 | - | - | $4.00 |
-| `veo31-fast` | Off | $0.10 | $0.40 | $0.60 | $0.80 |
-| `veo31-fast` | On | $0.15 | $0.60 | $0.90 | $1.20 |
-| `veo31` | Off | $0.20 | $0.80 | $1.20 | $1.60 |
-| `veo31` | On | $0.40 | $1.60 | $2.40 | $3.20 |
-| `veo31-flf` | Off | $0.20 | $0.80 | $1.20 | $1.60 |
-| `veo31-fast-flf` | Off | $0.10 | $0.40 | $0.60 | $0.80 |
+| Model | Audio | Per Second | 6s Video | 8s Video |
+|-------|-------|------------|----------|----------|
+| `veo2` | - | $0.50 | - | $4.00 |
+| `veo31-fast` | Off | $0.10 | $0.60 | $0.80 |
+| `veo31-fast` | On | $0.15 | $0.90 | $1.20 |
+| `veo31` | Off | $0.20 | $1.20 | $1.60 |
+| `veo31` | On | $0.40 | $2.40 | $3.20 |
+| `veo31-flf` | Off | $0.20 | $1.20 | $1.60 |
+| `veo31-fast-flf` | Off | $0.10 | $0.60 | $0.80 |
 
-*Veo2: 720p only, 5-8s. Veo31: 720p/1080p, 4/6/8s. Resolution does not affect price.*
+*Veo supports 4s, 6s, 8s durations. FLF = First-Last Frame (requires two images).*
 
-### Cost Comparison (5s video, cheapest resolution)
+#### OpenAI Sora Models
 
-| Rank | Model | Cost |
-|------|-------|------|
-| 1 | `wan22` 480p | $0.20 |
-| 2 | `wan21` 480p | $0.20 |
-| 3 | `wan` 480p | $0.25 |
-| 4 | `kling` | $0.35 |
-| 5 | `veo31-fast` (no audio) | $0.60 |
-| 6 | `wan` 1080p | $0.75 |
-| 7 | `wan-pro` 1080p | $0.80 |
-| 8 | `veo31` (no audio) | $1.20 |
-| 9 | `veo2` | $2.50 |
+| Model | Resolution | Per Second | 4s Video | 8s Video | 12s Video |
+|-------|------------|------------|----------|----------|-----------|
+| `sora-2` | 720p | $0.10 | $0.40 | $0.80 | $1.20 |
+| `sora-2-pro` | 720p | $0.30 | $1.20 | $2.40 | $3.60 |
+| `sora-2-pro` | 1080p | $0.50 | $2.00 | $4.00 | $6.00 |
+
+*Sora supports 4s, 8s, 12s durations.*
+
+### Video Cost Comparison (5s, cheapest option)
+
+| Rank | Model | Cost | Quality |
+|------|-------|------|---------|
+| 1 | `wan22` 480p | $0.20 | Good |
+| 2 | `wan21` 480p | $0.20 | Good |
+| 3 | `kling-standard` | $0.25 | Good |
+| 4 | `wan` 480p | $0.25 | Good |
+| 5 | `kling` | $0.35 | Great |
+| 6 | `sora-2` 720p (4s) | $0.40 | Great |
+| 7 | `veo31-fast` (6s) | $0.60 | Great |
+| 8 | `wan-pro` 1080p | $0.80 | Excellent |
+| 9 | `kling-master` | $1.40 | Excellent |
+
+---
+
+## Image Generation
+
+### API Endpoints
+
+```bash
+# List available image models
+curl http://localhost:8000/images/models
+
+# Create an image job
+curl -X POST http://localhost:8000/images \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_image_url": "https://example.com/person.jpg",
+    "prompt": "same person wearing a red dress in Paris",
+    "model": "gpt-image-1.5",
+    "aspect_ratio": "9:16",
+    "num_images": 1
+  }'
+
+# Get image job status
+curl http://localhost:8000/images/1
+
+# List image jobs
+curl "http://localhost:8000/images?status=completed"
+```
+
+### Image Models & Pricing
+
+| Model | Price | Best For |
+|-------|-------|----------|
+| `gpt-image-1.5` | $0.009-$0.20/image | High-fidelity editing, strong prompt adherence |
+| `kling-image` | $0.028/image | Multi-reference control, character consistency |
+| `nano-banana` | $0.039/image | Budget Google model, general editing |
+| `nano-banana-pro` | $0.15/image | Google's best, realistic, good typography |
+| `flux-kontext` | $0.04/image | Reference-based complex edits |
+| `flux-krea-lora` | $0.035/MP | LoRA support for custom styles |
+
+### Image Parameters
+
+| Parameter | Options | Default |
+|-----------|---------|---------|
+| `model` | See above | `gpt-image-1.5` |
+| `aspect_ratio` | `1:1`, `9:16`, `16:9`, `4:3`, `3:4` | `9:16` |
+| `quality` | `low`, `medium`, `high` | `high` |
+| `num_images` | `1`, `2`, `3`, `4` | `1` |
+
+---
+
+## Bulk Generation
+
+Generate videos from a folder of local images:
+
+```bash
+# All combinations (3 images x 4 prompts = 12 videos)
+python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --model kling
+
+# One-to-one pairing (3 images + 3 prompts = 3 videos)
+python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --one-to-one
+
+# Dry run (preview without submitting)
+python scripts/bulk_generate.py prompts.txt --images-dir ./my_images --dry-run
+
+# With specific settings
+python scripts/bulk_generate.py prompts.txt --images-dir ./my_images \
+  --model kling-master --resolution 720p --duration 10
+```
+
+Prompts file format (separate with `---` or blank lines):
+```
+Camera slowly zooms in on the subject
+---
+The subject turns and smiles
+---
+Gentle breeze moves through the scene
+```
+
+---
 
 ## Architecture
 
@@ -178,19 +224,20 @@ Run `python scripts/bulk_generate.py --list-models` for pricing summary.
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                        API SERVER                           │
-│  POST /jobs → Database (pending)                           │
-│  GET /jobs → List/filter jobs                              │
+│  POST /jobs → Video jobs     POST /images → Image jobs     │
+│  GET /jobs → List videos     GET /images → List images     │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                     BACKGROUND WORKER                       │
 │  Poll pending → Submit to Fal → Poll status → Download     │
-│     (concurrent: 5 submits, 20 polls)                      │
+│     (concurrent: 5 submits, 20 polls per cycle)            │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                      AUTO-DOWNLOAD                          │
-│  Completed videos → downloads/job_{id}_{model}.mp4         │
+│  Videos → downloads/job_{id}_{model}_{prompt}.mp4          │
+│  Images → downloads/images/img_{id}_{model}_{idx}.png      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -207,19 +254,23 @@ pending → submitted → running → completed (+ auto-download)
 ```
 i2v/
 ├── app/
-│   ├── main.py         # FastAPI application
-│   ├── config.py       # Settings (pydantic-settings)
-│   ├── database.py     # SQLAlchemy setup
-│   ├── models.py       # Job & UploadCache models
-│   ├── schemas.py      # Pydantic schemas
-│   ├── fal_client.py   # Fal API client (multi-model)
-│   ├── fal_upload.py   # Local image upload with caching
-│   └── worker.py       # Background worker
+│   ├── main.py          # FastAPI application
+│   ├── config.py        # Settings (pydantic-settings)
+│   ├── database.py      # SQLAlchemy setup
+│   ├── models.py        # Job, ImageJob, UploadCache models
+│   ├── schemas.py       # Pydantic request/response schemas
+│   ├── fal_client.py    # Fal API client (video models)
+│   ├── image_client.py  # Fal API client (image models)
+│   ├── fal_upload.py    # Local image upload with caching
+│   └── worker.py        # Background worker (video + image)
 ├── scripts/
-│   ├── bulk_generate.py    # Bulk generation from local folder
-│   ├── download_videos.py  # Manual batch download
-│   └── demo_create_jobs.py # Demo script
-├── downloads/          # Auto-downloaded videos
+│   ├── bulk_generate.py     # Bulk video generation
+│   ├── download_videos.py   # Manual batch download
+│   └── demo_create_jobs.py  # Demo script
+├── downloads/
+│   ├── *.mp4            # Downloaded videos
+│   ├── images/          # Downloaded images
+│   └── index.csv        # Video download index
 ├── requirements.txt
 └── .env
 ```
@@ -228,4 +279,11 @@ i2v/
 
 ```bash
 pytest tests/ -v
+```
+
+## Health Check
+
+```bash
+curl http://localhost:8000/health
+# {"status": "ok"}
 ```

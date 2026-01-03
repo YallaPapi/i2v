@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import json
 import re
 import signal
 import sys
@@ -10,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, init_db
-from app.models import Job
+from app.models import Job, ImageJob
 from app.fal_client import submit_job, get_job_result, FalAPIError
+from app.image_client import submit_image_job, get_image_result, ImageAPIError
 
 logger = structlog.get_logger()
 
@@ -88,7 +90,8 @@ def get_db_session() -> Session:
 
 
 async def submit_single_job(job_id: int, image_url: str, motion_prompt: str,
-                            resolution: str, duration_sec: int, model: str) -> tuple[int, str | None, str | None]:
+                            resolution: str, duration_sec: int, model: str,
+                            negative_prompt: str | None = None) -> tuple[int, str | None, str | None]:
     """Submit a single job and return (job_id, request_id, error)."""
     try:
         request_id = await submit_job(
@@ -97,6 +100,7 @@ async def submit_single_job(job_id: int, image_url: str, motion_prompt: str,
             motion_prompt=motion_prompt,
             resolution=resolution,
             duration_sec=duration_sec,
+            negative_prompt=negative_prompt,
         )
         logger.info("Job submitted", job_id=job_id, model=model, request_id=request_id)
         return (job_id, request_id, None)
@@ -128,7 +132,8 @@ async def submit_pending_jobs():
         tasks = [
             submit_single_job(
                 job.id, job.image_url, job.motion_prompt,
-                job.resolution, job.duration_sec, job.model or "wan"
+                job.resolution, job.duration_sec, job.model or "wan",
+                job.negative_prompt
             )
             for job in pending_jobs
         ]
@@ -227,6 +232,180 @@ async def poll_submitted_jobs():
         db.close()
 
 
+# ============== Image Job Processing ==============
+
+async def download_image(job_id: int, model: str, image_url: str, index: int,
+                         prompt: str = "") -> str | None:
+    """Download a generated image to the auto-download directory."""
+    if not settings.auto_download_dir:
+        return None
+
+    download_dir = Path(settings.auto_download_dir) / "images"
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    prompt_slug = slugify_prompt(prompt)
+    filename = f"img_{job_id}_{model}_{index}_{prompt_slug}.png"
+    output_path = download_dir / filename
+
+    if output_path.exists():
+        return str(output_path)
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            async with client.stream("GET", image_url) as response:
+                response.raise_for_status()
+                with open(output_path, "wb") as f:
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        f.write(chunk)
+        logger.info("Image downloaded", job_id=job_id, path=str(output_path))
+        return str(output_path)
+    except Exception as e:
+        logger.error("Failed to download image", job_id=job_id, error=str(e))
+        return None
+
+
+async def submit_single_image_job(job_id: int, source_image_url: str, prompt: str,
+                                   model: str, negative_prompt: str | None,
+                                   num_images: int, aspect_ratio: str,
+                                   quality: str) -> tuple[int, str | None, str | None]:
+    """Submit a single image job and return (job_id, request_id, error)."""
+    try:
+        request_id = await submit_image_job(
+            model=model,
+            image_url=source_image_url,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_images=num_images,
+            aspect_ratio=aspect_ratio,
+            quality=quality,
+        )
+        logger.info("Image job submitted", job_id=job_id, model=model, request_id=request_id)
+        return (job_id, request_id, None)
+    except ImageAPIError as e:
+        logger.error("Image job submission failed", job_id=job_id, model=model, error=str(e))
+        return (job_id, None, str(e))
+    except Exception as e:
+        logger.exception("Unexpected error submitting image job", job_id=job_id)
+        return (job_id, None, f"Unexpected error: {str(e)}")
+
+
+async def submit_pending_image_jobs():
+    """Find pending image jobs and submit them to Fal."""
+    db = get_db_session()
+    try:
+        pending_jobs = (
+            db.query(ImageJob)
+            .filter(ImageJob.status == "pending")
+            .limit(settings.max_concurrent_submits)
+            .all()
+        )
+
+        if not pending_jobs:
+            return
+
+        logger.info("Submitting pending image jobs", count=len(pending_jobs))
+
+        tasks = [
+            submit_single_image_job(
+                job.id, job.source_image_url, job.prompt,
+                job.model, job.negative_prompt, job.num_images,
+                job.aspect_ratio, job.quality
+            )
+            for job in pending_jobs
+        ]
+        results = await asyncio.gather(*tasks)
+
+        job_map = {job.id: job for job in pending_jobs}
+        for job_id, request_id, error in results:
+            job = job_map[job_id]
+            if request_id:
+                job.request_id = request_id
+                job.status = "submitted"
+            else:
+                job.status = "failed"
+                job.error_message = error
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
+async def poll_single_image_job(job_id: int, model: str, request_id: str) -> tuple[int, dict]:
+    """Poll a single image job and return (job_id, result)."""
+    try:
+        result = await get_image_result(model, request_id)
+        return (job_id, result)
+    except ImageAPIError as e:
+        logger.warning("Error polling image job, will retry", job_id=job_id, error=str(e))
+        return (job_id, {"status": None, "image_urls": None, "error_message": None})
+    except Exception as e:
+        logger.exception("Unexpected error polling image job", job_id=job_id)
+        return (job_id, {"status": None, "image_urls": None, "error_message": None})
+
+
+async def poll_submitted_image_jobs():
+    """Poll submitted/running image jobs for completion."""
+    db = get_db_session()
+    try:
+        active_jobs = (
+            db.query(ImageJob)
+            .filter(ImageJob.status.in_(["submitted", "running"]))
+            .filter(ImageJob.request_id.isnot(None))
+            .limit(settings.max_concurrent_polls)
+            .all()
+        )
+
+        if not active_jobs:
+            return
+
+        logger.info("Polling active image jobs", count=len(active_jobs))
+
+        tasks = [
+            poll_single_image_job(job.id, job.model, job.request_id)
+            for job in active_jobs
+        ]
+        results = await asyncio.gather(*tasks)
+
+        job_map = {job.id: job for job in active_jobs}
+        for job_id, result in results:
+            if result["status"] is None:
+                continue
+
+            job = job_map[job_id]
+            old_status = job.status
+            job.status = result["status"]
+
+            if result["image_urls"]:
+                job.result_image_urls = json.dumps(result["image_urls"])
+                logger.info("Image job completed", job_id=job.id, num_images=len(result["image_urls"]))
+
+                # Auto-download images
+                if settings.auto_download_dir:
+                    local_paths = []
+                    for i, img_url in enumerate(result["image_urls"]):
+                        local_path = await download_image(
+                            job.id, job.model, img_url, i, job.prompt
+                        )
+                        if local_path:
+                            local_paths.append(local_path)
+                    if local_paths:
+                        job.local_image_paths = json.dumps(local_paths)
+
+            if result["error_message"]:
+                job.error_message = result["error_message"]
+                logger.error("Image job failed", job_id=job.id, error=job.error_message)
+
+            if old_status != job.status:
+                logger.info("Image job status changed", job_id=job.id,
+                           old_status=old_status, new_status=job.status)
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
 async def worker_loop():
     """Main worker loop."""
     logger.info(
@@ -240,10 +419,12 @@ async def worker_loop():
 
     while not shutdown_event.is_set():
         try:
-            # Run submit and poll concurrently
+            # Run submit and poll for both video and image jobs concurrently
             await asyncio.gather(
                 submit_pending_jobs(),
                 poll_submitted_jobs(),
+                submit_pending_image_jobs(),
+                poll_submitted_image_jobs(),
             )
         except Exception as e:
             logger.exception("Error in worker loop", error=str(e))
