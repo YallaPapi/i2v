@@ -15,19 +15,6 @@ from app.fal_client import submit_job, get_job_result, FalAPIError
 
 logger = structlog.get_logger()
 
-# Model short codes (2 letters capitalized)
-MODEL_CODES = {
-    "wan": "WA",
-    "wan21": "W1",
-    "wan22": "W2",
-    "wan-pro": "WP",
-    "kling": "KL",
-    "veo2": "V2",
-    "veo31": "V3",
-    "veo31-fast": "VF",
-    "veo31-flf": "VL",
-    "veo31-fast-flf": "VX",
-}
 
 
 def slugify_prompt(prompt: str, max_words: int = 5) -> str:
@@ -64,10 +51,9 @@ async def download_video(job_id: int, model: str, video_url: str,
     download_dir = Path(settings.auto_download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build filename: job_{id}_{MODEL_CODE}_{prompt_slug}.mp4
-    model_code = MODEL_CODES.get(model, model[:2].upper())
+    # Build filename: job_{id}_{model}_{prompt_slug}.mp4
     prompt_slug = slugify_prompt(prompt)
-    filename = f"job_{job_id}_{model_code}_{prompt_slug}.mp4"
+    filename = f"job_{job_id}_{model}_{prompt_slug}.mp4"
     output_path = download_dir / filename
 
     # Skip if already downloaded
