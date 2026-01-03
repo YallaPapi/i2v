@@ -169,8 +169,6 @@ curl "http://localhost:8000/images?status=completed"
 | `kling-image` | $0.028/image | Multi-reference control, character consistency |
 | `nano-banana` | $0.039/image | Budget Google model, general editing |
 | `nano-banana-pro` | $0.15/image | Google's best, realistic, good typography |
-| `flux-kontext` | $0.04/image | Reference-based complex edits |
-| `flux-krea-lora` | $0.035/MP | LoRA support for custom styles |
 
 ### Image Parameters
 

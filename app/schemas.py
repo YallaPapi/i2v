@@ -44,7 +44,7 @@ class ImageJobCreate(BaseModel):
     source_image_url: str
     prompt: str
     negative_prompt: Optional[str] = None
-    model: Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana", "flux-kontext", "flux-krea-lora"] = "gpt-image-1.5"
+    model: Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"] = "gpt-image-1.5"
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
     num_images: Literal[1, 2, 3, 4] = 1

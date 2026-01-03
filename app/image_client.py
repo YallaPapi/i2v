@@ -39,24 +39,9 @@ IMAGE_MODELS = {
         "identity_preservation": False,
         "description": "Budget Google model for general editing",
     },
-    # Flux models
-    "flux-kontext": {
-        "submit_url": "https://queue.fal.run/fal-ai/flux-pro/kontext",
-        "status_url": "https://queue.fal.run/fal-ai/flux-pro",
-        "pricing": "$0.04/image",
-        "identity_preservation": False,
-        "description": "Reference-based complex edits and transformations",
-    },
-    "flux-krea-lora": {
-        "submit_url": "https://queue.fal.run/fal-ai/flux-krea-lora",
-        "status_url": "https://queue.fal.run/fal-ai/flux-krea-lora",
-        "pricing": "$0.035/megapixel",
-        "identity_preservation": False,
-        "description": "LoRA support for custom styles and brand identities",
-    },
 }
 
-ImageModelType = Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana", "flux-kontext", "flux-krea-lora"]
+ImageModelType = Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"]
 
 
 class ImageAPIError(Exception):
@@ -134,39 +119,6 @@ def _build_image_payload(model: ImageModelType, image_url: str, prompt: str,
             "num_images": num_images,
             "output_format": "png",
         }
-
-    # Flux Kontext - Reference-based complex edits
-    elif model == "flux-kontext":
-        return {
-            "prompt": prompt,
-            "image_url": image_url,
-            "guidance_scale": 3.5,
-            "num_images": num_images,
-            "output_format": "png",
-            "safety_tolerance": 6,  # Most permissive
-        }
-
-    # Flux Krea LoRA - Custom styles
-    elif model == "flux-krea-lora":
-        size_map = {
-            "1:1": "square_hd",
-            "9:16": "portrait_16_9",
-            "16:9": "landscape_16_9",
-            "4:3": "landscape_4_3",
-            "3:4": "portrait_4_3",
-        }
-        payload = {
-            "prompt": prompt,
-            "image_size": size_map.get(aspect_ratio, "portrait_16_9"),
-            "num_inference_steps": 28,
-            "guidance_scale": 3.5,
-            "num_images": num_images,
-            "output_format": "png",
-            "enable_safety_checker": False,
-        }
-        # Note: This is text-to-image, but can use image_url for img2img
-        # For now using as text-to-image with prompt describing reference
-        return payload
 
     else:
         raise ValueError(f"Unknown image model: {model}")
