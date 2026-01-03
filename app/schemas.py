@@ -9,7 +9,7 @@ class JobCreate(BaseModel):
     motion_prompt: str
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10] = 5
-    model: Literal["wan", "wan22", "kling"] = "wan"
+    model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf"] = "wan"
 
 
 class JobResponse(BaseModel):

@@ -8,22 +8,67 @@ from app.config import settings
 logger = structlog.get_logger()
 
 # Model configurations
+# Pricing per second (approx): wan=$0.05-0.15, wan22=$0.04-0.08, kling=$0.07, veo2=$0.50, veo31=$0.10-0.20
 MODELS = {
+    # Wan models
     "wan": {
         "submit_url": "https://queue.fal.run/fal-ai/wan-25-preview/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/wan-25-preview",
+        "pricing": "480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s",
+    },
+    "wan21": {
+        "submit_url": "https://queue.fal.run/fal-ai/wan-i2v",
+        "status_url": "https://queue.fal.run/fal-ai/wan-i2v",
+        "pricing": "480p=$0.20/vid, 720p=$0.40/vid",
     },
     "wan22": {
         "submit_url": "https://queue.fal.run/fal-ai/wan/v2.2-a14b/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/wan",
+        "pricing": "480p=$0.04/s, 580p=$0.06/s, 720p=$0.08/s",
     },
+    "wan-pro": {
+        "submit_url": "https://queue.fal.run/fal-ai/wan-pro/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/wan-pro",
+        "pricing": "1080p=$0.16/s (~$0.80/5s)",
+    },
+    # Kling model
     "kling": {
         "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/kling-video",
+        "pricing": "$0.35/5s + $0.07/extra sec",
+    },
+    # Veo models (Google)
+    "veo2": {
+        "submit_url": "https://queue.fal.run/fal-ai/veo2/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/veo2",
+        "pricing": "$0.50/s (720p only)",
+    },
+    "veo31-fast": {
+        "submit_url": "https://queue.fal.run/fal-ai/veo3.1/fast/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/veo3.1",
+        "pricing": "$0.10/s (no audio), $0.15/s (audio)",
+    },
+    "veo31": {
+        "submit_url": "https://queue.fal.run/fal-ai/veo3.1/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/veo3.1",
+        "pricing": "$0.20/s (no audio), $0.40/s (audio)",
+    },
+    # First-Last Frame models (require TWO images: first and last frame)
+    "veo31-flf": {
+        "submit_url": "https://queue.fal.run/fal-ai/veo3.1/first-last-frame-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/veo3.1",
+        "pricing": "$0.20/s (no audio), $0.40/s (audio)",
+        "first_last_frame": True,
+    },
+    "veo31-fast-flf": {
+        "submit_url": "https://queue.fal.run/fal-ai/veo3.1/fast/first-last-frame-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/veo3.1",
+        "pricing": "$0.10/s (no audio), $0.15/s (audio)",
+        "first_last_frame": True,
     },
 }
 
-ModelType = Literal["wan", "wan22", "kling"]
+ModelType = Literal["wan", "wan21", "wan22", "wan-pro", "kling", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf"]
 
 
 class FalAPIError(Exception):
@@ -41,7 +86,8 @@ def _get_headers() -> dict:
 
 def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str, duration_sec: int) -> dict:
     """Build request payload based on model type."""
-    if model == "wan" or model == "wan22":
+    # Wan models (wan, wan21, wan22, wan-pro)
+    if model in ("wan", "wan21", "wan22", "wan-pro"):
         return {
             "prompt": prompt,
             "image_url": image_url,
@@ -51,8 +97,8 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
             "enable_prompt_expansion": True,
             "enable_safety_checker": True,
         }
+    # Kling model
     elif model == "kling":
-        # Map resolution to aspect ratio for Kling
         aspect_map = {"480p": "9:16", "720p": "9:16", "1080p": "9:16"}
         return {
             "prompt": prompt,
@@ -60,6 +106,36 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
             "duration": str(duration_sec),
             "aspect_ratio": aspect_map.get(resolution, "9:16"),
             "negative_prompt": "low resolution, error, worst quality, low quality, artifacts",
+        }
+    # Veo2 model
+    elif model == "veo2":
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": "5s",  # Veo2 supports 5-8s
+            "aspect_ratio": "9:16",
+        }
+    # Veo 3.1 models (image-to-video)
+    elif model in ("veo31", "veo31-fast"):
+        # Map duration to valid options: 4s, 6s, 8s
+        duration_map = {5: "6s", 10: "8s"}
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": duration_map.get(duration_sec, "6s"),
+            "aspect_ratio": "9:16",
+            "enable_audio": False,  # Set True to add audio (costs more)
+        }
+    # Veo 3.1 First-Last Frame models (require two images)
+    elif model in ("veo31-flf", "veo31-fast-flf"):
+        duration_map = {5: "6s", 10: "8s"}
+        return {
+            "prompt": prompt,
+            "first_frame_image": image_url,
+            "last_frame_image": image_url,  # Same image for now - can be extended
+            "duration": duration_map.get(duration_sec, "6s"),
+            "aspect_ratio": "9:16",
+            "enable_audio": False,
         }
     else:
         raise ValueError(f"Unknown model: {model}")

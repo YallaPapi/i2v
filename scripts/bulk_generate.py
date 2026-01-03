@@ -176,8 +176,12 @@ def main():
     )
     parser.add_argument(
         "--model", default="wan",
-        choices=["wan", "wan22", "kling"],
-        help="Model to use (wan=2.5, wan22=2.2, kling=2.5 turbo)"
+        choices=["wan", "wan21", "wan22", "wan-pro", "kling", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf"],
+        help="Model to use"
+    )
+    parser.add_argument(
+        "--list-models", action="store_true",
+        help="List available models with pricing and exit"
     )
 
     # Other options
@@ -191,6 +195,24 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # List models and exit
+    if args.list_models:
+        print("Available models and pricing:\n")
+        print("MODEL          | PRICING")
+        print("---------------|------------------------------------------")
+        print("wan            | 480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s")
+        print("wan21          | 480p=$0.20/vid, 720p=$0.40/vid")
+        print("wan22          | 480p=$0.04/s, 580p=$0.06/s, 720p=$0.08/s")
+        print("wan-pro        | 1080p=$0.16/s (~$0.80/5s)")
+        print("kling          | $0.35/5s + $0.07/extra sec")
+        print("veo2           | $0.50/s (720p only)")
+        print("veo31-fast     | $0.10/s (no audio), $0.15/s (audio)")
+        print("veo31          | $0.20/s (no audio), $0.40/s (audio)")
+        print("veo31-flf      | $0.20/s - First/Last Frame (2 images)")
+        print("veo31-fast-flf | $0.10/s - First/Last Frame (2 images)")
+        print("\nExample: python scripts/bulk_generate.py prompts.txt --images-dir ./imgs --model wan22")
+        return
 
     # Validate paths
     if not args.prompts_file.exists():

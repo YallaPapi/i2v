@@ -110,12 +110,27 @@ curl "http://localhost:8000/jobs?limit=10&offset=0"
 curl http://localhost:8000/health
 ```
 
-## Models
+## Models & Pricing
 
-| Model | Resolution | Duration | Notes |
-|-------|-----------|----------|-------|
-| `wan` | 480p, 720p, 1080p | 5s, 10s | Wan 2.5 Preview |
-| `kling` | 480p, 720p, 1080p | 5s, 10s | Kling 2.5 Turbo Pro |
+Run `python scripts/bulk_generate.py --list-models` for current pricing.
+
+| Model | Pricing | Notes |
+|-------|---------|-------|
+| `wan` | 480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s | Wan 2.5 Preview |
+| `wan21` | 480p=$0.20/vid, 720p=$0.40/vid | Wan 2.1 |
+| `wan22` | 480p=$0.04/s, 720p=$0.08/s | Wan 2.2 A14B |
+| `wan-pro` | $0.16/s (1080p) | Wan Pro, premium quality |
+| `kling` | $0.35/5s + $0.07/extra sec | Kling 2.5 Turbo Pro |
+| `veo2` | $0.50/s (720p only) | Google Veo 2 |
+| `veo31-fast` | $0.10/s (no audio) | Google Veo 3.1 Fast |
+| `veo31` | $0.20/s (no audio) | Google Veo 3.1 |
+| `veo31-flf` | $0.20/s | First/Last Frame (2 images) |
+| `veo31-fast-flf` | $0.10/s | First/Last Frame Fast (2 images) |
+
+**Cost examples (5s video):**
+- Cheapest: `wan22` 480p = $0.20
+- Mid-range: `wan` 1080p = $0.75, `kling` = $0.35
+- Premium: `veo2` = $2.50, `veo31` = $1.00
 
 ## Architecture
 
