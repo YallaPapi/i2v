@@ -112,25 +112,60 @@ curl http://localhost:8000/health
 
 ## Models & Pricing
 
-Run `python scripts/bulk_generate.py --list-models` for current pricing.
+Run `python scripts/bulk_generate.py --list-models` for pricing summary.
 
-| Model | Pricing | Notes |
-|-------|---------|-------|
-| `wan` | 480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s | Wan 2.5 Preview |
-| `wan21` | 480p=$0.20/vid, 720p=$0.40/vid | Wan 2.1 |
-| `wan22` | 480p=$0.04/s, 720p=$0.08/s | Wan 2.2 A14B |
-| `wan-pro` | $0.16/s (1080p) | Wan Pro, premium quality |
-| `kling` | $0.35/5s + $0.07/extra sec | Kling 2.5 Turbo Pro |
-| `veo2` | $0.50/s (720p only) | Google Veo 2 |
-| `veo31-fast` | $0.10/s (no audio) | Google Veo 3.1 Fast |
-| `veo31` | $0.20/s (no audio) | Google Veo 3.1 |
-| `veo31-flf` | $0.20/s | First/Last Frame (2 images) |
-| `veo31-fast-flf` | $0.10/s | First/Last Frame Fast (2 images) |
+### Wan Models
 
-**Cost examples (5s video):**
-- Cheapest: `wan22` 480p = $0.20
-- Mid-range: `wan` 1080p = $0.75, `kling` = $0.35
-- Premium: `veo2` = $2.50, `veo31` = $1.00
+| Model | Resolution | Per Second | 5s Video | 10s Video |
+|-------|------------|------------|----------|-----------|
+| `wan` | 480p | $0.05 | $0.25 | $0.50 |
+| `wan` | 720p | $0.10 | $0.50 | $1.00 |
+| `wan` | 1080p | $0.15 | $0.75 | $1.50 |
+| `wan21` | 480p | flat | $0.20 | $0.20 |
+| `wan21` | 720p | flat | $0.40 | $0.40 |
+| `wan22` | 480p | $0.04 | $0.20 | $0.40 |
+| `wan22` | 580p | $0.06 | $0.30 | $0.60 |
+| `wan22` | 720p | $0.08 | $0.40 | $0.80 |
+| `wan-pro` | 1080p | $0.16 | $0.80 | $1.60 |
+
+### Kling Model
+
+| Model | Duration | Cost |
+|-------|----------|------|
+| `kling` | 5s | $0.35 |
+| `kling` | 10s | $0.70 |
+| `kling` | 15s | $1.05 |
+| `kling` | 30s | $2.10 |
+
+*Base $0.35 for 5s + $0.07/additional second. Resolution does not affect price.*
+
+### Google Veo Models
+
+| Model | Audio | Per Second | 4s | 6s | 8s |
+|-------|-------|------------|-----|-----|-----|
+| `veo2` | - | $0.50 | - | - | $4.00 |
+| `veo31-fast` | Off | $0.10 | $0.40 | $0.60 | $0.80 |
+| `veo31-fast` | On | $0.15 | $0.60 | $0.90 | $1.20 |
+| `veo31` | Off | $0.20 | $0.80 | $1.20 | $1.60 |
+| `veo31` | On | $0.40 | $1.60 | $2.40 | $3.20 |
+| `veo31-flf` | Off | $0.20 | $0.80 | $1.20 | $1.60 |
+| `veo31-fast-flf` | Off | $0.10 | $0.40 | $0.60 | $0.80 |
+
+*Veo2: 720p only, 5-8s. Veo31: 720p/1080p, 4/6/8s. Resolution does not affect price.*
+
+### Cost Comparison (5s video, cheapest resolution)
+
+| Rank | Model | Cost |
+|------|-------|------|
+| 1 | `wan22` 480p | $0.20 |
+| 2 | `wan21` 480p | $0.20 |
+| 3 | `wan` 480p | $0.25 |
+| 4 | `kling` | $0.35 |
+| 5 | `veo31-fast` (no audio) | $0.60 |
+| 6 | `wan` 1080p | $0.75 |
+| 7 | `wan-pro` 1080p | $0.80 |
+| 8 | `veo31` (no audio) | $1.20 |
+| 9 | `veo2` | $2.50 |
 
 ## Architecture
 
