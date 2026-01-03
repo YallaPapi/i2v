@@ -13,13 +13,17 @@ MODELS = {
         "submit_url": "https://queue.fal.run/fal-ai/wan-25-preview/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/wan-25-preview",
     },
+    "wan22": {
+        "submit_url": "https://queue.fal.run/fal-ai/wan/v2.2-a14b/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/wan",
+    },
     "kling": {
         "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
         "status_url": "https://queue.fal.run/fal-ai/kling-video",
     },
 }
 
-ModelType = Literal["wan", "kling"]
+ModelType = Literal["wan", "wan22", "kling"]
 
 
 class FalAPIError(Exception):
@@ -37,7 +41,7 @@ def _get_headers() -> dict:
 
 def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str, duration_sec: int) -> dict:
     """Build request payload based on model type."""
-    if model == "wan":
+    if model == "wan" or model == "wan22":
         return {
             "prompt": prompt,
             "image_url": image_url,

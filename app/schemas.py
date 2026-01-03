@@ -9,7 +9,7 @@ class JobCreate(BaseModel):
     motion_prompt: str
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10] = 5
-    model: Literal["wan", "kling"] = "wan"
+    model: Literal["wan", "wan22", "kling"] = "wan"
 
 
 class JobResponse(BaseModel):

@@ -176,8 +176,8 @@ def main():
     )
     parser.add_argument(
         "--model", default="wan",
-        choices=["wan", "kling"],
-        help="Model to use"
+        choices=["wan", "wan22", "kling"],
+        help="Model to use (wan=2.5, wan22=2.2, kling=2.5 turbo)"
     )
 
     # Other options
