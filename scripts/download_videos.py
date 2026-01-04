@@ -62,6 +62,8 @@ def main():
                        help="Path to database file")
     parser.add_argument("--list", "-l", action="store_true",
                        help="List completed jobs without downloading")
+    parser.add_argument("--force", "-f", action="store_true",
+                       help="Re-download even if file exists")
 
     args = parser.parse_args()
 
@@ -90,9 +92,20 @@ def main():
     print(f"Downloading {len(jobs)} videos...\n")
 
     downloaded = []
+    skipped = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     for job in jobs:
-        filename = f"job_{job['id']}_{job['model']}.mp4"
+        # Include timestamp in filename to prevent overwrites on re-runs
+        filename = f"job_{job['id']}_{job['model']}_{timestamp}.mp4"
         output_path = args.output_dir / filename
+
+        # Check for existing file with same job ID (any timestamp)
+        existing = list(args.output_dir.glob(f"job_{job['id']}_{job['model']}_*.mp4"))
+        if existing and not getattr(args, 'force', False):
+            print(f"[{job['id']}] Skipping (already exists: {existing[0].name})")
+            skipped.append(existing[0])
+            continue
 
         print(f"[{job['id']}] Downloading {filename}...")
 
@@ -103,6 +116,8 @@ def main():
             print(f"    -> Failed")
 
     print(f"\nDownloaded {len(downloaded)}/{len(jobs)} videos to {args.output_dir}")
+    if skipped:
+        print(f"Skipped {len(skipped)} already downloaded (use --force to re-download)")
 
     # Create zip if requested
     if args.zip and downloaded:

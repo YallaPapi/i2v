@@ -13,10 +13,26 @@ from app.models import UploadCache
 logger = structlog.get_logger()
 
 SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_FILE_SIZE_MB = 50
+UPLOAD_TIMEOUT_SECONDS = 120
 
 # Set FAL_KEY environment variable for fal_client
 if settings.fal_api_key:
     os.environ["FAL_KEY"] = settings.fal_api_key
+
+
+def normalize_path(path: Path) -> str:
+    """Normalize path to absolute resolved string for consistent cache lookups."""
+    return str(path.resolve().absolute())
+
+
+def validate_file_size(file_path: Path) -> None:
+    """Validate file size is within limits."""
+    file_size_mb = file_path.stat().st_size / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise ValueError(
+            f"File too large: {file_size_mb:.1f}MB exceeds {MAX_FILE_SIZE_MB}MB limit"
+        )
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -73,6 +89,8 @@ async def upload_image(local_path: str | Path) -> str:
     Upload local image to Fal CDN with caching.
 
     Returns the Fal CDN URL.
+    Raises ValueError if file too large (>50MB) or unsupported format.
+    Raises FileNotFoundError if file doesn't exist.
     """
     path = Path(local_path).resolve()
 
@@ -82,7 +100,11 @@ async def upload_image(local_path: str | Path) -> str:
     if path.suffix.lower() not in SUPPORTED_FORMATS:
         raise ValueError(f"Unsupported format: {path.suffix}. Supported: {SUPPORTED_FORMATS}")
 
-    path_str = str(path)
+    # Validate file size
+    validate_file_size(path)
+
+    # Normalize path for consistent cache lookups
+    path_str = normalize_path(path)
     file_hash = compute_file_hash(path)
 
     # Check cache if enabled
