@@ -5,22 +5,18 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   ImageUploadZone,
-  PromptInput,
   ModelSelector,
-  SetModeModal,
-  CostPreview,
-  ProgressMonitor,
-  OutputGallery,
   MultiPromptInput,
   BulkPreview,
   BulkProgress,
   BulkResults,
+  ImageSourceSelector,
 } from '@/components/pipeline'
-import type { SetModeConfig, CostEstimate, OutputItem, BulkCostEstimate, BulkStep, SourceGroup } from '@/components/pipeline'
+import type { BulkCostEstimate, BulkStep, SourceGroup } from '@/components/pipeline'
 import { Textarea } from '@/components/ui/textarea'
-import { Layers, Image, Video, Wand2, Play, Sparkles, Grid3X3, Loader2, GalleryHorizontal } from 'lucide-react'
+import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal } from 'lucide-react'
 
-type GenerationMode = 'i2i' | 'i2v' | 'pipeline' | 'bulk' | 'carousel'
+type GenerationMode = 'bulk' | 'carousel'
 
 interface UploadedImage {
   id: string
@@ -36,34 +32,16 @@ export function Playground() {
     const saved = localStorage.getItem('playground-default-mode')
     return (saved as GenerationMode) || 'bulk'
   })
-  const [defaultMode, setDefaultMode] = useState<GenerationMode>(() => {
-    const saved = localStorage.getItem('playground-default-mode')
-    return (saved as GenerationMode) || 'bulk'
-  })
-
-  // Save default mode to localStorage
-  const handleSetDefaultMode = (newMode: GenerationMode) => {
-    setDefaultMode(newMode)
-    localStorage.setItem('playground-default-mode', newMode)
-  }
 
   // Images
   const [images, setImages] = useState<UploadedImage[]>([])
-
-  // Prompts
-  const [prompt, setPrompt] = useState('')
-  const [enhancedPrompts, setEnhancedPrompts] = useState<string[]>([])
+  const [imageSourceMode, setImageSourceMode] = useState<'upload' | 'library'>('upload')
+  const [selectedLibraryImages, setSelectedLibraryImages] = useState<string[]>([])
 
   // I2I Settings
   const [i2iModel, setI2iModel] = useState('gpt-image-1.5')
   const [i2iAspectRatio, setI2iAspectRatio] = useState('9:16')
   const [i2iQuality, setI2iQuality] = useState<'low' | 'medium' | 'high'>('high')
-  const [setModeOpen, setSetModeOpen] = useState(false)
-  const [setModeConfig, setSetModeConfig] = useState<SetModeConfig>({
-    enabled: false,
-    variations: [],
-    countPerVariation: 1,
-  })
 
   // I2V Settings
   const [i2vModel, setI2vModel] = useState('kling')
@@ -73,20 +51,6 @@ export function Playground() {
   // Pipeline State
   const [isGenerating, setIsGenerating] = useState(false)
   const [pipelineStatus, setPipelineStatus] = useState<'pending' | 'running' | 'paused' | 'completed' | 'failed'>('pending')
-  const [pipelineSteps, setPipelineSteps] = useState<Array<{
-    id: number
-    stepType: string
-    stepOrder: number
-    status: 'pending' | 'running' | 'review' | 'completed' | 'failed'
-    progressPct?: number
-    outputsCount?: number
-  }>>([])
-
-  // Outputs
-  const [outputs, setOutputs] = useState<OutputItem[]>([])
-
-  // Cost
-  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null)
 
   // Bulk Mode State
   const [bulkMode, setBulkMode] = useState<'photos' | 'videos' | 'both'>('videos')
@@ -109,36 +73,12 @@ export function Playground() {
   const [carouselPrompts, setCarouselPrompts] = useState<string[]>([])
   const [carouselNegativePrompt, setCarouselNegativePrompt] = useState('')
 
-  // Handlers
-  const handleEnhancePrompt = async (
-    enhanceMode: 'quick_improve' | 'category_based' | 'raw' = 'quick_improve',
-    categories: string[] = []
-  ): Promise<string[]> => {
-    try {
-      const response = await fetch('/api/pipelines/prompts/enhance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompts: [prompt],
-          count: 3,
-          target: mode === 'i2v' ? 'i2v' : 'i2i',
-          style: 'photorealistic',
-          mode: enhanceMode,
-          categories: categories.length > 0 ? categories : undefined,
-        }),
-      })
+  // Compute effective source images based on mode
+  const effectiveSourceImages = imageSourceMode === 'upload'
+    ? images.map(img => img.url)
+    : selectedLibraryImages
 
-      if (response.ok) {
-        const data = await response.json()
-        const allEnhanced = data.enhanced_prompts.flat()
-        setEnhancedPrompts(allEnhanced)
-        return allEnhanced
-      }
-    } catch (error) {
-      console.error('Failed to enhance prompt:', error)
-    }
-    return []
-  }
+  // Handlers
 
   // Bulk prompt expansion - generates variations based on selected mode
   const handleExpandBulkPrompts = async (type: 'i2i' | 'i2v') => {
@@ -187,81 +127,6 @@ export function Playground() {
     }
   }
 
-  const calculateCost = useCallback(async () => {
-    const steps = []
-
-    if (mode === 'pipeline' && enhancedPrompts.length === 0) {
-      steps.push({
-        step_type: 'prompt_enhance',
-        step_order: 0,
-        config: {
-          input_prompts: [prompt],
-          variations_per_prompt: 5,
-        },
-      })
-    }
-
-    if (mode === 'i2i' || mode === 'pipeline') {
-      steps.push({
-        step_type: 'i2i',
-        step_order: steps.length,
-        config: {
-          model: i2iModel,
-          images_per_prompt: 1,
-          set_mode: setModeConfig,
-          quality: 'high',
-        },
-      })
-    }
-
-    if (mode === 'i2v' || mode === 'pipeline') {
-      steps.push({
-        step_type: 'i2v',
-        step_order: steps.length,
-        config: {
-          model: i2vModel,
-          videos_per_image: 1,
-          resolution,
-          duration_sec: parseInt(duration),
-        },
-      })
-    }
-
-    if (steps.length === 0) return
-
-    try {
-      const response = await fetch('/api/pipelines/estimate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ steps }),
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setCostEstimate({
-          breakdown: data.breakdown.map((b: { step_type: string; step_order: number; model?: string; unit_count: number; unit_price: number; total: number }) => ({
-            stepType: b.step_type,
-            stepOrder: b.step_order,
-            model: b.model,
-            unitCount: b.unit_count,
-            unitPrice: b.unit_price,
-            total: b.total,
-          })),
-          total: data.total,
-          currency: data.currency,
-        })
-      }
-    } catch (error) {
-      console.error('Failed to estimate cost:', error)
-    }
-  }, [mode, prompt, enhancedPrompts, i2iModel, i2vModel, resolution, duration, setModeConfig])
-
-  // Recalculate cost when settings change
-  useEffect(() => {
-    if (images.length > 0 && prompt.trim()) {
-      calculateCost()
-    }
-  }, [calculateCost, images.length, prompt])
 
   // Bulk cost estimation
   const calculateBulkCost = useCallback(async () => {
@@ -271,7 +136,7 @@ export function Playground() {
     const needsPhotoPrompts = bulkMode === 'photos' || bulkMode === 'both'
     const needsVideoPrompts = bulkMode === 'videos' || bulkMode === 'both'
 
-    if (images.length === 0) {
+    if (effectiveSourceImages.length === 0) {
       setBulkCostEstimate(null)
       return
     }
@@ -289,14 +154,14 @@ export function Playground() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source_images: images.map(img => img.url),
+          source_images: effectiveSourceImages,
           i2i_config: (bulkMode === 'photos' || bulkMode === 'both') && bulkI2iPrompts.length > 0 ? {
             enabled: true,
             prompts: bulkI2iPrompts,
             model: i2iModel,
             images_per_prompt: 1,
             aspect_ratio: i2iAspectRatio,
-            quality: 'high',
+            quality: i2iQuality,
             negative_prompt: bulkI2iNegativePrompt || undefined,
           } : null,
           i2v_config: {
@@ -322,7 +187,7 @@ export function Playground() {
     } catch (error) {
       console.error('Failed to estimate bulk cost:', error)
     }
-  }, [images, bulkMode, bulkI2iPrompts, bulkI2iNegativePrompt, bulkI2vPrompts, bulkI2vNegativePrompt, i2iModel, i2iAspectRatio, i2vModel, resolution, duration])
+  }, [effectiveSourceImages, bulkMode, bulkI2iPrompts, bulkI2iNegativePrompt, bulkI2vPrompts, bulkI2vNegativePrompt, i2iModel, i2iAspectRatio, i2iQuality, i2vModel, resolution, duration])
 
   // Recalculate bulk cost when settings change
   useEffect(() => {
@@ -333,7 +198,7 @@ export function Playground() {
 
   // Bulk generate handler
   const handleBulkGenerate = async () => {
-    if (images.length === 0) return
+    if (effectiveSourceImages.length === 0) return
     if (bulkMode === 'photos' && bulkI2iPrompts.length === 0) return
     if ((bulkMode === 'videos' || bulkMode === 'both') && bulkI2vPrompts.length === 0) return
 
@@ -352,14 +217,14 @@ export function Playground() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: `Bulk ${bulkMode === 'photos' ? 'Photos' : bulkMode === 'videos' ? 'Videos' : 'Photos + Videos'} - ${new Date().toLocaleString()}`,
-          source_images: images.map(img => img.url),
+          source_images: effectiveSourceImages,
           i2i_config: includePhotos && bulkI2iPrompts.length > 0 ? {
             enabled: true,
             prompts: bulkI2iPrompts,
             model: i2iModel,
             images_per_prompt: 1,
             aspect_ratio: i2iAspectRatio,
-            quality: 'high',
+            quality: i2iQuality,
             negative_prompt: bulkI2iNegativePrompt || undefined,
           } : null,
           i2v_config: includeVideos ? {
@@ -430,7 +295,7 @@ export function Playground() {
 
   // Carousel generate handler - uses bulk i2i pipeline
   const handleCarouselGenerate = async () => {
-    if (images.length === 0 || carouselPrompts.length === 0) return
+    if (effectiveSourceImages.length === 0 || carouselPrompts.length === 0) return
 
     setIsGenerating(true)
     setPipelineStatus('running')
@@ -442,14 +307,14 @@ export function Playground() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: `Carousel - ${new Date().toLocaleString()}`,
-          source_images: images.map(img => img.url),
+          source_images: effectiveSourceImages,
           i2i_config: {
             enabled: true,
             prompts: carouselPrompts,
             model: i2iModel,
             images_per_prompt: 1,
             aspect_ratio: i2iAspectRatio,
-            quality: 'high',
+            quality: i2iQuality,
             negative_prompt: carouselNegativePrompt || undefined,
           },
           i2v_config: { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration) },
@@ -485,152 +350,80 @@ export function Playground() {
     }
   }
 
-  const handleGenerate = async () => {
-    if (images.length === 0 || !prompt.trim()) return
+  // Animate selected images handler
+  const handleAnimateSelectedImages = async (selectedImageUrls: string[]) => {
+    if (selectedImageUrls.length === 0 || bulkI2vPrompts.length === 0) {
+      alert('Please enter at least one motion prompt in the video motion section')
+      return
+    }
 
     setIsGenerating(true)
     setPipelineStatus('running')
-
-    // Build pipeline steps
-    const steps = []
-    let stepOrder = 0
-
-    if (mode === 'pipeline') {
-      steps.push({
-        step_type: 'prompt_enhance',
-        step_order: stepOrder++,
-        config: {
-          input_prompts: [prompt],
-          variations_per_prompt: 5,
-          target_type: 'i2i',
-        },
-        inputs: {},
-      })
-    }
-
-    if (mode === 'i2i' || mode === 'pipeline') {
-      steps.push({
-        step_type: 'i2i',
-        step_order: stepOrder++,
-        config: {
-          model: i2iModel,
-          images_per_prompt: 1,
-          set_mode: setModeConfig,
-          aspect_ratio: '9:16',
-          quality: 'high',
-        },
-        inputs: {
-          image_urls: images.map(img => img.url),
-          prompts: enhancedPrompts.length > 0 ? enhancedPrompts : [prompt],
-        },
-      })
-    }
-
-    if (mode === 'i2v' || mode === 'pipeline') {
-      steps.push({
-        step_type: 'i2v',
-        step_order: stepOrder++,
-        config: {
-          model: i2vModel,
-          videos_per_image: 1,
-          resolution,
-          duration_sec: parseInt(duration),
-        },
-        inputs: {
-          image_urls: images.map(img => img.url),
-          prompts: [prompt],
-        },
-      })
-    }
-
-    // Initialize pipeline steps for progress display
-    setPipelineSteps(steps.map((s, i) => ({
-      id: i,
-      stepType: s.step_type,
-      stepOrder: s.step_order,
-      status: i === 0 ? 'running' : 'pending',
-    })))
+    setBulkGroups([])
+    setBulkSteps([])
 
     try {
-      // Create pipeline
-      const response = await fetch('/api/pipelines', {
+      const response = await fetch('/api/pipelines/animate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `${mode.toUpperCase()} - ${new Date().toLocaleString()}`,
-          mode: 'auto',
-          steps,
+          name: `Animate Selected - ${new Date().toLocaleString()}`,
+          image_urls: selectedImageUrls,
+          prompts: bulkI2vPrompts,
+          model: i2vModel,
+          resolution,
+          duration_sec: parseInt(duration),
+          negative_prompt: bulkI2vNegativePrompt || undefined,
         }),
       })
 
-      if (response.ok) {
-        const pipeline = await response.json()
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        console.error('Animate pipeline creation failed:', errorData)
+        setPipelineStatus('failed')
+        setIsGenerating(false)
+        alert(`Failed to create pipeline: ${errorData.detail || 'Unknown error'}`)
+        return
+      }
 
-        // Start pipeline
-        await fetch(`/api/pipelines/${pipeline.id}/run`, {
-          method: 'POST',
-        })
+      const data = await response.json()
+      setBulkPipelineId(data.pipeline_id)
 
-        // Poll for status (simplified - in production use WebSocket)
-        const pollStatus = async () => {
-          const statusRes = await fetch(`/api/pipelines/${pipeline.id}`)
-          if (statusRes.ok) {
-            const data = await statusRes.json()
-            setPipelineStatus(data.status)
+      // Poll for status
+      const pollStatus = async () => {
+        const statusRes = await fetch(`/api/pipelines/bulk/${data.pipeline_id}`)
+        if (statusRes.ok) {
+          const statusData = await statusRes.json()
+          setPipelineStatus(statusData.status)
+          setBulkGroups(statusData.groups)
+          setBulkTotals(statusData.totals)
 
-            if (data.steps) {
-              setPipelineSteps(data.steps.map((s: { id: number; step_type: string; step_order: number; status: string; outputs?: { count?: number } }) => ({
-                id: s.id,
-                stepType: s.step_type,
-                stepOrder: s.step_order,
-                status: s.status,
-                outputsCount: s.outputs?.count,
-              })))
-
-              // Collect outputs
-              const allOutputs: OutputItem[] = []
-              for (const step of data.steps) {
-                if (step.outputs?.items) {
-                  for (const item of step.outputs.items) {
-                    allOutputs.push({
-                      id: crypto.randomUUID(),
-                      url: item.url,
-                      type: item.type,
-                      stepType: step.step_type,
-                      model: step.config?.model,
-                    })
-                  }
-                }
-              }
-              setOutputs(allOutputs)
-            }
-
-            if (data.status === 'running') {
-              setTimeout(pollStatus, 2000)
-            } else {
-              setIsGenerating(false)
-            }
+          if (statusData.status === 'running') {
+            setTimeout(pollStatus, 2000)
+          } else {
+            setIsGenerating(false)
           }
         }
-
-        pollStatus()
       }
+
+      pollStatus()
     } catch (error) {
-      console.error('Pipeline failed:', error)
+      console.error('Animate pipeline failed:', error)
       setPipelineStatus('failed')
       setIsGenerating(false)
     }
   }
 
+  // Check if generation is possible
   const canGenerate = mode === 'bulk'
-    ? images.length > 0 && !isGenerating && (
+    ? effectiveSourceImages.length > 0 && !isGenerating && (
         (bulkMode === 'photos' && bulkI2iPrompts.length > 0) ||
         (bulkMode === 'videos' && bulkI2vPrompts.length > 0) ||
         (bulkMode === 'both' && bulkI2vPrompts.length > 0)
       )
     : mode === 'carousel'
-      ? images.length > 0 && carouselPrompts.length > 0 && !isGenerating
-      : images.length > 0 && prompt.trim() && !isGenerating
+      ? effectiveSourceImages.length > 0 && carouselPrompts.length > 0 && !isGenerating
+      : false
 
   return (
     <div className="min-h-screen bg-background">
@@ -651,21 +444,9 @@ export function Playground() {
             {/* Mode Selector */}
             <Tabs value={mode} onValueChange={(v) => setMode(v as GenerationMode)}>
               <TabsList>
-                <TabsTrigger value="i2i" className="gap-2">
-                  <Image className="h-4 w-4" />
-                  Edit Image
-                </TabsTrigger>
-                <TabsTrigger value="i2v" className="gap-2">
-                  <Video className="h-4 w-4" />
-                  Animate
-                </TabsTrigger>
-                <TabsTrigger value="pipeline" className="gap-2">
-                  <Layers className="h-4 w-4" />
-                  Full Pipeline
-                </TabsTrigger>
                 <TabsTrigger value="bulk" className="gap-2">
-                  <Grid3X3 className="h-4 w-4" />
-                  Bulk
+                  <Wand2 className="h-4 w-4" />
+                  Create
                 </TabsTrigger>
                 <TabsTrigger value="carousel" className="gap-2">
                   <GalleryHorizontal className="h-4 w-4" />
@@ -673,17 +454,6 @@ export function Playground() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <button
-              type="button"
-              onClick={() => handleSetDefaultMode(mode)}
-              className={`text-xs px-2 py-1 rounded ${
-                defaultMode === mode
-                  ? 'text-primary bg-primary/10'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {defaultMode === mode ? '✓ Default' : 'Set as default'}
-            </button>
           </div>
         </div>
       </div>
@@ -692,66 +462,23 @@ export function Playground() {
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Image Upload - shown in all modes */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  {mode === 'bulk' ? (
-                    <span className="text-lg">Step 1: Upload Your Photos</span>
-                  ) : (
-                    <>
-                      <Image className="h-5 w-5" />
-                      Source Images
-                    </>
-                  )}
-                </CardTitle>
-                <CardDescription>
-                  {mode === 'bulk'
-                    ? 'Add the photos you want to turn into videos. You can upload up to 10 photos.'
-                    : 'Upload or paste URLs of images to transform'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+            {/* Image Source Selection */}
+            <ImageSourceSelector
+              mode={imageSourceMode}
+              onModeChange={setImageSourceMode}
+              uploadContent={
                 <ImageUploadZone
                   images={images}
                   onImagesChange={setImages}
                   multiple={true}
-                  maxFiles={mode === 'bulk' ? 10 : 20}
+                  maxFiles={10}
                   disabled={isGenerating}
                 />
-              </CardContent>
-            </Card>
-
-            {/* Standard Mode: Single Prompt */}
-            {mode !== 'bulk' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Sparkles className="h-5 w-5" />
-                    Prompt
-                  </CardTitle>
-                  <CardDescription>
-                    Describe what you want to create
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <PromptInput
-                    value={prompt}
-                    onChange={setPrompt}
-                    onEnhance={handleEnhancePrompt}
-                    enhancedPrompts={enhancedPrompts}
-                    onSelectEnhanced={setPrompt}
-                    placeholder={
-                      mode === 'i2v'
-                        ? "Describe the motion and camera movement..."
-                        : "Describe the changes you want to make..."
-                    }
-                    disabled={isGenerating}
-                    target={mode === 'i2v' ? 'i2v' : 'i2i'}
-                  />
-                </CardContent>
-              </Card>
-            )}
+              }
+              selectedLibraryImages={selectedLibraryImages}
+              onLibrarySelectionChange={setSelectedLibraryImages}
+              disabled={isGenerating}
+            />
 
             {/* Bulk Mode: Multi-Prompt Inputs */}
             {mode === 'bulk' && (
@@ -890,9 +617,9 @@ export function Playground() {
                       </div>
 
                       {/* Output count */}
-                      {images.length > 0 && bulkI2iPrompts.length > 0 && (
+                      {effectiveSourceImages.length > 0 && bulkI2iPrompts.length > 0 && (
                         <p className="text-sm text-muted-foreground pt-2">
-                          → Will create <strong>{images.length * bulkI2iPrompts.length} photos</strong> ({images.length} uploaded × {bulkI2iPrompts.length} descriptions)
+                          → Will create <strong>{effectiveSourceImages.length * bulkI2iPrompts.length} photos</strong> ({effectiveSourceImages.length} {imageSourceMode === 'library' ? 'selected' : 'uploaded'} × {bulkI2iPrompts.length} descriptions)
                         </p>
                       )}
 
@@ -972,10 +699,10 @@ export function Playground() {
 
                       {bulkI2vPrompts.length > 0 && (
                         <p className="text-sm text-muted-foreground">
-                          {bulkMode === 'both' && images.length > 0 && bulkI2iPrompts.length > 0 ? (
-                            <>→ Will create <strong>{images.length * bulkI2iPrompts.length * bulkI2vPrompts.length} videos</strong> ({images.length * bulkI2iPrompts.length} photos × {bulkI2vPrompts.length} motions)</>
-                          ) : images.length > 0 ? (
-                            <>→ Will create <strong>{images.length * bulkI2vPrompts.length} videos</strong> ({images.length} photos × {bulkI2vPrompts.length} motions)</>
+                          {bulkMode === 'both' && effectiveSourceImages.length > 0 && bulkI2iPrompts.length > 0 ? (
+                            <>→ Will create <strong>{effectiveSourceImages.length * bulkI2iPrompts.length * bulkI2vPrompts.length} videos</strong> ({effectiveSourceImages.length * bulkI2iPrompts.length} photos × {bulkI2vPrompts.length} motions)</>
+                          ) : effectiveSourceImages.length > 0 ? (
+                            <>→ Will create <strong>{effectiveSourceImages.length * bulkI2vPrompts.length} videos</strong> ({effectiveSourceImages.length} {imageSourceMode === 'library' ? 'selected' : 'photos'} × {bulkI2vPrompts.length} motions)</>
                           ) : null}
                         </p>
                       )}
@@ -1037,9 +764,9 @@ export function Playground() {
                   </div>
 
                   {/* Count */}
-                  {images.length > 0 && carouselPrompts.length > 0 && (
+                  {effectiveSourceImages.length > 0 && carouselPrompts.length > 0 && (
                     <p className="text-sm text-muted-foreground">
-                      → Will create <strong>{images.length * carouselPrompts.length} images</strong> ({images.length} source × {carouselPrompts.length} slides)
+                      → Will create <strong>{effectiveSourceImages.length * carouselPrompts.length} images</strong> ({effectiveSourceImages.length} {imageSourceMode === 'library' ? 'selected' : 'source'} × {carouselPrompts.length} slides)
                     </p>
                   )}
 
@@ -1059,28 +786,8 @@ export function Playground() {
               </Card>
             )}
 
-            {/* Progress / Outputs - Standard Mode */}
-            {mode !== 'bulk' && mode !== 'carousel' && isGenerating && (
-              <ProgressMonitor
-                pipelineId={0}
-                steps={pipelineSteps}
-                status={pipelineStatus}
-              />
-            )}
-
-            {mode !== 'bulk' && outputs.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Results</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <OutputGallery outputs={outputs} />
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Bulk/Carousel Mode Progress */}
-            {(mode === 'bulk' || mode === 'carousel') && isGenerating && (
+            {/* Progress */}
+            {isGenerating && (
               bulkPipelineId ? (
                 <BulkProgress
                   pipelineId={bulkPipelineId}
@@ -1099,11 +806,12 @@ export function Playground() {
               )
             )}
 
-            {/* Bulk/Carousel Mode Results */}
-            {(mode === 'bulk' || mode === 'carousel') && bulkGroups.length > 0 && (
+            {/* Results */}
+            {bulkGroups.length > 0 && (
               <BulkResults
                 groups={bulkGroups}
                 totals={bulkTotals}
+                onAnimateSelected={handleAnimateSelectedImages}
               />
             )}
           </div>
@@ -1113,102 +821,10 @@ export function Playground() {
             {/* Model Settings */}
             <Card>
               <CardHeader>
-                <CardTitle>{mode === 'bulk' ? 'Quality Settings' : 'Settings'}</CardTitle>
-                {mode === 'bulk' && (
-                  <CardDescription>Choose which AI models to use</CardDescription>
-                )}
+                <CardTitle>Quality Settings</CardTitle>
+                <CardDescription>Choose which AI models to use</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {(mode === 'i2i' || mode === 'pipeline') && (
-                  <>
-                    <ModelSelector
-                      type="i2i"
-                      value={i2iModel}
-                      onChange={setI2iModel}
-                    />
-
-                    <div className="space-y-2">
-                      <Label>Aspect Ratio</Label>
-                      <select
-                        value={i2iAspectRatio}
-                        onChange={(e) => setI2iAspectRatio(e.target.value)}
-                        className="w-full h-10 px-3 rounded-md border bg-background"
-                      >
-                        <option value="9:16">9:16 (Portrait)</option>
-                        <option value="16:9">16:9 (Landscape)</option>
-                        <option value="1:1">1:1 (Square)</option>
-                        <option value="4:3">4:3</option>
-                        <option value="3:4">3:4</option>
-                      </select>
-                    </div>
-
-                    {/* Quality selector - shown for GPT Image */}
-                    {i2iModel === 'gpt-image-1.5' && (
-                      <div className="space-y-2">
-                        <Label>Quality</Label>
-                        <select
-                          value={i2iQuality}
-                          onChange={(e) => setI2iQuality(e.target.value as 'low' | 'medium' | 'high')}
-                          className="w-full h-10 px-3 rounded-md border bg-background"
-                        >
-                          <option value="low">Low - $0.01/image</option>
-                          <option value="medium">Medium - $0.07/image</option>
-                          <option value="high">High - $0.19/image</option>
-                        </select>
-                      </div>
-                    )}
-
-                    <div>
-                      <Button
-                        variant="outline"
-                        className="w-full justify-start"
-                        onClick={() => setSetModeOpen(true)}
-                      >
-                        <Layers className="h-4 w-4 mr-2" />
-                        {setModeConfig.enabled
-                          ? `Set Mode: ${setModeConfig.variations.length} variations`
-                          : 'Create Photo Set'}
-                      </Button>
-                    </div>
-                  </>
-                )}
-
-                {(mode === 'i2v' || mode === 'pipeline') && (
-                  <>
-                    <ModelSelector
-                      type="i2v"
-                      value={i2vModel}
-                      onChange={setI2vModel}
-                    />
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label>Resolution</Label>
-                        <select
-                          value={resolution}
-                          onChange={(e) => setResolution(e.target.value)}
-                          className="w-full h-10 px-3 rounded-md border bg-background"
-                        >
-                          <option value="480p">480p</option>
-                          <option value="720p">720p</option>
-                          <option value="1080p">1080p</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Duration</Label>
-                        <select
-                          value={duration}
-                          onChange={(e) => setDuration(e.target.value)}
-                          className="w-full h-10 px-3 rounded-md border bg-background"
-                        >
-                          <option value="5">5 seconds</option>
-                          <option value="10">10 seconds</option>
-                        </select>
-                      </div>
-                    </div>
-                  </>
-                )}
-
                 {/* Bulk Mode Settings */}
                 {mode === 'bulk' && (
                   <>
@@ -1342,22 +958,14 @@ export function Playground() {
               </CardContent>
             </Card>
 
-            {/* Bulk Preview */}
+            {/* Cost Preview */}
             {mode === 'bulk' && (
               <BulkPreview
-                sourceCount={images.length}
+                sourceCount={effectiveSourceImages.length}
                 i2iPromptCount={bulkI2iPrompts.length}
                 i2vPromptCount={bulkI2vPrompts.length}
                 bulkMode={bulkMode}
                 costEstimate={bulkCostEstimate}
-              />
-            )}
-
-            {/* Cost Preview - Standard Mode */}
-            {mode !== 'bulk' && (
-              <CostPreview
-                estimate={costEstimate}
-                isLoading={false}
               />
             )}
 
@@ -1366,11 +974,7 @@ export function Playground() {
               size="lg"
               className="w-full"
               disabled={!canGenerate}
-              onClick={
-                mode === 'bulk' ? handleBulkGenerate
-                : mode === 'carousel' ? handleCarouselGenerate
-                : handleGenerate
-              }
+              onClick={mode === 'bulk' ? handleBulkGenerate : handleCarouselGenerate}
             >
               {isGenerating ? (
                 <Loader2 className="h-5 w-5 mr-2 animate-spin" />
@@ -1385,16 +989,11 @@ export function Playground() {
                     : bulkMode === 'videos'
                       ? 'Create Videos'
                       : 'Create Photos + Videos'
-                  : mode === 'carousel'
-                    ? 'Create Carousel'
-                    : 'Generate'}
+                  : 'Create Carousel'}
             </Button>
 
             {/* Help text */}
             <p className="text-xs text-muted-foreground text-center">
-              {mode === 'i2i' && 'Transform your images with AI-powered editing'}
-              {mode === 'i2v' && 'Bring your images to life with video animation'}
-              {mode === 'pipeline' && 'Chain multiple steps: enhance prompts → generate images → create videos'}
               {mode === 'bulk' && 'We\'ll create every combination for you automatically'}
               {mode === 'carousel' && 'Create a story with multiple slides'}
             </p>
@@ -1402,13 +1001,6 @@ export function Playground() {
         </div>
       </div>
 
-      {/* Set Mode Modal */}
-      <SetModeModal
-        isOpen={setModeOpen}
-        onClose={() => setSetModeOpen(false)}
-        config={setModeConfig}
-        onConfigChange={setSetModeConfig}
-      />
     </div>
   )
 }

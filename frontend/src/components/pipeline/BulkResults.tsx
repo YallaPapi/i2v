@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -7,13 +7,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { ChevronDown, Download, Image, Video, ExternalLink } from 'lucide-react'
+import { ChevronDown, Download, Image, Video, ExternalLink, Play, Check, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SourceGroup {
   source_image: string
   source_index: number
-  i2i_outputs: string[]
+  i2i_outputs: string[]  // Full resolution URLs for download/video
+  i2i_thumbnails?: (string | null)[]  // Thumbnail URLs for fast grid loading
   i2v_outputs: string[]
 }
 
@@ -25,10 +26,13 @@ interface BulkResultsProps {
     i2v_generated: number
     total_cost: number
   }
+  onAnimateSelected?: (imageUrls: string[]) => void
 }
 
-export function BulkResults({ groups, totals }: BulkResultsProps) {
+export function BulkResults({ groups, totals, onAnimateSelected }: BulkResultsProps) {
   const [openGroups, setOpenGroups] = useState<Set<number>>(new Set([0]))
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set())
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
 
   const toggleGroup = (index: number) => {
     const newOpen = new Set(openGroups)
@@ -40,8 +44,38 @@ export function BulkResults({ groups, totals }: BulkResultsProps) {
     setOpenGroups(newOpen)
   }
 
+  const toggleImageSelection = useCallback((url: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    setSelectedImages(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(url)) {
+        newSet.delete(url)
+      } else {
+        newSet.add(url)
+      }
+      return newSet
+    })
+  }, [])
+
+  const selectAllImages = useCallback(() => {
+    const allImages = groups.flatMap(g => g.i2i_outputs)
+    setSelectedImages(new Set(allImages))
+  }, [groups])
+
+  const clearSelection = useCallback(() => {
+    setSelectedImages(new Set())
+  }, [])
+
+  const handleAnimateSelected = useCallback(() => {
+    if (onAnimateSelected && selectedImages.size > 0) {
+      onAnimateSelected(Array.from(selectedImages))
+    }
+  }, [onAnimateSelected, selectedImages])
+
   const downloadAll = async () => {
-    // Collect all URLs
     const allUrls = groups.flatMap(g => [...g.i2i_outputs, ...g.i2v_outputs])
     for (const url of allUrls) {
       window.open(url, '_blank')
@@ -57,6 +91,8 @@ export function BulkResults({ groups, totals }: BulkResultsProps) {
   if (groups.length === 0) {
     return null
   }
+
+  const hasI2iOutputs = totals.i2i_generated > 0
 
   return (
     <Card>
@@ -83,6 +119,62 @@ export function BulkResults({ groups, totals }: BulkResultsProps) {
             </Button>
           </div>
         </div>
+
+        {/* Prominent CTA for video creation */}
+        {hasI2iOutputs && onAnimateSelected && !isSelectionMode && totals.i2v_generated === 0 && (
+          <div className="pt-3 border-t mt-3">
+            <Button
+              size="lg"
+              className="w-full gap-2"
+              onClick={() => {
+                selectAllImages()
+                setIsSelectionMode(true)
+              }}
+            >
+              <Video className="h-5 w-5" />
+              Create Videos from These Photos
+            </Button>
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              Turn your {totals.i2i_generated} generated photos into videos
+            </p>
+          </div>
+        )}
+
+        {/* Selection controls for i2i outputs */}
+        {hasI2iOutputs && onAnimateSelected && isSelectionMode && (
+          <div className="flex items-center gap-2 pt-3 border-t mt-3 flex-wrap">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setIsSelectionMode(false)
+                clearSelection()
+              }}
+            >
+              <Square className="h-4 w-4 mr-1" />
+              Cancel
+            </Button>
+            <Button size="sm" variant="ghost" onClick={selectAllImages}>
+              Select All
+            </Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>
+              Clear
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              {selectedImages.size} selected
+            </span>
+            <Button
+              size="sm"
+              variant="default"
+              disabled={selectedImages.size === 0}
+              onClick={handleAnimateSelected}
+              className="ml-auto"
+            >
+              <Play className="h-4 w-4 mr-1" />
+              Animate Selected ({selectedImages.size})
+            </Button>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-3">
         {groups.map((group, idx) => (
@@ -99,8 +191,11 @@ export function BulkResults({ groups, totals }: BulkResultsProps) {
                     src={group.source_image}
                     alt={`Source ${idx + 1}`}
                     className="w-12 h-12 object-cover rounded"
+                    width={48}
+                    height={48}
+                    decoding="async"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect fill="%23f0f0f0" width="24" height="24"/></svg>'
+                      (e.target as HTMLImageElement).src = group.source_image
                     }}
                   />
 
@@ -135,24 +230,56 @@ export function BulkResults({ groups, totals }: BulkResultsProps) {
                         Image Variations
                       </div>
                       <div className="grid grid-cols-4 gap-2">
-                        {group.i2i_outputs.map((url, i) => (
-                          <a
+                        {group.i2i_outputs.map((url, i) => {
+                          const thumbnailUrl = group.i2i_thumbnails?.[i]
+                          return (
+                          <div
                             key={i}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="relative aspect-[9/16] rounded overflow-hidden border group"
+                            className={cn(
+                              "relative aspect-[9/16] rounded overflow-hidden border group cursor-pointer",
+                              isSelectionMode && selectedImages.has(url) && "ring-2 ring-primary ring-offset-2"
+                            )}
+                            onClick={(e) => {
+                              if (isSelectionMode) {
+                                toggleImageSelection(url, e)
+                              } else {
+                                window.open(url, '_blank')  // Open full resolution
+                              }
+                            }}
                           >
                             <img
-                              src={url}
+                              src={thumbnailUrl || url}
                               alt={`Variation ${i + 1}`}
                               className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
                             />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <ExternalLink className="h-5 w-5 text-white" />
-                            </div>
-                          </a>
-                        ))}
+
+                            {/* Selection checkbox overlay */}
+                            {isSelectionMode && (
+                              <div
+                                className={cn(
+                                  "absolute top-2 left-2 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors",
+                                  selectedImages.has(url)
+                                    ? "bg-primary border-primary"
+                                    : "bg-white/80 border-gray-300"
+                                )}
+                              >
+                                {selectedImages.has(url) && (
+                                  <Check className="h-4 w-4 text-white" />
+                                )}
+                              </div>
+                            )}
+
+                            {/* Hover overlay for non-selection mode */}
+                            {!isSelectionMode && (
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <ExternalLink className="h-5 w-5 text-white" />
+                              </div>
+                            )}
+                          </div>
+                        )})}
+
                       </div>
                     </div>
                   )}

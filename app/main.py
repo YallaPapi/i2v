@@ -3,6 +3,7 @@ from typing import Optional, List
 import structlog
 import tempfile
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -250,3 +251,4 @@ async def upload_file(file: UploadFile = File(...)):
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+

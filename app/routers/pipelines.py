@@ -1,6 +1,7 @@
 """Pipeline management API endpoints."""
 
 from typing import Optional, List
+from decimal import Decimal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from app.schemas import (
     BulkCostBreakdown,
     BulkPipelineTotals,
     SourceGroupOutput,
+    AnimateSelectedRequest,
 )
 from app.services.prompt_enhancer import prompt_enhancer
 from app.services.cost_calculator import cost_calculator
@@ -643,6 +645,7 @@ async def create_bulk_pipeline(
                     "images_per_prompt": request.i2i_config.images_per_prompt,
                     "aspect_ratio": request.i2i_config.aspect_ratio,
                     "quality": request.i2i_config.quality,
+                    "negative_prompt": request.i2i_config.negative_prompt,
                 })
                 step.set_inputs({
                     "image_urls": [source_url],
@@ -681,6 +684,7 @@ async def create_bulk_pipeline(
                         "videos_per_image": 1,
                         "resolution": request.i2v_config.resolution,
                         "duration_sec": request.i2v_config.duration_sec,
+                        "negative_prompt": request.i2v_config.negative_prompt,
                     })
                     step.set_inputs({
                         "image_urls": [source_url],
@@ -713,6 +717,7 @@ async def create_bulk_pipeline(
                 source_image=url,
                 source_index=idx,
                 i2i_outputs=[],
+                i2i_thumbnails=[],
                 i2v_outputs=[],
             )
             for idx, url in enumerate(request.source_images)
@@ -768,6 +773,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             aspect_ratio=config.get("aspect_ratio", "9:16"),
                             quality=config.get("quality", "high"),
                             num_images=config.get("images_per_prompt", 1),
+                            negative_prompt=config.get("negative_prompt"),
                         )
                         step.set_outputs({
                             "image_urls": result if isinstance(result, list) else [result],
@@ -782,6 +788,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             model=config["model"],
                             resolution=config.get("resolution", "1080p"),
                             duration_sec=config.get("duration_sec", 5),
+                            negative_prompt=config.get("negative_prompt"),
                         )
                         step.set_outputs({
                             "video_urls": [result],
@@ -834,6 +841,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                                 "videos_per_image": 1,
                                 "resolution": request.i2v_config.resolution,
                                 "duration_sec": request.i2v_config.duration_sec,
+                                "negative_prompt": request.i2v_config.negative_prompt,
                             })
                             step.set_inputs({
                                 "image_urls": [output_url],
@@ -891,7 +899,7 @@ async def get_bulk_pipeline(
 
     # Group outputs by source image
     groups: dict = {}
-    total_cost = 0.0
+    total_cost = Decimal('0')
 
     for step in pipeline.steps:
         inputs = step.get_inputs()
@@ -904,12 +912,14 @@ async def get_bulk_pipeline(
                 source_image=src_url,
                 source_index=src_idx,
                 i2i_outputs=[],
+                i2i_thumbnails=[],
                 i2v_outputs=[],
             )
 
         if step.status == StepStatus.COMPLETED.value and outputs:
             if step.step_type == "i2i":
                 groups[src_idx].i2i_outputs.extend(outputs.get("image_urls", []))
+                groups[src_idx].i2i_thumbnails.extend(outputs.get("thumbnail_urls", []))
             elif step.step_type == "i2v":
                 groups[src_idx].i2v_outputs.extend(outputs.get("video_urls", []))
 
@@ -929,7 +939,232 @@ async def get_bulk_pipeline(
             source_images=len(groups),
             i2i_generated=i2i_generated,
             i2v_generated=i2v_generated,
-            total_cost=total_cost,
+            total_cost=float(total_cost),
         ),
         "created_at": pipeline.created_at,
+    }
+
+
+# ============== Animate Selected Images ==============
+
+@router.post("/animate", response_model=BulkPipelineResponse)
+async def animate_selected_images(
+    request: AnimateSelectedRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Create videos from selected images.
+
+    This endpoint takes a list of image URLs and motion prompts,
+    and generates videos for each combination (or 1:1 pairing).
+    """
+    import asyncio
+
+    if not request.image_urls:
+        raise HTTPException(status_code=400, detail="At least one image URL is required")
+    if not request.prompts:
+        raise HTTPException(status_code=400, detail="At least one motion prompt is required")
+
+    # Create pipeline
+    pipeline = Pipeline(
+        name=request.name,
+        status=PipelineStatus.PENDING.value,
+        mode="auto",
+    )
+    db.add(pipeline)
+    db.commit()
+    db.refresh(pipeline)
+
+    # Create i2v steps - each image × each prompt
+    step_order = 0
+    for img_idx, image_url in enumerate(request.image_urls):
+        for prompt_idx, prompt in enumerate(request.prompts):
+            step = PipelineStep(
+                pipeline_id=pipeline.id,
+                step_type="i2v",
+                step_order=step_order,
+                status=StepStatus.PENDING.value,
+            )
+            step.set_config({
+                "model": request.model,
+                "resolution": request.resolution,
+                "duration_sec": request.duration_sec,
+                "negative_prompt": request.negative_prompt,
+            })
+            step.set_inputs({
+                "image_urls": [image_url],
+                "prompts": [prompt],
+                "source_image_index": img_idx,
+                "prompt_index": prompt_idx,
+            })
+
+            cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
+            step.cost_estimate = cost_info["total"]
+
+            db.add(step)
+            step_order += 1
+
+    db.commit()
+
+    # Start execution in background
+    pipeline.status = PipelineStatus.RUNNING.value
+    db.commit()
+
+    pipeline_id = pipeline.id
+
+    async def execute_animate():
+        """Execute all i2v steps concurrently."""
+        session = next(get_db())
+        try:
+            pipeline = session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            if not pipeline:
+                return
+
+            steps = [s for s in pipeline.steps if s.step_type == "i2v"]
+
+            semaphore = asyncio.Semaphore(5)  # Max 5 concurrent
+
+            async def execute_step(step):
+                async with semaphore:
+                    try:
+                        step.status = StepStatus.RUNNING.value
+                        session.commit()
+
+                        config = step.get_config()
+                        inputs = step.get_inputs()
+
+                        result = await generate_video(
+                            image_url=inputs["image_urls"][0],
+                            prompt=inputs["prompts"][0],
+                            model=config["model"],
+                            resolution=config.get("resolution", "1080p"),
+                            duration_sec=config.get("duration_sec", 5),
+                            negative_prompt=config.get("negative_prompt"),
+                        )
+
+                        if result.get("video_url"):
+                            step.set_outputs({"video_urls": [result["video_url"]]})
+                            step.status = StepStatus.COMPLETED.value
+                            step.cost_actual = Decimal(str(result.get("cost", 0)))
+                        else:
+                            step.status = StepStatus.FAILED.value
+                            step.error_message = result.get("error", "Unknown error")
+
+                    except Exception as e:
+                        step.status = StepStatus.FAILED.value
+                        step.error_message = str(e)
+                        logger.error("Animate step failed", step_id=step.id, error=str(e))
+                    finally:
+                        session.commit()
+
+            await asyncio.gather(*[execute_step(s) for s in steps])
+
+            # Update pipeline status
+            session.refresh(pipeline)
+            if all(s.status == StepStatus.COMPLETED.value for s in pipeline.steps):
+                pipeline.status = PipelineStatus.COMPLETED.value
+            elif any(s.status == StepStatus.FAILED.value for s in pipeline.steps):
+                pipeline.status = PipelineStatus.FAILED.value
+            session.commit()
+
+        except Exception as e:
+            logger.error("Animate pipeline failed", pipeline_id=pipeline_id, error=str(e))
+            pipeline = session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            if pipeline:
+                pipeline.status = PipelineStatus.FAILED.value
+                session.commit()
+        finally:
+            session.close()
+
+    background_tasks.add_task(asyncio.create_task, execute_animate())
+
+    # Return initial response with empty groups
+    groups = {}
+    for idx, image_url in enumerate(request.image_urls):
+        groups[idx] = SourceGroupOutput(
+            source_image=image_url,
+            source_index=idx,
+            i2i_outputs=[],
+            i2i_thumbnails=[],
+            i2v_outputs=[],
+        )
+
+    return {
+        "pipeline_id": pipeline.id,
+        "name": pipeline.name,
+        "status": pipeline.status,
+        "groups": list(groups.values()),
+        "totals": BulkPipelineTotals(
+            source_images=len(request.image_urls),
+            i2i_generated=0,
+            i2v_generated=0,
+            total_cost=0.0,
+        ),
+        "created_at": pipeline.created_at,
+    }
+
+
+# ============== Image Library ==============
+
+@router.get("/images/library")
+async def get_image_library(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """
+    Get recently generated images from i2i steps.
+
+    Returns a list of images that can be selected for video generation.
+    """
+    # Get all completed i2i steps with outputs
+    steps = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.step_type == "i2i")
+        .filter(PipelineStep.status == StepStatus.COMPLETED.value)
+        .order_by(PipelineStep.updated_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    images = []
+    for step in steps:
+        outputs = step.get_outputs()
+        inputs = step.get_inputs()
+        config = step.get_config()
+
+        if outputs and outputs.get("image_urls"):
+            image_urls = outputs["image_urls"]
+            thumbnail_urls = outputs.get("thumbnail_urls", [])
+
+            for i, url in enumerate(image_urls):
+                # Get corresponding thumbnail if available
+                thumbnail_url = thumbnail_urls[i] if i < len(thumbnail_urls) else None
+
+                images.append({
+                    "url": url,
+                    "thumbnail_url": thumbnail_url,
+                    "step_id": step.id,
+                    "pipeline_id": step.pipeline_id,
+                    "source_image": inputs.get("image_urls", [""])[0] if inputs.get("image_urls") else None,
+                    "prompt": inputs.get("prompts", [""])[0] if inputs.get("prompts") else None,
+                    "model": config.get("model", "unknown"),
+                    "created_at": step.updated_at.isoformat() if step.updated_at else None,
+                })
+
+    # Get total count
+    total = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.step_type == "i2i")
+        .filter(PipelineStep.status == StepStatus.COMPLETED.value)
+        .count()
+    )
+
+    return {
+        "images": images,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }

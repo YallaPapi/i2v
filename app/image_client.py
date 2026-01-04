@@ -101,7 +101,7 @@ def _build_image_payload(model: ImageModelType, image_url: str, prompt: str,
 
     # Nano Banana Pro Edit (Google's best)
     elif model == "nano-banana-pro":
-        return {
+        payload = {
             "prompt": prompt,
             "image_urls": [image_url],
             "aspect_ratio": aspect_ratio,
@@ -109,16 +109,23 @@ def _build_image_payload(model: ImageModelType, image_url: str, prompt: str,
             "num_images": num_images,
             "output_format": "png",
         }
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+        return payload
 
     # Nano Banana Edit (Budget Google)
     elif model == "nano-banana":
-        return {
+        payload = {
             "prompt": prompt,
             "image_urls": [image_url],
             "aspect_ratio": aspect_ratio,
+            "resolution": "1K",
             "num_images": num_images,
             "output_format": "png",
         }
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+        return payload
 
     else:
         raise ValueError(f"Unknown image model: {model}")

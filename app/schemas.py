@@ -309,6 +309,7 @@ class BulkI2IConfig(BaseModel):
     images_per_prompt: int = 1
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
+    negative_prompt: Optional[str] = None
 
 
 class BulkI2VConfig(BaseModel):
@@ -317,6 +318,7 @@ class BulkI2VConfig(BaseModel):
     model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10] = 5
+    negative_prompt: Optional[str] = None
 
 
 class BulkPipelineCreate(BaseModel):
@@ -333,7 +335,8 @@ class SourceGroupOutput(BaseModel):
     """Outputs grouped by source image."""
     source_image: str
     source_index: int
-    i2i_outputs: List[str] = []
+    i2i_outputs: List[str] = []  # Full resolution image URLs
+    i2i_thumbnails: List[Optional[str]] = []  # Thumbnail URLs for fast loading
     i2v_outputs: List[str] = []
 
 
@@ -371,3 +374,16 @@ class BulkCostEstimateResponse(BaseModel):
     breakdown: BulkCostBreakdown
     combinations: dict  # Matrix info: {"sources": 3, "i2i_prompts": 2, "i2v_prompts": 2, ...}
     currency: str = "USD"
+
+
+# ============== Animate Selected Images ==============
+
+class AnimateSelectedRequest(BaseModel):
+    """Request to create videos from selected images."""
+    image_urls: List[str]  # URLs of images to animate
+    prompts: List[str]  # Motion prompts
+    model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
+    resolution: Literal["480p", "720p", "1080p"] = "1080p"
+    duration_sec: Literal[5, 10] = 5
+    negative_prompt: Optional[str] = None
+    name: str = "Animate Selected"

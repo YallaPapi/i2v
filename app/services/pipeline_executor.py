@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import Pipeline, PipelineStep, PipelineStatus, StepStatus, StepType
 from app.services.prompt_enhancer import prompt_enhancer
 from app.services.cost_calculator import cost_calculator
+from app.services.thumbnail import generate_thumbnails_batch
 
 logger = structlog.get_logger()
 
@@ -288,8 +289,12 @@ class PipelineExecutor:
                 )
                 results.extend(result if isinstance(result, list) else [result])
 
+        # Generate thumbnails for fast loading (originals preserved for download/video)
+        thumbnail_urls = await generate_thumbnails_batch(results)
+
         return {
-            "image_urls": results,
+            "image_urls": results,  # Full resolution for downloads/video
+            "thumbnail_urls": thumbnail_urls,  # Small previews for website grid
             "items": [{"url": url, "type": "image"} for url in results],
             "count": len(results),
         }
