@@ -26,6 +26,11 @@ structlog==24.4.0
 # Monitoring
 prometheus-client==0.21.0
 
+# Production Hardening
+portalocker>=2.10.0
+atomicwrites>=1.4.0
+orjson>=3.10.0
+
 # Image Processing
 Pillow>=10.0.0
 

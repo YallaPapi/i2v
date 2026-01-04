@@ -37,7 +37,21 @@ async def lifespan(app: FastAPI):
         poll_interval=settings.worker_poll_interval_seconds,
     )
     init_db()
+
+    # Recover interrupted jobs from previous crash (Production Hardening Principle 3)
+    try:
+        from app.services import recover_jobs_on_startup
+        recovered_jobs = await recover_jobs_on_startup()
+        if recovered_jobs:
+            logger.info(
+                "Recovered interrupted jobs from previous session",
+                count=len(recovered_jobs),
+            )
+    except Exception as e:
+        logger.warning("Failed to recover jobs on startup", error=str(e))
+
     yield
+
     # Shutdown
     logger.info("Shutting down i2v service")
 
@@ -77,6 +91,13 @@ async def api_health_check():
 @app.get("/api/status")
 async def get_api_status(db: Session = Depends(get_db)):
     """Get service status with job counts by status."""
+    # Get orchestrator stats for production hardening visibility
+    try:
+        from app.services import job_orchestrator
+        orchestrator_stats = job_orchestrator.get_stats()
+    except Exception:
+        orchestrator_stats = None
+
     return {
         "status": "ok",
         "jobs": {
@@ -90,7 +111,8 @@ async def get_api_status(db: Session = Depends(get_db)):
             "pending": db.query(ImageJob).filter(ImageJob.status == "pending").count(),
             "completed": db.query(ImageJob).filter(ImageJob.status == "completed").count(),
             "failed": db.query(ImageJob).filter(ImageJob.status == "failed").count(),
-        }
+        },
+        "hardening": orchestrator_stats,
     }
 
 
