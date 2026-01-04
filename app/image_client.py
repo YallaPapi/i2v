@@ -226,19 +226,56 @@ async def get_image_result(model: ImageModelType, request_id: str) -> dict:
         result_url = f"{config['status_url']}/requests/{request_id}"
         async with httpx.AsyncClient(timeout=60.0) as client:
             result_response = await client.get(result_url, headers=_get_headers())
+            logger.debug("Image result response", status_code=result_response.status_code)
             if result_response.status_code == 200:
                 result_data = result_response.json()
-                # Different models return images differently
+                logger.debug("Image result data", model=model, keys=list(result_data.keys()), data=str(result_data)[:500])
+
+                image_urls = []
+
+                # Format 1: {"images": [{"url": "..."}, ...]}
                 images = result_data.get("images", [])
                 if images:
-                    result["image_urls"] = [img.get("url") for img in images if img.get("url")]
-                # Some models use "output" instead
-                elif "output" in result_data:
+                    for img in images:
+                        if isinstance(img, dict) and img.get("url"):
+                            image_urls.append(img["url"])
+                        elif isinstance(img, str):
+                            image_urls.append(img)
+
+                # Format 2: {"output": [...]} or {"output": {"url": "..."}}
+                if not image_urls and "output" in result_data:
                     output = result_data["output"]
                     if isinstance(output, list):
-                        result["image_urls"] = [img.get("url") for img in output if isinstance(img, dict) and img.get("url")]
+                        for item in output:
+                            if isinstance(item, dict) and item.get("url"):
+                                image_urls.append(item["url"])
+                            elif isinstance(item, str):
+                                image_urls.append(item)
                     elif isinstance(output, dict) and output.get("url"):
-                        result["image_urls"] = [output["url"]]
+                        image_urls.append(output["url"])
+
+                # Format 3: {"data": {"images": [...]}} (nested)
+                if not image_urls and "data" in result_data:
+                    data_obj = result_data["data"]
+                    if isinstance(data_obj, dict):
+                        nested_images = data_obj.get("images", [])
+                        for img in nested_images:
+                            if isinstance(img, dict) and img.get("url"):
+                                image_urls.append(img["url"])
+                            elif isinstance(img, str):
+                                image_urls.append(img)
+
+                # Format 4: Direct URLs in result (some models)
+                if not image_urls:
+                    for key in ["image_url", "url", "result_url"]:
+                        if key in result_data and result_data[key]:
+                            image_urls.append(result_data[key])
+                            break
+
+                result["image_urls"] = image_urls if image_urls else None
+                logger.debug("Parsed image URLs", count=len(image_urls) if image_urls else 0, urls=image_urls[:2] if image_urls else None)
+            else:
+                logger.error("Failed to fetch image result", status_code=result_response.status_code, text=result_response.text[:200])
 
     elif status == "failed":
         result["error_message"] = data.get("error", "Unknown error from Fal")
