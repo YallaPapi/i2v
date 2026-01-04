@@ -63,6 +63,32 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/health", response_model=HealthResponse)
+async def api_health_check():
+    """Health check endpoint for frontend (under /api prefix)."""
+    return {"status": "ok"}
+
+
+@app.get("/api/status")
+async def get_api_status(db: Session = Depends(get_db)):
+    """Get service status with job counts by status."""
+    return {
+        "status": "ok",
+        "jobs": {
+            "pending": db.query(Job).filter(Job.wan_status == "pending").count(),
+            "submitted": db.query(Job).filter(Job.wan_status == "submitted").count(),
+            "running": db.query(Job).filter(Job.wan_status == "running").count(),
+            "completed": db.query(Job).filter(Job.wan_status == "completed").count(),
+            "failed": db.query(Job).filter(Job.wan_status == "failed").count(),
+        },
+        "image_jobs": {
+            "pending": db.query(ImageJob).filter(ImageJob.status == "pending").count(),
+            "completed": db.query(ImageJob).filter(ImageJob.status == "completed").count(),
+            "failed": db.query(ImageJob).filter(ImageJob.status == "failed").count(),
+        }
+    }
+
+
 @app.post("/jobs", response_model=JobResponse, status_code=201)
 async def create_job(job_data: JobCreate, db: Session = Depends(get_db)):
     """Create a new video generation job."""

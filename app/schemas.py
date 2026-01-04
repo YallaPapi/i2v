@@ -4,14 +4,43 @@ from datetime import datetime
 import json
 
 
+# Model-specific resolution support
+MODEL_RESOLUTIONS = {
+    "wan": ["480p", "720p", "1080p"],
+    "wan21": ["480p", "720p"],
+    "wan22": ["480p", "580p", "720p"],
+    "wan-pro": ["1080p"],
+    "kling": ["720p", "1080p"],
+    "kling-master": ["720p", "1080p"],
+    "kling-standard": ["720p", "1080p"],
+    "veo2": ["720p"],
+    "veo31": ["720p", "1080p"],
+    "veo31-fast": ["720p", "1080p"],
+    "veo31-flf": ["720p", "1080p"],
+    "veo31-fast-flf": ["720p", "1080p"],
+    "sora-2": ["720p"],
+    "sora-2-pro": ["720p", "1080p"],
+}
+
+
 class JobCreate(BaseModel):
     """Schema for creating a new job."""
     image_url: str
     motion_prompt: str
     negative_prompt: Optional[str] = None
-    resolution: Literal["480p", "720p", "1080p"] = "1080p"
+    resolution: Literal["480p", "580p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10] = 5
     model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "wan"
+
+    @field_validator('resolution')
+    @classmethod
+    def validate_resolution_for_model(cls, v, info):
+        """Validate resolution is supported by the selected model."""
+        model = info.data.get('model', 'wan')
+        valid_resolutions = MODEL_RESOLUTIONS.get(model, ["480p", "720p", "1080p"])
+        if v not in valid_resolutions:
+            raise ValueError(f"Resolution '{v}' not supported for model '{model}'. Valid options: {valid_resolutions}")
+        return v
 
 
 class JobResponse(BaseModel):
@@ -115,8 +144,18 @@ class I2VConfig(BaseModel):
     """Config for I2V step."""
     model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
     videos_per_image: int = 1
-    resolution: Literal["480p", "720p", "1080p"] = "1080p"
+    resolution: Literal["480p", "580p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10] = 5
+
+    @field_validator('resolution')
+    @classmethod
+    def validate_resolution_for_model(cls, v, info):
+        """Validate resolution is supported by the selected model."""
+        model = info.data.get('model', 'kling')
+        valid_resolutions = MODEL_RESOLUTIONS.get(model, ["480p", "720p", "1080p"])
+        if v not in valid_resolutions:
+            raise ValueError(f"Resolution '{v}' not supported for model '{model}'. Valid: {valid_resolutions}")
+        return v
 
 
 class PipelineStepCreate(BaseModel):
