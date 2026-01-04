@@ -267,13 +267,15 @@ async def _execute_pipeline_task(pipeline_id: int):
             return urls
 
         async def video_generator(image_url: str, motion_prompt: str, model: str,
-                                  resolution: str = "1080p", duration_sec: int = 5):
+                                  resolution: str = "1080p", duration_sec: int = 5,
+                                  enable_audio: bool = False):
             url = await generate_video(
                 image_url=image_url,
                 prompt=motion_prompt,
                 model=model,
                 resolution=resolution,
                 duration_sec=duration_sec,
+                enable_audio=enable_audio,
             )
             return url
 
@@ -685,6 +687,7 @@ async def create_bulk_pipeline(
                         "resolution": request.i2v_config.resolution,
                         "duration_sec": request.i2v_config.duration_sec,
                         "negative_prompt": request.i2v_config.negative_prompt,
+                        "enable_audio": request.i2v_config.enable_audio,
                     })
                     step.set_inputs({
                         "image_urls": [source_url],
@@ -842,6 +845,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                                 "resolution": request.i2v_config.resolution,
                                 "duration_sec": request.i2v_config.duration_sec,
                                 "negative_prompt": request.i2v_config.negative_prompt,
+                                "enable_audio": request.i2v_config.enable_audio,
                             })
                             step.set_inputs({
                                 "image_urls": [output_url],
@@ -991,6 +995,7 @@ async def animate_selected_images(
                 "resolution": request.resolution,
                 "duration_sec": request.duration_sec,
                 "negative_prompt": request.negative_prompt,
+                "enable_audio": request.enable_audio,
             })
             step.set_inputs({
                 "image_urls": [image_url],

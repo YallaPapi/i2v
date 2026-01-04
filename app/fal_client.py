@@ -109,12 +109,13 @@ def _get_headers() -> dict:
 
 
 def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str,
-                   duration_sec: int, negative_prompt: str | None = None) -> dict:
+                   duration_sec: int, negative_prompt: str | None = None,
+                   enable_audio: bool = False) -> dict:
     """Build request payload based on model type."""
     # Use default negative prompt if none specified
     neg_prompt = negative_prompt if negative_prompt is not None else DEFAULT_NEGATIVE_PROMPT
 
-    # Wan models (wan, wan21, wan22, wan-pro)
+    # Wan models (wan, wan21, wan22, wan-pro) - duration: 5 or 10 seconds
     if model in ("wan", "wan21", "wan22", "wan-pro"):
         return {
             "prompt": prompt,
@@ -126,7 +127,7 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
             "enable_prompt_expansion": True,
             "enable_safety_checker": True,
         }
-    # Kling models (all variants)
+    # Kling models (all variants) - duration: 5 or 10 seconds
     elif model in ("kling", "kling-master", "kling-standard"):
         return {
             "prompt": prompt,
@@ -135,41 +136,41 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
             "aspect_ratio": "9:16",
             "negative_prompt": neg_prompt,
         }
-    # Veo2 model
+    # Veo2 model - duration: 5-8 seconds (fixed)
     elif model == "veo2":
         return {
             "prompt": prompt,
             "image_url": image_url,
-            "duration": "5s",  # Veo2 supports 5-8s
+            "duration": "5s",
             "aspect_ratio": "9:16",
         }
-    # Veo 3.1 models (image-to-video)
+    # Veo 3.1 models (image-to-video) - duration: 4, 6, 8 seconds
     elif model in ("veo31", "veo31-fast"):
-        # Map duration to valid options: 4s, 6s, 8s
-        duration_map = {5: "6s", 10: "8s"}
+        # Map to valid Veo durations: 4s, 6s, 8s
+        veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
         return {
             "prompt": prompt,
             "image_url": image_url,
-            "duration": duration_map.get(duration_sec, "6s"),
+            "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
-            "enable_audio": False,  # Set True to add audio (costs more)
+            "enable_audio": enable_audio,  # Audio costs 1.5-2x more
         }
-    # Veo 3.1 First-Last Frame models (require two images)
+    # Veo 3.1 First-Last Frame models - duration: 4, 6, 8 seconds
     elif model in ("veo31-flf", "veo31-fast-flf"):
-        duration_map = {5: "6s", 10: "8s"}
+        veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
         return {
             "prompt": prompt,
             "first_frame_image": image_url,
             "last_frame_image": image_url,  # Same image for now - can be extended
-            "duration": duration_map.get(duration_sec, "6s"),
+            "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
-            "enable_audio": False,
+            "enable_audio": enable_audio,
         }
-    # Sora 2 models (OpenAI)
+    # Sora 2 models (OpenAI) - duration: 4, 8, 12 seconds
     elif model in ("sora-2", "sora-2-pro"):
-        # Sora supports 4, 8, 12 seconds
-        duration_map = {5: 4, 10: 8}
-        sora_duration = duration_map.get(duration_sec, 4)
+        # Map to valid Sora durations: 4, 8, 12
+        sora_duration_map = {4: 4, 5: 4, 8: 8, 10: 8, 12: 12}
+        sora_duration = sora_duration_map.get(duration_sec, 4)
         # Resolution: sora-2 = 720p only, sora-2-pro = 720p or 1080p
         sora_resolution = "1080p" if model == "sora-2-pro" and resolution == "1080p" else "720p"
         return {
@@ -195,6 +196,7 @@ async def submit_job(
     resolution: str,
     duration_sec: int,
     negative_prompt: str | None = None,
+    enable_audio: bool = False,
 ) -> str:
     """
     Submit a job to Fal's queue.
@@ -205,7 +207,7 @@ async def submit_job(
         raise ValueError(f"Unknown model: {model}")
 
     config = MODELS[model]
-    payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec, negative_prompt)
+    payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec, negative_prompt, enable_audio)
 
     logger.debug("Submitting job to Fal", model=model, image_url=image_url, resolution=resolution)
 

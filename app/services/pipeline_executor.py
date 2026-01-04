@@ -316,6 +316,7 @@ class PipelineExecutor:
         videos_per = config.get("videos_per_image", 1)
         resolution = config.get("resolution", "1080p")
         duration = config.get("duration_sec", 5)
+        enable_audio = config.get("enable_audio", False)
 
         # Generate videos
         results = []
@@ -328,6 +329,7 @@ class PipelineExecutor:
                     model=model,
                     resolution=resolution,
                     duration_sec=duration,
+                    enable_audio=enable_audio,
                 )
                 results.append(result)
 

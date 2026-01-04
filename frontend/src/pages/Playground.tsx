@@ -47,6 +47,49 @@ export function Playground() {
   const [i2vModel, setI2vModel] = useState('kling')
   const [resolution, setResolution] = useState('1080p')
   const [duration, setDuration] = useState('5')
+  const [enableAudio, setEnableAudio] = useState(false)
+
+  // Model-specific duration options
+  const getDurationOptions = (model: string) => {
+    if (model.startsWith('veo')) {
+      return [
+        { value: '4', label: '4 seconds' },
+        { value: '6', label: '6 seconds' },
+        { value: '8', label: '8 seconds' },
+      ]
+    }
+    if (model.startsWith('sora')) {
+      return [
+        { value: '4', label: '4 seconds' },
+        { value: '8', label: '8 seconds' },
+        { value: '12', label: '12 seconds' },
+      ]
+    }
+    // Kling, Wan models: 5 or 10 seconds
+    return [
+      { value: '5', label: '5 seconds' },
+      { value: '10', label: '10 seconds' },
+    ]
+  }
+
+  // Check if model supports audio (Veo 3.1 models only)
+  const supportsAudio = (model: string) => {
+    return ['veo31', 'veo31-fast', 'veo31-flf', 'veo31-fast-flf'].includes(model)
+  }
+
+  // Reset duration when model changes (to a valid value for the new model)
+  const handleI2vModelChange = (newModel: string) => {
+    setI2vModel(newModel)
+    const options = getDurationOptions(newModel)
+    const currentDurationValid = options.some(opt => opt.value === duration)
+    if (!currentDurationValid) {
+      setDuration(options[0].value)
+    }
+    // Disable audio if new model doesn't support it
+    if (!supportsAudio(newModel)) {
+      setEnableAudio(false)
+    }
+  }
 
   // Pipeline State
   const [isGenerating, setIsGenerating] = useState(false)
@@ -170,6 +213,7 @@ export function Playground() {
             resolution,
             duration_sec: parseInt(duration),
             negative_prompt: bulkI2vNegativePrompt || undefined,
+            enable_audio: supportsAudio(i2vModel) ? enableAudio : false,
           },
         }),
       })
@@ -187,7 +231,7 @@ export function Playground() {
     } catch (error) {
       console.error('Failed to estimate bulk cost:', error)
     }
-  }, [effectiveSourceImages, bulkMode, bulkI2iPrompts, bulkI2iNegativePrompt, bulkI2vPrompts, bulkI2vNegativePrompt, i2iModel, i2iAspectRatio, i2iQuality, i2vModel, resolution, duration])
+  }, [effectiveSourceImages, bulkMode, bulkI2iPrompts, bulkI2iNegativePrompt, bulkI2vPrompts, bulkI2vNegativePrompt, i2iModel, i2iAspectRatio, i2iQuality, i2vModel, resolution, duration, enableAudio])
 
   // Recalculate bulk cost when settings change
   useEffect(() => {
@@ -233,7 +277,8 @@ export function Playground() {
             resolution,
             duration_sec: parseInt(duration),
             negative_prompt: bulkI2vNegativePrompt || undefined,
-          } : { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration) },
+            enable_audio: supportsAudio(i2vModel) ? enableAudio : false,
+          } : { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration), enable_audio: false },
         }),
       })
 
@@ -317,7 +362,7 @@ export function Playground() {
             quality: i2iQuality,
             negative_prompt: carouselNegativePrompt || undefined,
           },
-          i2v_config: { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration) },
+          i2v_config: { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration), enable_audio: false },
         }),
       })
 
@@ -374,6 +419,7 @@ export function Playground() {
           resolution,
           duration_sec: parseInt(duration),
           negative_prompt: bulkI2vNegativePrompt || undefined,
+          enable_audio: supportsAudio(i2vModel) ? enableAudio : false,
         }),
       })
 
@@ -879,7 +925,7 @@ export function Playground() {
                           <ModelSelector
                             type="i2v"
                             value={i2vModel}
-                            onChange={setI2vModel}
+                            onChange={handleI2vModelChange}
                           />
                         </div>
 
@@ -903,11 +949,39 @@ export function Playground() {
                               onChange={(e) => setDuration(e.target.value)}
                               className="w-full h-10 px-3 rounded-md border bg-background"
                             >
-                              <option value="5">5 seconds</option>
-                              <option value="10">10 seconds</option>
+                              {getDurationOptions(i2vModel).map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
                             </select>
                           </div>
                         </div>
+
+                        {/* Audio toggle for Veo 3.1 models */}
+                        {supportsAudio(i2vModel) && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label>Generate with audio</Label>
+                              <button
+                                type="button"
+                                onClick={() => setEnableAudio(!enableAudio)}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                  enableAudio ? 'bg-primary' : 'bg-muted'
+                                }`}
+                              >
+                                <span
+                                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                    enableAudio ? 'translate-x-6' : 'translate-x-1'
+                                  }`}
+                                />
+                              </button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {enableAudio
+                                ? 'Audio enabled - costs ~1.5-2x more'
+                                : 'Audio disabled - lower cost'}
+                            </p>
+                          </div>
+                        )}
                       </>
                     )}
                   </>

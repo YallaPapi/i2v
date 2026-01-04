@@ -55,13 +55,14 @@ async def generate_video(
     resolution: str = "1080p",
     duration_sec: int = 5,
     negative_prompt: Optional[str] = None,
+    enable_audio: bool = False,
 ) -> str:
     """
     Generate a single video from an image.
 
     Returns the video URL.
     """
-    logger.info("Generating video", model=model, image_url=image_url[:50])
+    logger.info("Generating video", model=model, image_url=image_url[:50], enable_audio=enable_audio)
 
     # Validate model
     if model not in VIDEO_MODELS:
@@ -75,6 +76,7 @@ async def generate_video(
         resolution=resolution,
         duration_sec=duration_sec,
         negative_prompt=negative_prompt,
+        enable_audio=enable_audio,
     )
 
     # Wait for completion

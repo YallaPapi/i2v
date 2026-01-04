@@ -3,7 +3,6 @@ import io
 import httpx
 import structlog
 from PIL import Image
-import fal_client
 
 logger = structlog.get_logger()
 
@@ -64,7 +63,8 @@ async def generate_thumbnail(image_url: str) -> str | None:
         output.seek(0)
 
         # Upload to Fal CDN
-        # fal_client.upload accepts file-like objects
+        # Import here to ensure FAL_KEY is set by main.py first
+        import fal_client
         thumbnail_url = fal_client.upload(output, content_type="image/jpeg")
 
         thumb_size = len(output.getvalue())

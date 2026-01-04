@@ -4,9 +4,15 @@ import os
 from pathlib import Path
 import structlog
 from sqlalchemy.orm import Session
-import fal_client
 
 from app.config import settings
+
+# Set FAL_KEY environment variable BEFORE importing fal_client
+if settings.fal_api_key:
+    os.environ["FAL_KEY"] = settings.fal_api_key
+
+import fal_client
+
 from app.database import SessionLocal
 from app.models import UploadCache
 
@@ -15,10 +21,6 @@ logger = structlog.get_logger()
 SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE_MB = 50
 UPLOAD_TIMEOUT_SECONDS = 120
-
-# Set FAL_KEY environment variable for fal_client
-if settings.fal_api_key:
-    os.environ["FAL_KEY"] = settings.fal_api_key
 
 
 def normalize_path(path: Path) -> str:

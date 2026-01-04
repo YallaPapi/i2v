@@ -317,8 +317,9 @@ class BulkI2VConfig(BaseModel):
     prompts: List[str]  # 1-10 motion prompts
     model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
-    duration_sec: Literal[5, 10] = 5
+    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
     negative_prompt: Optional[str] = None
+    enable_audio: bool = False  # Veo 3.1 models only - adds audio (costs 1.5-2x more)
 
 
 class BulkPipelineCreate(BaseModel):
@@ -384,6 +385,7 @@ class AnimateSelectedRequest(BaseModel):
     prompts: List[str]  # Motion prompts
     model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
-    duration_sec: Literal[5, 10] = 5
+    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
     negative_prompt: Optional[str] = None
+    enable_audio: bool = False  # Veo 3.1 models only
     name: str = "Animate Selected"

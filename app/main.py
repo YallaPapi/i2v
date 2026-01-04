@@ -1,15 +1,19 @@
 from contextlib import asynccontextmanager
 from typing import Optional, List
+import os
 import structlog
 import tempfile
 from pathlib import Path
 from datetime import datetime
 
+# Set FAL_KEY before any fal_client imports happen anywhere in the app
+from app.config import settings
+if settings.fal_api_key:
+    os.environ["FAL_KEY"] = settings.fal_api_key
+
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-
-from app.config import settings
 from app.database import get_db, init_db
 from app.models import Job, ImageJob
 from app.schemas import (
