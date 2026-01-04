@@ -1,13 +1,11 @@
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { Video, Image, LayoutDashboard, List } from 'lucide-react'
+import { Video, List, Wand2 } from 'lucide-react'
 import { useHealth } from '@/hooks/useJobs'
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Video Generation', href: '/video', icon: Video },
-  { name: 'Image Generation', href: '/image', icon: Image },
-  { name: 'All Jobs', href: '/jobs', icon: List },
+  { name: 'Playground', href: '/', icon: Wand2 },
+  { name: 'Jobs', href: '/jobs', icon: List },
 ]
 
 export function Layout({ children }: { children: React.ReactNode }) {

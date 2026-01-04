@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,9 @@ class Settings(BaseSettings):
 
     # Required
     fal_api_key: str
+
+    # Optional - for prompt enhancement
+    anthropic_api_key: Optional[str] = None
 
     # Database
     db_path: str = "wan_jobs.db"

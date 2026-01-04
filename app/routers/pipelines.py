@@ -1,0 +1,935 @@
+"""Pipeline management API endpoints."""
+
+from typing import Optional, List
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import Pipeline, PipelineStep, PipelineStatus, StepStatus
+from app.schemas import (
+    PipelineCreate,
+    PipelineUpdate,
+    PipelineResponse,
+    PipelineListResponse,
+    PipelineStepResponse,
+    PromptEnhanceRequest,
+    PromptEnhanceResponse,
+    CostEstimateRequest,
+    CostEstimateResponse,
+    BulkPipelineCreate,
+    BulkPipelineResponse,
+    BulkCostEstimateResponse,
+    BulkCostBreakdown,
+    BulkPipelineTotals,
+    SourceGroupOutput,
+)
+from app.services.prompt_enhancer import prompt_enhancer
+from app.services.cost_calculator import cost_calculator
+from app.services.pipeline_executor import pipeline_executor
+from app.services.generation_service import generate_image, generate_video
+
+logger = structlog.get_logger()
+
+router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+
+# ============== Pipeline CRUD ==============
+
+@router.post("", response_model=PipelineResponse, status_code=201)
+async def create_pipeline(
+    pipeline_data: PipelineCreate,
+    db: Session = Depends(get_db),
+):
+    """Create a new pipeline with steps."""
+    # Create pipeline
+    pipeline = Pipeline(
+        name=pipeline_data.name,
+        mode=pipeline_data.mode,
+        status=PipelineStatus.PENDING.value,
+        description=pipeline_data.description,
+    )
+
+    if pipeline_data.checkpoints:
+        pipeline.set_checkpoints(pipeline_data.checkpoints)
+
+    if pipeline_data.tags:
+        pipeline.set_tags(pipeline_data.tags)
+
+    db.add(pipeline)
+    db.flush()  # Get pipeline ID
+
+    # Create steps
+    for step_data in pipeline_data.steps:
+        step = PipelineStep(
+            pipeline_id=pipeline.id,
+            step_type=step_data.step_type,
+            step_order=step_data.step_order,
+            status=StepStatus.PENDING.value,
+        )
+        step.set_config(step_data.config)
+        if step_data.inputs:
+            step.set_inputs(step_data.inputs)
+
+        # Calculate cost estimate
+        cost_info = _calculate_step_cost_estimate(step_data.step_type, step_data.config)
+        step.cost_estimate = cost_info.get("total", 0)
+
+        db.add(step)
+
+    db.commit()
+    db.refresh(pipeline)
+
+    logger.info("Pipeline created", pipeline_id=pipeline.id, steps=len(pipeline.steps))
+    return pipeline
+
+
+@router.get("", response_model=PipelineListResponse)
+async def list_pipelines(
+    status: Optional[str] = Query(None, description="Filter by status"),
+    tag: Optional[str] = Query(None, description="Filter by tag"),
+    favorites: bool = Query(False, description="Show only favorites"),
+    hidden: bool = Query(False, description="Include hidden pipelines"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """List all pipelines with optional filtering."""
+    query = db.query(Pipeline)
+
+    if status:
+        valid_statuses = ["pending", "running", "paused", "completed", "failed"]
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Must be one of: {valid_statuses}"
+            )
+        query = query.filter(Pipeline.status == status)
+
+    # Filter by tag (search in JSON array)
+    if tag:
+        query = query.filter(Pipeline.tags.like(f'%"{tag}"%'))
+
+    # Filter favorites
+    if favorites:
+        query = query.filter(Pipeline.is_favorite == 1)
+
+    # Hide hidden unless explicitly requested
+    if not hidden:
+        query = query.filter(Pipeline.is_hidden == 0)
+
+    total = query.count()
+    pipelines = query.order_by(Pipeline.created_at.desc()).offset(offset).limit(limit).all()
+
+    return {"pipelines": pipelines, "total": total}
+
+
+@router.get("/{pipeline_id}", response_model=PipelineResponse)
+async def get_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get a specific pipeline by ID."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    return pipeline
+
+
+@router.put("/{pipeline_id}", response_model=PipelineResponse)
+async def update_pipeline(
+    pipeline_id: int,
+    update_data: PipelineUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update a pipeline's configuration."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    if pipeline.status == PipelineStatus.RUNNING.value:
+        raise HTTPException(status_code=400, detail="Cannot update a running pipeline")
+
+    if update_data.name is not None:
+        pipeline.name = update_data.name
+    if update_data.mode is not None:
+        pipeline.mode = update_data.mode
+    if update_data.checkpoints is not None:
+        pipeline.set_checkpoints(update_data.checkpoints)
+    if update_data.tags is not None:
+        pipeline.set_tags(update_data.tags)
+    if update_data.is_favorite is not None:
+        pipeline.is_favorite = 1 if update_data.is_favorite else 0
+    if update_data.is_hidden is not None:
+        pipeline.is_hidden = 1 if update_data.is_hidden else 0
+    if update_data.description is not None:
+        pipeline.description = update_data.description
+
+    db.commit()
+    db.refresh(pipeline)
+
+    return pipeline
+
+
+@router.put("/{pipeline_id}/favorite", response_model=PipelineResponse)
+async def toggle_favorite(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Toggle favorite status for a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    pipeline.is_favorite = 0 if pipeline.is_favorite else 1
+    db.commit()
+    db.refresh(pipeline)
+
+    return pipeline
+
+
+@router.put("/{pipeline_id}/hide", response_model=PipelineResponse)
+async def toggle_hidden(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Toggle hidden status for a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    pipeline.is_hidden = 0 if pipeline.is_hidden else 1
+    db.commit()
+    db.refresh(pipeline)
+
+    return pipeline
+
+
+@router.put("/{pipeline_id}/tags", response_model=PipelineResponse)
+async def update_tags(
+    pipeline_id: int,
+    tags: List[str],
+    db: Session = Depends(get_db),
+):
+    """Update tags for a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    pipeline.set_tags(tags)
+    db.commit()
+    db.refresh(pipeline)
+
+    return pipeline
+
+
+@router.delete("/{pipeline_id}", status_code=204)
+async def delete_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Delete a pipeline and all its steps."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    if pipeline.status == PipelineStatus.RUNNING.value:
+        raise HTTPException(status_code=400, detail="Cannot delete a running pipeline")
+
+    db.delete(pipeline)
+    db.commit()
+
+    logger.info("Pipeline deleted", pipeline_id=pipeline_id)
+
+
+# ============== Pipeline Execution ==============
+
+async def _execute_pipeline_task(pipeline_id: int):
+    """Background task to execute a pipeline."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        # Define generation functions that match executor's expected signatures
+        async def image_generator(source_image_url: str, prompt: str, model: str,
+                                  num_images: int = 1, aspect_ratio: str = "9:16",
+                                  quality: str = "high"):
+            urls = await generate_image(
+                image_url=source_image_url,
+                prompt=prompt,
+                model=model,
+                aspect_ratio=aspect_ratio,
+                quality=quality,
+                num_images=num_images,
+            )
+            return urls
+
+        async def video_generator(image_url: str, motion_prompt: str, model: str,
+                                  resolution: str = "1080p", duration_sec: int = 5):
+            url = await generate_video(
+                image_url=image_url,
+                prompt=motion_prompt,
+                model=model,
+                resolution=resolution,
+                duration_sec=duration_sec,
+            )
+            return url
+
+        await pipeline_executor.execute_pipeline(
+            db=db,
+            pipeline_id=pipeline_id,
+            generate_images_fn=image_generator,
+            generate_videos_fn=video_generator,
+        )
+    except Exception as e:
+        logger.error("Pipeline execution failed", pipeline_id=pipeline_id, error=str(e))
+        # Update status to failed
+        pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+        if pipeline:
+            pipeline.status = PipelineStatus.FAILED.value
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/{pipeline_id}/run", response_model=PipelineResponse)
+async def run_pipeline(
+    pipeline_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Start or resume a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    if pipeline.status == PipelineStatus.RUNNING.value:
+        raise HTTPException(status_code=400, detail="Pipeline is already running")
+
+    if pipeline.status == PipelineStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="Pipeline is already completed")
+
+    # Update status immediately
+    pipeline.status = PipelineStatus.RUNNING.value
+    db.commit()
+
+    logger.info("Pipeline execution starting", pipeline_id=pipeline_id)
+
+    # Execute in background
+    background_tasks.add_task(_execute_pipeline_task, pipeline_id)
+
+    db.refresh(pipeline)
+    return pipeline
+
+
+@router.post("/{pipeline_id}/pause", response_model=PipelineResponse)
+async def pause_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Pause a running pipeline at the next checkpoint."""
+    try:
+        pipeline = await pipeline_executor.pause_pipeline(db, pipeline_id)
+        return pipeline
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{pipeline_id}/cancel", response_model=PipelineResponse)
+async def cancel_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Cancel a running or paused pipeline."""
+    try:
+        pipeline = await pipeline_executor.cancel_pipeline(db, pipeline_id)
+        return pipeline
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Step Management ==============
+
+@router.get("/{pipeline_id}/steps", response_model=List[PipelineStepResponse])
+async def list_steps(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """List all steps for a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    steps = sorted(pipeline.steps, key=lambda s: s.step_order)
+    return steps
+
+
+@router.get("/{pipeline_id}/steps/{step_id}", response_model=PipelineStepResponse)
+async def get_step(
+    pipeline_id: int,
+    step_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get a specific step."""
+    step = db.query(PipelineStep).filter(
+        PipelineStep.id == step_id,
+        PipelineStep.pipeline_id == pipeline_id
+    ).first()
+
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    return step
+
+
+@router.put("/{pipeline_id}/steps/{step_id}", response_model=PipelineStepResponse)
+async def update_step(
+    pipeline_id: int,
+    step_id: int,
+    config: dict,
+    db: Session = Depends(get_db),
+):
+    """Update a step's configuration (only in pending/review status)."""
+    step = db.query(PipelineStep).filter(
+        PipelineStep.id == step_id,
+        PipelineStep.pipeline_id == pipeline_id
+    ).first()
+
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    if step.status not in [StepStatus.PENDING.value, StepStatus.REVIEW.value]:
+        raise HTTPException(status_code=400, detail="Can only update pending or review steps")
+
+    step.set_config(config)
+
+    # Recalculate cost estimate
+    cost_info = _calculate_step_cost_estimate(step.step_type, config)
+    step.cost_estimate = cost_info.get("total", 0)
+
+    db.commit()
+    db.refresh(step)
+
+    return step
+
+
+@router.post("/{pipeline_id}/steps/{step_id}/approve", response_model=PipelineStepResponse)
+async def approve_step(
+    pipeline_id: int,
+    step_id: int,
+    db: Session = Depends(get_db),
+):
+    """Approve a step waiting for review and continue pipeline."""
+    step = db.query(PipelineStep).filter(
+        PipelineStep.id == step_id,
+        PipelineStep.pipeline_id == pipeline_id
+    ).first()
+
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    try:
+        step = await pipeline_executor.approve_step(db, step_id)
+        return step
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{pipeline_id}/steps/{step_id}/retry", response_model=PipelineStepResponse)
+async def retry_step(
+    pipeline_id: int,
+    step_id: int,
+    db: Session = Depends(get_db),
+):
+    """Retry a failed step."""
+    step = db.query(PipelineStep).filter(
+        PipelineStep.id == step_id,
+        PipelineStep.pipeline_id == pipeline_id
+    ).first()
+
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    try:
+        step = await pipeline_executor.retry_step(db, step_id)
+        return step
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Prompt Enhancement ==============
+
+@router.post("/prompts/enhance", response_model=PromptEnhanceResponse)
+async def enhance_prompts(
+    request: PromptEnhanceRequest,
+):
+    """Enhance prompts using AI."""
+    try:
+        # Handle raw mode - return original prompts as-is
+        if request.mode == "raw":
+            return {
+                "original_prompts": request.prompts,
+                "enhanced_prompts": [[p] for p in request.prompts],
+                "total_count": len(request.prompts),
+            }
+
+        enhanced = await prompt_enhancer.enhance_bulk(
+            prompts=request.prompts,
+            target=request.target,
+            count=request.count,
+            style=request.style,
+            theme_focus=request.theme_focus,
+            mode=request.mode,
+            categories=request.categories,
+        )
+
+        total_count = sum(len(variations) for variations in enhanced)
+
+        return {
+            "original_prompts": request.prompts,
+            "enhanced_prompts": enhanced,
+            "total_count": total_count,
+        }
+    except Exception as e:
+        logger.error("Prompt enhancement failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Prompt enhancement failed: {str(e)}")
+
+
+# ============== Cost Estimation ==============
+
+@router.post("/estimate", response_model=CostEstimateResponse)
+async def estimate_cost(
+    request: CostEstimateRequest,
+):
+    """Estimate cost for a pipeline configuration."""
+    steps_data = [
+        {"step_type": step.step_type, "step_order": step.step_order, "config": step.config}
+        for step in request.steps
+    ]
+
+    estimate = cost_calculator.estimate_pipeline_cost(steps_data)
+
+    return estimate
+
+
+# ============== Helper Functions ==============
+
+def _calculate_step_cost_estimate(step_type: str, config: dict) -> dict:
+    """Calculate cost estimate for a single step."""
+    if step_type == "prompt_enhance":
+        return cost_calculator.calculate_prompt_enhance_cost(config)
+    elif step_type == "i2i":
+        return cost_calculator.calculate_i2i_cost(config)
+    elif step_type == "i2v":
+        return cost_calculator.calculate_i2v_cost(config)
+    return {"total": 0}
+
+
+# ============== Bulk Pipeline ==============
+
+@router.post("/bulk/estimate", response_model=BulkCostEstimateResponse)
+async def estimate_bulk_cost(
+    request: BulkPipelineCreate,
+):
+    """Estimate cost for a bulk pipeline configuration."""
+    num_sources = len(request.source_images)
+
+    # Calculate I2I outputs
+    i2i_count = 0
+    i2i_cost_per_image = 0.0
+    i2i_total = 0.0
+
+    if request.i2i_config and request.i2i_config.enabled:
+        i2i_prompts = len(request.i2i_config.prompts)
+        images_per = request.i2i_config.images_per_prompt
+        i2i_count = num_sources * i2i_prompts * images_per
+
+        i2i_cost_info = cost_calculator.calculate_i2i_cost({
+            "model": request.i2i_config.model,
+            "quality": request.i2i_config.quality,
+            "images_per_prompt": 1,
+        }, num_inputs=1)
+        i2i_cost_per_image = i2i_cost_info["unit_price"]
+        i2i_total = i2i_count * i2i_cost_per_image
+
+    # Calculate I2V outputs
+    # If I2I is enabled, videos are created from I2I outputs
+    # Otherwise, from source images directly
+    i2v_input_count = i2i_count if i2i_count > 0 else num_sources
+    i2v_prompts = len(request.i2v_config.prompts)
+    i2v_count = i2v_input_count * i2v_prompts
+
+    i2v_cost_info = cost_calculator.calculate_i2v_cost({
+        "model": request.i2v_config.model,
+        "resolution": request.i2v_config.resolution,
+        "duration_sec": request.i2v_config.duration_sec,
+        "videos_per_image": 1,
+    }, num_inputs=1)
+    i2v_cost_per_video = i2v_cost_info["unit_price"]
+    i2v_total = i2v_count * i2v_cost_per_video
+
+    grand_total = i2i_total + i2v_total
+
+    return {
+        "breakdown": BulkCostBreakdown(
+            i2i_count=i2i_count,
+            i2i_cost_per_image=i2i_cost_per_image,
+            i2i_total=i2i_total,
+            i2v_count=i2v_count,
+            i2v_cost_per_video=i2v_cost_per_video,
+            i2v_total=i2v_total,
+            grand_total=grand_total,
+        ),
+        "combinations": {
+            "sources": num_sources,
+            "i2i_prompts": len(request.i2i_config.prompts) if request.i2i_config else 0,
+            "i2v_prompts": i2v_prompts,
+            "total_images": i2i_count,
+            "total_videos": i2v_count,
+        },
+        "currency": "USD",
+    }
+
+
+@router.post("/bulk", response_model=BulkPipelineResponse, status_code=201)
+async def create_bulk_pipeline(
+    request: BulkPipelineCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Create and start a bulk pipeline."""
+    # Validate inputs
+    if not request.source_images:
+        raise HTTPException(status_code=400, detail="At least one source image is required")
+    if len(request.source_images) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 source images allowed")
+
+    # Check that at least one mode has prompts
+    has_i2i = request.i2i_config and request.i2i_config.enabled and request.i2i_config.prompts
+    has_i2v = request.i2v_config and request.i2v_config.prompts
+    if not has_i2i and not has_i2v:
+        raise HTTPException(status_code=400, detail="At least one prompt is required (photo or video)")
+
+    # Create pipeline
+    pipeline = Pipeline(
+        name=request.name,
+        mode="auto",
+        status=PipelineStatus.PENDING.value,
+        description=request.description,
+    )
+    if request.tags:
+        pipeline.set_tags(request.tags)
+
+    db.add(pipeline)
+    db.flush()
+
+    step_order = 0
+
+    # Create I2I steps for each source × prompt combination
+    i2i_outputs_map = {}  # source_idx -> list of step IDs
+
+    if request.i2i_config and request.i2i_config.enabled:
+        for src_idx, source_url in enumerate(request.source_images):
+            i2i_outputs_map[src_idx] = []
+            for prompt_idx, prompt in enumerate(request.i2i_config.prompts):
+                step = PipelineStep(
+                    pipeline_id=pipeline.id,
+                    step_type="i2i",
+                    step_order=step_order,
+                    status=StepStatus.PENDING.value,
+                )
+                step.set_config({
+                    "model": request.i2i_config.model,
+                    "images_per_prompt": request.i2i_config.images_per_prompt,
+                    "aspect_ratio": request.i2i_config.aspect_ratio,
+                    "quality": request.i2i_config.quality,
+                })
+                step.set_inputs({
+                    "image_urls": [source_url],
+                    "prompts": [prompt],
+                    "source_image_index": src_idx,
+                    "prompt_index": prompt_idx,
+                })
+
+                # Calculate cost estimate
+                cost_info = cost_calculator.calculate_i2i_cost(step.get_config(), 1)
+                step.cost_estimate = cost_info["total"]
+
+                db.add(step)
+                db.flush()
+                i2i_outputs_map[src_idx].append(step.id)
+                step_order += 1
+
+    # Create I2V steps (only if we have video prompts)
+    if has_i2v:
+        if request.i2i_config and request.i2i_config.enabled:
+            # I2V steps will be created dynamically after I2I completes
+            # Store the config for the executor to use
+            pipeline.set_checkpoints([])  # Use checkpoints field to store bulk config temporarily
+        else:
+            # No I2I, create I2V steps directly from source images
+            for src_idx, source_url in enumerate(request.source_images):
+                for prompt_idx, prompt in enumerate(request.i2v_config.prompts):
+                    step = PipelineStep(
+                        pipeline_id=pipeline.id,
+                        step_type="i2v",
+                        step_order=step_order,
+                        status=StepStatus.PENDING.value,
+                    )
+                    step.set_config({
+                        "model": request.i2v_config.model,
+                        "videos_per_image": 1,
+                        "resolution": request.i2v_config.resolution,
+                        "duration_sec": request.i2v_config.duration_sec,
+                    })
+                    step.set_inputs({
+                        "image_urls": [source_url],
+                        "prompts": [prompt],
+                        "source_image_index": src_idx,
+                        "prompt_index": prompt_idx,
+                    })
+
+                    cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
+                    step.cost_estimate = cost_info["total"]
+
+                    db.add(step)
+                    step_order += 1
+
+    db.commit()
+    db.refresh(pipeline)
+
+    logger.info("Bulk pipeline created", pipeline_id=pipeline.id, steps=len(pipeline.steps))
+
+    # Start execution in background
+    background_tasks.add_task(_execute_bulk_pipeline_task, pipeline.id, request)
+
+    # Return initial response
+    return {
+        "pipeline_id": pipeline.id,
+        "name": pipeline.name,
+        "status": pipeline.status,
+        "groups": [
+            SourceGroupOutput(
+                source_image=url,
+                source_index=idx,
+                i2i_outputs=[],
+                i2v_outputs=[],
+            )
+            for idx, url in enumerate(request.source_images)
+        ],
+        "totals": BulkPipelineTotals(
+            source_images=len(request.source_images),
+            i2i_generated=0,
+            i2v_generated=0,
+            total_cost=0.0,
+        ),
+        "created_at": pipeline.created_at,
+    }
+
+
+async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCreate):
+    """Background task to execute a bulk pipeline with concurrency control."""
+    from app.database import SessionLocal
+    import asyncio
+
+    db = SessionLocal()
+    MAX_CONCURRENT = 3
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    try:
+        pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+        if not pipeline:
+            return
+
+        pipeline.status = PipelineStatus.RUNNING.value
+        db.commit()
+
+        # Get all steps
+        steps = sorted(pipeline.steps, key=lambda s: s.step_order)
+
+        # Separate I2I and I2V steps
+        i2i_steps = [s for s in steps if s.step_type == "i2i"]
+        i2v_steps = [s for s in steps if s.step_type == "i2v"]
+
+        async def execute_step_with_semaphore(step: PipelineStep):
+            async with semaphore:
+                step.status = StepStatus.RUNNING.value
+                db.commit()
+
+                try:
+                    config = step.get_config()
+                    inputs = step.get_inputs()
+
+                    if step.step_type == "i2i":
+                        result = await generate_image(
+                            image_url=inputs["image_urls"][0],
+                            prompt=inputs["prompts"][0],
+                            model=config["model"],
+                            aspect_ratio=config.get("aspect_ratio", "9:16"),
+                            quality=config.get("quality", "high"),
+                            num_images=config.get("images_per_prompt", 1),
+                        )
+                        step.set_outputs({
+                            "image_urls": result if isinstance(result, list) else [result],
+                            "items": [{"url": url, "type": "image"} for url in (result if isinstance(result, list) else [result])],
+                            "count": len(result) if isinstance(result, list) else 1,
+                        })
+
+                    elif step.step_type == "i2v":
+                        result = await generate_video(
+                            image_url=inputs["image_urls"][0],
+                            prompt=inputs["prompts"][0],
+                            model=config["model"],
+                            resolution=config.get("resolution", "1080p"),
+                            duration_sec=config.get("duration_sec", 5),
+                        )
+                        step.set_outputs({
+                            "video_urls": [result],
+                            "items": [{"url": result, "type": "video"}],
+                            "count": 1,
+                        })
+
+                    step.status = StepStatus.COMPLETED.value
+
+                    # Calculate actual cost
+                    if step.step_type == "i2i":
+                        cost_info = cost_calculator.calculate_i2i_cost(config, 1)
+                    else:
+                        cost_info = cost_calculator.calculate_i2v_cost(config, 1)
+                    step.cost_actual = cost_info["total"]
+
+                except Exception as e:
+                    step.status = StepStatus.FAILED.value
+                    step.error_message = str(e)
+                    logger.error("Step failed", step_id=step.id, error=str(e))
+
+                db.commit()
+                return step
+
+        # Execute I2I steps concurrently
+        if i2i_steps:
+            await asyncio.gather(*[execute_step_with_semaphore(s) for s in i2i_steps])
+
+            # If there are I2I steps and I2V config, create I2V steps for each I2I output
+            if request.i2v_config:
+                step_order = len(i2i_steps)
+                for i2i_step in i2i_steps:
+                    if i2i_step.status != StepStatus.COMPLETED.value:
+                        continue
+
+                    outputs = i2i_step.get_outputs()
+                    inputs = i2i_step.get_inputs()
+                    src_idx = inputs.get("source_image_index", 0)
+
+                    for output_url in outputs.get("image_urls", []):
+                        for prompt_idx, prompt in enumerate(request.i2v_config.prompts):
+                            step = PipelineStep(
+                                pipeline_id=pipeline.id,
+                                step_type="i2v",
+                                step_order=step_order,
+                                status=StepStatus.PENDING.value,
+                            )
+                            step.set_config({
+                                "model": request.i2v_config.model,
+                                "videos_per_image": 1,
+                                "resolution": request.i2v_config.resolution,
+                                "duration_sec": request.i2v_config.duration_sec,
+                            })
+                            step.set_inputs({
+                                "image_urls": [output_url],
+                                "prompts": [prompt],
+                                "source_image_index": src_idx,
+                                "prompt_index": prompt_idx,
+                                "from_i2i_step": i2i_step.id,
+                            })
+
+                            cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
+                            step.cost_estimate = cost_info["total"]
+
+                            db.add(step)
+                            step_order += 1
+
+                db.commit()
+
+                # Get newly created I2V steps
+                i2v_steps = [s for s in pipeline.steps if s.step_type == "i2v"]
+
+        # Execute I2V steps concurrently
+        if i2v_steps:
+            await asyncio.gather(*[execute_step_with_semaphore(s) for s in i2v_steps])
+
+        # Check if all steps completed
+        db.refresh(pipeline)
+        all_steps = pipeline.steps
+        if all(s.status == StepStatus.COMPLETED.value for s in all_steps):
+            pipeline.status = PipelineStatus.COMPLETED.value
+        elif any(s.status == StepStatus.FAILED.value for s in all_steps):
+            pipeline.status = PipelineStatus.FAILED.value
+
+        db.commit()
+        logger.info("Bulk pipeline completed", pipeline_id=pipeline_id)
+
+    except Exception as e:
+        logger.error("Bulk pipeline execution failed", pipeline_id=pipeline_id, error=str(e))
+        pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+        if pipeline:
+            pipeline.status = PipelineStatus.FAILED.value
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.get("/bulk/{pipeline_id}", response_model=BulkPipelineResponse)
+async def get_bulk_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get bulk pipeline status with grouped outputs."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    # Group outputs by source image
+    groups: dict = {}
+    total_cost = 0.0
+
+    for step in pipeline.steps:
+        inputs = step.get_inputs()
+        outputs = step.get_outputs()
+        src_idx = inputs.get("source_image_index", 0)
+        src_url = inputs.get("image_urls", [""])[0] if inputs.get("image_urls") else ""
+
+        if src_idx not in groups:
+            groups[src_idx] = SourceGroupOutput(
+                source_image=src_url,
+                source_index=src_idx,
+                i2i_outputs=[],
+                i2v_outputs=[],
+            )
+
+        if step.status == StepStatus.COMPLETED.value and outputs:
+            if step.step_type == "i2i":
+                groups[src_idx].i2i_outputs.extend(outputs.get("image_urls", []))
+            elif step.step_type == "i2v":
+                groups[src_idx].i2v_outputs.extend(outputs.get("video_urls", []))
+
+        if step.cost_actual:
+            total_cost += step.cost_actual
+
+    # Count totals
+    i2i_generated = sum(len(g.i2i_outputs) for g in groups.values())
+    i2v_generated = sum(len(g.i2v_outputs) for g in groups.values())
+
+    return {
+        "pipeline_id": pipeline.id,
+        "name": pipeline.name,
+        "status": pipeline.status,
+        "groups": list(groups.values()),
+        "totals": BulkPipelineTotals(
+            source_images=len(groups),
+            i2i_generated=i2i_generated,
+            i2v_generated=i2v_generated,
+            total_cost=total_cost,
+        ),
+        "created_at": pipeline.created_at,
+    }

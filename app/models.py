@@ -1,8 +1,196 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Index
+from sqlalchemy import Column, Integer, String, DateTime, Index, Text, Numeric, ForeignKey, Enum
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+import enum
+import json
 
 from app.database import Base
+
+
+# ============== Pipeline Enums ==============
+
+class PipelineStatus(str, enum.Enum):
+    """Pipeline execution status."""
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PipelineMode(str, enum.Enum):
+    """Pipeline execution mode."""
+    MANUAL = "manual"
+    AUTO = "auto"
+    CHECKPOINT = "checkpoint"
+
+
+class StepType(str, enum.Enum):
+    """Pipeline step types."""
+    PROMPT_ENHANCE = "prompt_enhance"
+    I2I = "i2i"
+    I2V = "i2v"
+
+
+class StepStatus(str, enum.Enum):
+    """Pipeline step status."""
+    PENDING = "pending"
+    RUNNING = "running"
+    REVIEW = "review"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+# ============== Pipeline Models ==============
+
+class Pipeline(Base):
+    """Pipeline model for chaining generation steps."""
+
+    __tablename__ = "pipelines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, default=PipelineStatus.PENDING.value)
+    mode = Column(String(20), nullable=False, default=PipelineMode.MANUAL.value)
+    checkpoints = Column(Text, nullable=True)  # JSON array of step types that pause
+
+    # Categorization fields
+    tags = Column(Text, nullable=True)  # JSON array of tag strings
+    is_favorite = Column(Integer, nullable=False, default=0)  # SQLite uses INTEGER for bool
+    is_hidden = Column(Integer, nullable=False, default=0)
+    description = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    steps = relationship("PipelineStep", back_populates="pipeline", order_by="PipelineStep.step_order", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_pipeline_status", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Pipeline(id={self.id}, name={self.name}, status={self.status})>"
+
+    def get_checkpoints(self) -> list:
+        """Parse checkpoints JSON."""
+        if self.checkpoints:
+            return json.loads(self.checkpoints)
+        return []
+
+    def set_checkpoints(self, checkpoints: list):
+        """Set checkpoints as JSON."""
+        self.checkpoints = json.dumps(checkpoints)
+
+    def get_tags(self) -> list:
+        """Parse tags JSON."""
+        if self.tags:
+            return json.loads(self.tags)
+        return []
+
+    def set_tags(self, tags: list):
+        """Set tags as JSON."""
+        self.tags = json.dumps(tags)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status,
+            "mode": self.mode,
+            "checkpoints": self.get_checkpoints(),
+            "tags": self.get_tags(),
+            "is_favorite": bool(self.is_favorite),
+            "is_hidden": bool(self.is_hidden),
+            "description": self.description,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "steps": [step.to_dict() for step in self.steps] if self.steps else [],
+        }
+
+
+class PipelineStep(Base):
+    """Individual step within a pipeline."""
+
+    __tablename__ = "pipeline_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pipeline_id = Column(Integer, ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False)
+    step_type = Column(String(20), nullable=False)  # prompt_enhance, i2i, i2v
+    step_order = Column(Integer, nullable=False)
+    config = Column(Text, nullable=True)  # JSON config
+    status = Column(String(20), nullable=False, default=StepStatus.PENDING.value)
+    inputs = Column(Text, nullable=True)  # JSON inputs (image_urls, prompts)
+    outputs = Column(Text, nullable=True)  # JSON outputs (generated content)
+    cost_estimate = Column(Numeric(10, 4), nullable=True)
+    cost_actual = Column(Numeric(10, 4), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    pipeline = relationship("Pipeline", back_populates="steps")
+
+    __table_args__ = (
+        Index("idx_step_pipeline", "pipeline_id"),
+        Index("idx_step_status", "status"),
+        Index("idx_step_order", "pipeline_id", "step_order"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PipelineStep(id={self.id}, type={self.step_type}, order={self.step_order}, status={self.status})>"
+
+    def get_config(self) -> dict:
+        """Parse config JSON."""
+        if self.config:
+            return json.loads(self.config)
+        return {}
+
+    def set_config(self, config: dict):
+        """Set config as JSON."""
+        self.config = json.dumps(config)
+
+    def get_inputs(self) -> dict:
+        """Parse inputs JSON."""
+        if self.inputs:
+            return json.loads(self.inputs)
+        return {}
+
+    def set_inputs(self, inputs: dict):
+        """Set inputs as JSON."""
+        self.inputs = json.dumps(inputs)
+
+    def get_outputs(self) -> dict:
+        """Parse outputs JSON."""
+        if self.outputs:
+            return json.loads(self.outputs)
+        return {}
+
+    def set_outputs(self, outputs: dict):
+        """Set outputs as JSON."""
+        self.outputs = json.dumps(outputs)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "pipeline_id": self.pipeline_id,
+            "step_type": self.step_type,
+            "step_order": self.step_order,
+            "config": self.get_config(),
+            "status": self.status,
+            "inputs": self.get_inputs(),
+            "outputs": self.get_outputs(),
+            "cost_estimate": float(self.cost_estimate) if self.cost_estimate else None,
+            "cost_actual": float(self.cost_actual) if self.cost_actual else None,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class UploadCache(Base):

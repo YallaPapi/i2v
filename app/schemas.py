@@ -82,3 +82,253 @@ class ImageJobResponse(BaseModel):
 class ImageModelsResponse(BaseModel):
     """Schema for listing available image models."""
     models: dict
+
+
+# ============== Pipeline Schemas ==============
+
+class PromptEnhanceConfig(BaseModel):
+    """Config for prompt enhancement step."""
+    input_prompts: List[str]
+    variations_per_prompt: int = 5
+    target_type: Literal["i2i", "i2v"] = "i2i"
+    style_hints: Optional[List[str]] = None
+    theme_focus: Optional[str] = None
+
+
+class I2ISetMode(BaseModel):
+    """Set mode config for I2I variations."""
+    enabled: bool = False
+    variations: Optional[List[Literal["angles", "expressions", "poses", "outfits", "lighting"]]] = None
+    count_per_variation: int = 1
+
+
+class I2IConfig(BaseModel):
+    """Config for I2I step."""
+    model: Literal["gpt-image-1.5", "kling-image", "nano-banana", "nano-banana-pro"] = "gpt-image-1.5"
+    images_per_prompt: int = 1
+    set_mode: Optional[I2ISetMode] = None
+    aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
+    quality: Literal["low", "medium", "high"] = "high"
+
+
+class I2VConfig(BaseModel):
+    """Config for I2V step."""
+    model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
+    videos_per_image: int = 1
+    resolution: Literal["480p", "720p", "1080p"] = "1080p"
+    duration_sec: Literal[5, 10] = 5
+
+
+class PipelineStepCreate(BaseModel):
+    """Schema for creating a pipeline step."""
+    step_type: Literal["prompt_enhance", "i2i", "i2v"]
+    step_order: int
+    config: dict  # Will be PromptEnhanceConfig, I2IConfig, or I2VConfig based on step_type
+    inputs: Optional[dict] = None  # image_urls, prompts
+
+
+class PipelineStepResponse(BaseModel):
+    """Schema for pipeline step response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pipeline_id: int
+    step_type: str
+    step_order: int
+    config: dict
+    status: str
+    inputs: Optional[dict] = None
+    outputs: Optional[dict] = None
+    cost_estimate: Optional[float] = None
+    cost_actual: Optional[float] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator('config', 'inputs', 'outputs', mode='before')
+    @classmethod
+    def parse_json_dict(cls, v):
+        """Parse JSON string to dict if needed."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+
+class PipelineCreate(BaseModel):
+    """Schema for creating a new pipeline."""
+    name: str
+    mode: Literal["manual", "auto", "checkpoint"] = "manual"
+    checkpoints: Optional[List[Literal["prompt_enhance", "i2i", "i2v"]]] = None
+    steps: List[PipelineStepCreate]
+    tags: Optional[List[str]] = None
+    description: Optional[str] = None
+
+
+class PipelineUpdate(BaseModel):
+    """Schema for updating a pipeline."""
+    name: Optional[str] = None
+    mode: Optional[Literal["manual", "auto", "checkpoint"]] = None
+    checkpoints: Optional[List[Literal["prompt_enhance", "i2i", "i2v"]]] = None
+    tags: Optional[List[str]] = None
+    is_favorite: Optional[bool] = None
+    is_hidden: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class PipelineResponse(BaseModel):
+    """Schema for pipeline response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    status: str
+    mode: str
+    checkpoints: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    is_favorite: bool = False
+    is_hidden: bool = False
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    steps: Optional[List[PipelineStepResponse]] = None
+
+    @field_validator('checkpoints', 'tags', mode='before')
+    @classmethod
+    def parse_json_list_checkpoints(cls, v):
+        """Parse JSON string to list if needed."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    @field_validator('is_favorite', 'is_hidden', mode='before')
+    @classmethod
+    def parse_int_to_bool(cls, v):
+        """Convert SQLite integer to bool."""
+        if isinstance(v, int):
+            return bool(v)
+        return v
+
+
+class PipelineListResponse(BaseModel):
+    """Schema for listing pipelines."""
+    pipelines: List[PipelineResponse]
+    total: int
+
+
+# ============== Prompt Enhancement Schemas ==============
+
+class PromptEnhanceRequest(BaseModel):
+    """Request to enhance prompts."""
+    prompts: List[str]
+    count: int = 3
+    target: Literal["i2i", "i2v"] = "i2i"
+    style: str = "photorealistic"
+    theme_focus: Optional[str] = None
+    # New enhancement options
+    mode: Literal["quick_improve", "category_based", "raw"] = "quick_improve"
+    categories: Optional[List[str]] = None  # e.g., ["camera_movement", "motion_intensity"]
+
+
+class PromptEnhanceResponse(BaseModel):
+    """Response with enhanced prompts."""
+    original_prompts: List[str]
+    enhanced_prompts: List[List[str]]  # List of variations per original prompt
+    total_count: int
+
+
+# ============== Cost Estimation Schemas ==============
+
+class StepCostBreakdown(BaseModel):
+    """Cost breakdown for a single step."""
+    step_type: str
+    step_order: int
+    model: Optional[str] = None
+    unit_count: int
+    unit_price: float
+    total: float
+
+
+class CostEstimateRequest(BaseModel):
+    """Request for cost estimation."""
+    steps: List[PipelineStepCreate]
+
+
+class CostEstimateResponse(BaseModel):
+    """Response with cost breakdown."""
+    breakdown: List[StepCostBreakdown]
+    total: float
+    currency: str = "USD"
+
+
+# ============== Bulk Pipeline Schemas ==============
+
+class BulkI2IConfig(BaseModel):
+    """Config for bulk I2I generation (optional step)."""
+    enabled: bool = True
+    prompts: List[str]  # 1-10 prompts
+    model: Literal["gpt-image-1.5", "kling-image", "nano-banana", "nano-banana-pro"] = "gpt-image-1.5"
+    images_per_prompt: int = 1
+    aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
+    quality: Literal["low", "medium", "high"] = "high"
+
+
+class BulkI2VConfig(BaseModel):
+    """Config for bulk I2V generation."""
+    prompts: List[str]  # 1-10 motion prompts
+    model: Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"] = "kling"
+    resolution: Literal["480p", "720p", "1080p"] = "1080p"
+    duration_sec: Literal[5, 10] = 5
+
+
+class BulkPipelineCreate(BaseModel):
+    """Schema for creating a bulk pipeline."""
+    name: str = "Bulk Generation"
+    source_images: List[str]  # 1-10 image URLs
+    i2i_config: Optional[BulkI2IConfig] = None  # Optional: skip to go straight to video
+    i2v_config: BulkI2VConfig
+    tags: Optional[List[str]] = None
+    description: Optional[str] = None
+
+
+class SourceGroupOutput(BaseModel):
+    """Outputs grouped by source image."""
+    source_image: str
+    source_index: int
+    i2i_outputs: List[str] = []
+    i2v_outputs: List[str] = []
+
+
+class BulkPipelineTotals(BaseModel):
+    """Summary counts for bulk pipeline."""
+    source_images: int
+    i2i_generated: int
+    i2v_generated: int
+    total_cost: float
+
+
+class BulkPipelineResponse(BaseModel):
+    """Response for bulk pipeline with grouped outputs."""
+    pipeline_id: int
+    name: str
+    status: str
+    groups: List[SourceGroupOutput]
+    totals: BulkPipelineTotals
+    created_at: datetime
+
+
+class BulkCostBreakdown(BaseModel):
+    """Cost breakdown for bulk pipeline."""
+    i2i_count: int
+    i2i_cost_per_image: float
+    i2i_total: float
+    i2v_count: int
+    i2v_cost_per_video: float
+    i2v_total: float
+    grand_total: float
+
+
+class BulkCostEstimateResponse(BaseModel):
+    """Response for bulk pipeline cost estimation."""
+    breakdown: BulkCostBreakdown
+    combinations: dict  # Matrix info: {"sources": 3, "i2i_prompts": 2, "i2v_prompts": 2, ...}
+    currency: str = "USD"

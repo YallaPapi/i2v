@@ -26,5 +26,5 @@ def get_db():
 
 def init_db():
     """Create all database tables."""
-    from app.models import Job  # noqa: F401
+    from app.models import Job, ImageJob, Pipeline, PipelineStep, UploadCache  # noqa: F401
     Base.metadata.create_all(bind=engine)

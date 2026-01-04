@@ -1,9 +1,10 @@
 """Upload local images to Fal CDN with caching."""
 import hashlib
+import os
 from pathlib import Path
-import httpx
 import structlog
 from sqlalchemy.orm import Session
+import fal_client
 
 from app.config import settings
 from app.database import SessionLocal
@@ -12,6 +13,10 @@ from app.models import UploadCache
 logger = structlog.get_logger()
 
 SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".webp"}
+
+# Set FAL_KEY environment variable for fal_client
+if settings.fal_api_key:
+    os.environ["FAL_KEY"] = settings.fal_api_key
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -51,48 +56,16 @@ def insert_cache(db: Session, local_path: str, file_hash: str, fal_url: str) -> 
 
 
 async def upload_to_fal(file_path: Path) -> str:
-    """Upload file to Fal CDN using REST API."""
-    url = "https://fal.run/api/storage/upload/initiate"
-
-    with open(file_path, "rb") as f:
-        file_content = f.read()
-
-    # Determine content type
-    suffix = file_path.suffix.lower()
-    content_types = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-    }
-    content_type = content_types.get(suffix, "application/octet-stream")
-
-    headers = {
-        "Authorization": f"Key {settings.fal_api_key}",
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            url,
-            headers=headers,
-            files={"file": (file_path.name, file_content, content_type)},
-        )
-
-        if response.status_code >= 400:
-            raise Exception(f"Fal upload error: {response.status_code} - {response.text}")
-
-        data = response.json()
-        fal_url = data.get("url") or data.get("file_url") or data.get("access_url")
-
-        if not fal_url:
-            # If response is just the URL string
-            if isinstance(data, str):
-                fal_url = data
-            else:
-                raise Exception(f"No URL in upload response: {data}")
-
-        logger.info("Uploaded to Fal", file=file_path.name, url=fal_url[:60])
+    """Upload file to Fal CDN using fal_client library."""
+    # fal_client.upload_file is synchronous, use it directly
+    # The library handles authentication via FAL_KEY env var
+    try:
+        fal_url = fal_client.upload_file(file_path)
+        logger.info("Uploaded to Fal", file=file_path.name, url=fal_url[:60] if len(fal_url) > 60 else fal_url)
         return fal_url
+    except Exception as e:
+        logger.error("Fal upload failed", file=file_path.name, error=str(e))
+        raise Exception(f"Fal upload error: {str(e)}")
 
 
 async def upload_image(local_path: str | Path) -> str:

@@ -17,6 +17,7 @@ from app.schemas import (
 )
 from app.image_client import list_image_models
 from app.fal_upload import upload_image, SUPPORTED_FORMATS
+from app.routers.pipelines import router as pipelines_router
 
 logger = structlog.get_logger()
 
@@ -51,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(pipelines_router, prefix="/api")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -181,6 +185,8 @@ async def list_image_jobs(
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload an image file to Fal CDN and return the URL."""
+    import traceback
+
     # Validate file extension
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED_FORMATS:
@@ -190,6 +196,7 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
     # Save to temp file and upload
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             content = await file.read()
@@ -197,11 +204,23 @@ async def upload_file(file: UploadFile = File(...)):
             tmp_path = Path(tmp.name)
 
         fal_url = await upload_image(tmp_path)
-        tmp_path.unlink()  # Clean up temp file
+
+        # Clean up temp file
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
 
         logger.info("File uploaded", filename=file.filename, url=fal_url[:60])
         return {"url": fal_url, "filename": file.filename}
 
     except Exception as e:
-        logger.error("Upload failed", error=str(e))
+        error_details = traceback.format_exc()
+        logger.error("Upload failed", error=str(e), traceback=error_details)
+        # Clean up on error
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")

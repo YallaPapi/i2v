@@ -280,12 +280,41 @@ async def get_job_result(model: ModelType, request_id: str) -> dict:
     if status == "completed":
         # Get the actual result
         result_url = f"{config['status_url']}/requests/{request_id}"
+        logger.debug("Fetching result", url=result_url)
         async with httpx.AsyncClient(timeout=60.0) as client:
             result_response = await client.get(result_url, headers=_get_headers())
+            logger.debug("Result response", status_code=result_response.status_code)
             if result_response.status_code == 200:
                 result_data = result_response.json()
-                video_data = result_data.get("video", {})
-                result["video_url"] = video_data.get("url")
+                logger.debug("Fal result data", model=model, keys=list(result_data.keys()), data=str(result_data)[:500])
+
+                # Try multiple possible locations for video URL
+                video_url = None
+
+                # Format 1: {"video": {"url": "..."}}
+                if "video" in result_data:
+                    video_data = result_data["video"]
+                    if isinstance(video_data, dict):
+                        video_url = video_data.get("url")
+                    elif isinstance(video_data, str):
+                        video_url = video_data
+
+                # Format 2: {"output": {"video_url": "..."}} or {"output": {"video": {"url": "..."}}}
+                if not video_url and "output" in result_data:
+                    output = result_data["output"]
+                    if isinstance(output, dict):
+                        video_url = output.get("video_url") or output.get("url")
+                        if not video_url and "video" in output:
+                            video_url = output["video"].get("url") if isinstance(output["video"], dict) else output["video"]
+
+                # Format 3: {"video_url": "..."} (direct)
+                if not video_url:
+                    video_url = result_data.get("video_url")
+
+                result["video_url"] = video_url
+                logger.debug("Extracted video URL", video_url=video_url[:50] if video_url else None)
+            else:
+                logger.error("Failed to fetch result", status_code=result_response.status_code, text=result_response.text[:200])
 
     elif status == "failed":
         result["error_message"] = data.get("error", "Unknown error from Fal")

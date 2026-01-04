@@ -5,6 +5,7 @@ import { Dashboard } from '@/pages/Dashboard'
 import { VideoGeneration } from '@/pages/VideoGeneration'
 import { ImageGeneration } from '@/pages/ImageGeneration'
 import { Jobs } from '@/pages/Jobs'
+import { Playground } from '@/pages/Playground'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +22,9 @@ function App() {
       <BrowserRouter>
         <Layout>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Playground />} />
+            <Route path="/playground" element={<Playground />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/video" element={<VideoGeneration />} />
             <Route path="/image" element={<ImageGeneration />} />
             <Route path="/jobs" element={<Jobs />} />

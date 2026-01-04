@@ -30,7 +30,7 @@ export function FileUpload({ onUpload, accept = "image/*", className, disabled }
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await fetch('/api/upload', {
+      const response = await fetch('/upload', {
         method: 'POST',
         body: formData,
       })
