@@ -1,11 +1,9 @@
-import { useState, useRef, useMemo, useCallback } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { useState, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Spinner } from '@/components/ui/spinner'
 import { Select } from '@/components/ui/select'
-import { Image as ImageIcon, CheckCircle, XCircle, Clock, ExternalLink, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp } from 'lucide-react'
+import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp } from 'lucide-react'
 import { PipelineCardSkeleton, OutputGridSkeleton } from '@/components/ui/skeleton'
 import {
   usePipelines,
@@ -15,7 +13,6 @@ import {
   useUpdatePipelineTags,
 } from '@/hooks/useJobs'
 import type { PipelineSummary, PipelineDetails } from '@/api/client'
-
 const QUICK_TAGS = ['demo', 'test', 'best', 'wip', 'production']
 const TAG_COLORS: Record<string, string> = {
   demo: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
@@ -24,7 +21,6 @@ const TAG_COLORS: Record<string, string> = {
   wip: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   production: 'bg-green-500/20 text-green-400 border-green-500/30',
 }
-
 function getStatusBadge(status: string) {
   switch (status) {
     case 'completed':
@@ -38,11 +34,9 @@ function getStatusBadge(status: string) {
       return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>
   }
 }
-
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString()
 }
-
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
   { value: 'pending', label: 'Pending' },
@@ -51,7 +45,6 @@ const STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
 ]
-
 // Extract outputs from pipeline details
 function getOutputs(details: PipelineDetails | undefined) {
   if (!details) return []
@@ -65,9 +58,7 @@ function getOutputs(details: PipelineDetails | undefined) {
   }
   return outputs
 }
-
 const PAGE_SIZE = 50
-
 // Individual pipeline item component
 function PipelineItem({
   pipeline,
@@ -90,11 +81,9 @@ function PipelineItem({
   const updateTags = useUpdatePipelineTags()
   const [editingTags, setEditingTags] = useState(false)
   const [newTagInput, setNewTagInput] = useState('')
-
   const pipelineTags = pipeline.tags || []
   const outputs = getOutputs(details)
   const pipelineSelected = outputs.filter(o => selectedOutputs.has(o.url))
-
   const handleAddTag = (tag: string) => {
     if (!pipelineTags.includes(tag)) {
       updateTags.mutate({ id: pipeline.id, tags: [...pipelineTags, tag] })
@@ -102,11 +91,9 @@ function PipelineItem({
     setNewTagInput('')
     setEditingTags(false)
   }
-
   const handleRemoveTag = (tag: string) => {
     updateTags.mutate({ id: pipeline.id, tags: pipelineTags.filter(t => t !== tag) })
   }
-
   return (
     <div className={`border rounded-lg p-4 ${pipeline.is_hidden ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-2">
@@ -153,7 +140,6 @@ function PipelineItem({
           {getStatusBadge(pipeline.status)}
         </div>
       </div>
-
       {/* Tags */}
       <div className="flex flex-wrap items-center gap-1 mb-2">
         {pipelineTags.map(tag => (
@@ -189,7 +175,6 @@ function PipelineItem({
           </button>
         )}
       </div>
-
       {/* Outputs */}
       {pipeline.output_count > 0 && (
         <div className="space-y-2">
@@ -201,7 +186,6 @@ function PipelineItem({
               <img src={pipeline.first_thumbnail_url} alt="" className="h-8 w-6 object-cover rounded ml-2" loading="lazy" />
             )}
           </button>
-
           {isExpanded && (
             <>
               {isLoadingDetails ? (
@@ -251,7 +235,6 @@ function PipelineItem({
     </div>
   )
 }
-
 export function Jobs() {
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedOutputs, setSelectedOutputs] = useState<Set<string>>(new Set())
@@ -259,8 +242,6 @@ export function Jobs() {
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem('demoMode') === 'true')
   const [showHidden, setShowHidden] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
-  const parentRef = useRef<HTMLDivElement>(null)
-
   // Query params
   const queryParams = useMemo(() => ({
     favorites: demoMode || undefined,
@@ -269,22 +250,13 @@ export function Jobs() {
     limit: PAGE_SIZE,
     offset: 0,
   }), [demoMode, showHidden, tagFilter])
-
   const { data, isLoading, isFetching, refetch } = usePipelines(queryParams)
   const pipelines = data?.pipelines || []
   const total = data?.total || 0
-
   // Save demo mode
   if (typeof window !== 'undefined') localStorage.setItem('demoMode', demoMode.toString())
-
-  // Virtualization - only render visible items
-  const rowVirtualizer = useVirtualizer({
     count: pipelines.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 180, // Estimated height per item
-    overscan: 5,
   })
-
   const toggleExpand = useCallback((id: number) => {
     setExpandedOutputs(prev => {
       const next = new Set(prev)
@@ -293,7 +265,6 @@ export function Jobs() {
       return next
     })
   }, [])
-
   const toggleSelect = useCallback((url: string) => {
     setSelectedOutputs(prev => {
       const next = new Set(prev)
@@ -302,7 +273,6 @@ export function Jobs() {
       return next
     })
   }, [])
-
   const selectAll = useCallback((urls: string[], select: boolean) => {
     setSelectedOutputs(prev => {
       const next = new Set(prev)
@@ -310,7 +280,6 @@ export function Jobs() {
       return next
     })
   }, [])
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -335,7 +304,6 @@ export function Jobs() {
           </Button>
         </div>
       </div>
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -349,32 +317,18 @@ export function Jobs() {
               {Array.from({ length: 5 }).map((_, i) => <PipelineCardSkeleton key={i} />)}
             </div>
           ) : pipelines.length > 0 ? (
-            <div ref={parentRef} className="h-[70vh] overflow-auto">
-              <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                  const pipeline = pipelines[virtualRow.index]
-                  return (
-                    <div key={pipeline.id} style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}>
-                      <div className="pb-4">
-                        <PipelineItem
-                          pipeline={pipeline}
-                          isExpanded={expandedOutputs.has(pipeline.id)}
-                          onToggleExpand={() => toggleExpand(pipeline.id)}
-                          selectedOutputs={selectedOutputs}
-                          onToggleSelect={toggleSelect}
-                          onSelectAll={selectAll}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+            <div className="h-[calc(100vh-280px)] overflow-auto space-y-4">
+              {pipelines.map(pipeline => (
+                <PipelineItem
+                  key={pipeline.id}
+                  pipeline={pipeline}
+                  isExpanded={expandedOutputs.has(pipeline.id)}
+                  onToggleExpand={() => toggleExpand(pipeline.id)}
+                  selectedOutputs={selectedOutputs}
+                  onToggleSelect={toggleSelect}
+                  onSelectAll={selectAll}
+                />
+              ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-8">
