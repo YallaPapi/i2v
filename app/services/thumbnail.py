@@ -2,6 +2,8 @@
 import io
 import httpx
 import structlog
+import tempfile
+from pathlib import Path
 from PIL import Image
 
 logger = structlog.get_logger()
@@ -16,13 +18,14 @@ async def generate_thumbnail(image_url: str) -> str | None:
     Generate a thumbnail from an image URL.
 
     1. Downloads the image from URL
-    2. Resizes to 300px width (maintaining aspect ratio)
-    3. Converts to JPEG at 80% quality
+    2. Resizes to 150px width (maintaining aspect ratio)
+    3. Converts to JPEG at 60% quality
     4. Uploads to Fal CDN
     5. Returns thumbnail URL
 
     Returns None if generation fails (caller should fallback to original URL).
     """
+    tmp_path = None
     try:
         # Download the image
         async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as client:
@@ -57,17 +60,17 @@ async def generate_thumbnail(image_url: str) -> str | None:
         # Resize using high-quality Lanczos resampling
         img = img.resize((THUMBNAIL_WIDTH, new_height), Image.Resampling.LANCZOS)
 
-        # Save to bytes as JPEG
-        output = io.BytesIO()
-        img.save(output, format='JPEG', quality=THUMBNAIL_QUALITY, optimize=True)
-        output.seek(0)
+        # Save to temp file as JPEG
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            img.save(tmp, format='JPEG', quality=THUMBNAIL_QUALITY, optimize=True)
+            tmp_path = Path(tmp.name)
 
-        # Upload to Fal CDN
-        # Import here to ensure FAL_KEY is set by main.py first
+        thumb_size = tmp_path.stat().st_size
+
+        # Upload to Fal CDN using upload_file (expects a path)
         import fal_client
-        thumbnail_url = fal_client.upload(output, content_type="image/jpeg")
+        thumbnail_url = fal_client.upload_file(tmp_path)
 
-        thumb_size = len(output.getvalue())
         logger.info("Generated thumbnail",
                    original_url=image_url[:60],
                    thumb_size_kb=thumb_size / 1024,
@@ -80,6 +83,13 @@ async def generate_thumbnail(image_url: str) -> str | None:
                     url=image_url[:80] if image_url else "None",
                     error=str(e))
         return None
+    finally:
+        # Clean up temp file
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 async def generate_thumbnails_batch(image_urls: list[str]) -> list[str | None]:
