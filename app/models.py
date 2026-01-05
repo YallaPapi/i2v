@@ -65,11 +65,14 @@ class Pipeline(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationships
-    steps = relationship("PipelineStep", back_populates="pipeline", order_by="PipelineStep.step_order", cascade="all, delete-orphan")
+    # Relationships - lazy='select' prevents eager loading in list views
+    steps = relationship("PipelineStep", back_populates="pipeline", order_by="PipelineStep.step_order", cascade="all, delete-orphan", lazy="select")
 
     __table_args__ = (
         Index("idx_pipeline_status", "status"),
+        Index("idx_pipeline_favorite", "is_favorite"),
+        Index("idx_pipeline_hidden", "is_hidden"),
+        Index("idx_pipeline_created", "created_at"),
     )
 
     def __repr__(self) -> str:

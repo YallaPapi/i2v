@@ -249,8 +249,52 @@ class PipelineResponse(BaseModel):
 
 
 class PipelineListResponse(BaseModel):
-    """Schema for listing pipelines."""
+    """Schema for listing pipelines (full details - used for detail view)."""
     pipelines: List[PipelineResponse]
+    total: int
+
+
+class PipelineSummary(BaseModel):
+    """Lightweight schema for pipeline list - NO steps/outputs for fast loading."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    tags: Optional[List[str]] = None
+    is_favorite: bool = False
+    is_hidden: bool = False
+    # Summary stats instead of full data
+    output_count: int = 0
+    step_count: int = 0
+    total_cost: Optional[float] = None
+    first_thumbnail_url: Optional[str] = None
+    # Brief info for display
+    model_info: Optional[str] = None  # e.g., "gpt-image-1.5 • medium"
+    first_prompt: Optional[str] = None  # First prompt truncated
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def parse_json_list_tags(cls, v):
+        """Parse JSON string to list if needed."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    @field_validator('is_favorite', 'is_hidden', mode='before')
+    @classmethod
+    def parse_int_to_bool_summary(cls, v):
+        """Convert SQLite integer to bool."""
+        if isinstance(v, int):
+            return bool(v)
+        return v
+
+
+class PipelineSummaryListResponse(BaseModel):
+    """Schema for listing pipelines with lightweight summaries."""
+    pipelines: List[PipelineSummary]
     total: int
 
 

@@ -4,7 +4,8 @@ from typing import Optional, List
 from decimal import Decimal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
+from sqlalchemy import func
 
 from app.database import get_db
 from app.models import Pipeline, PipelineStep, PipelineStatus, StepStatus
@@ -13,6 +14,8 @@ from app.schemas import (
     PipelineUpdate,
     PipelineResponse,
     PipelineListResponse,
+    PipelineSummary,
+    PipelineSummaryListResponse,
     PipelineStepResponse,
     PromptEnhanceRequest,
     PromptEnhanceResponse,
@@ -31,6 +34,7 @@ from app.services.cost_calculator import cost_calculator
 from app.services.pipeline_executor import pipeline_executor
 from app.services.generation_service import generate_image, generate_video
 from app.services.thumbnail import generate_thumbnails_batch
+from app.services.cache import cache_get, cache_set, invalidate_pipelines_cache, make_cache_key
 
 logger = structlog.get_logger()
 
@@ -83,11 +87,12 @@ async def create_pipeline(
     db.commit()
     db.refresh(pipeline)
 
+    await invalidate_pipelines_cache()
     logger.info("Pipeline created", pipeline_id=pipeline.id, steps=len(pipeline.steps))
     return pipeline
 
 
-@router.get("", response_model=PipelineListResponse)
+@router.get("", response_model=PipelineSummaryListResponse)
 async def list_pipelines(
     status: Optional[str] = Query(None, description="Filter by status"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
@@ -97,8 +102,23 @@ async def list_pipelines(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """List all pipelines with optional filtering."""
-    query = db.query(Pipeline)
+    """List all pipelines with lightweight summaries (no steps/outputs loaded)."""
+    import json
+
+    # Check Redis cache first
+    cache_key = make_cache_key("pipelines", status=status, tag=tag, favorites=favorites, hidden=hidden, limit=limit, offset=offset)
+    cached = await cache_get(cache_key)
+    if cached:
+        logger.debug("Cache hit", key=cache_key)
+        return json.loads(cached)
+
+    # Base query - only load pipeline columns, NOT relationships
+    query = db.query(Pipeline).options(
+        load_only(
+            Pipeline.id, Pipeline.name, Pipeline.status, Pipeline.created_at,
+            Pipeline.updated_at, Pipeline.tags, Pipeline.is_favorite, Pipeline.is_hidden
+        )
+    )
 
     if status:
         valid_statuses = ["pending", "running", "paused", "completed", "failed"]
@@ -124,7 +144,103 @@ async def list_pipelines(
     total = query.count()
     pipelines = query.order_by(Pipeline.created_at.desc()).offset(offset).limit(limit).all()
 
-    return {"pipelines": pipelines, "total": total}
+    # Get step counts and summary info efficiently
+    pipeline_ids = [p.id for p in pipelines]
+
+    step_summaries = {}
+    if pipeline_ids:
+        # Query step counts, cost, and output counts using SQLite JSON function
+        from sqlalchemy import text
+
+        # Step counts and costs (fast aggregation)
+        step_query = db.query(
+            PipelineStep.pipeline_id,
+            func.count(PipelineStep.id).label('step_count'),
+            func.sum(PipelineStep.cost_actual).label('total_cost'),
+        ).filter(
+            PipelineStep.pipeline_id.in_(pipeline_ids)
+        ).group_by(PipelineStep.pipeline_id).all()
+
+        for row in step_query:
+            step_summaries[row.pipeline_id] = {
+                'step_count': row.step_count,
+                'total_cost': float(row.total_cost) if row.total_cost else None,
+                'output_count': 0,
+            }
+
+        # Count outputs using SQL JSON function (much faster than loading all JSON)
+        # Use raw connection for SQLite-specific JSON functions
+        placeholders = ','.join([str(pid) for pid in pipeline_ids])
+        output_count_sql = f"""
+            SELECT pipeline_id,
+                   SUM(COALESCE(json_array_length(json_extract(outputs, '$.items')), 0)) as output_count
+            FROM pipeline_steps
+            WHERE pipeline_id IN ({placeholders}) AND outputs IS NOT NULL
+            GROUP BY pipeline_id
+        """
+        output_counts = db.execute(text(output_count_sql)).fetchall()
+        for row in output_counts:
+            if row[0] in step_summaries:
+                step_summaries[row[0]]['output_count'] = row[1] or 0
+
+        # Get ONLY first step (step_order == 0) for model/prompt/thumbnail - single query
+        first_steps = db.query(PipelineStep).options(
+            load_only(PipelineStep.id, PipelineStep.pipeline_id,
+                      PipelineStep.config, PipelineStep.inputs, PipelineStep.outputs)
+        ).filter(
+            PipelineStep.pipeline_id.in_(pipeline_ids),
+            PipelineStep.step_order == 0
+        ).all()
+
+        for step in first_steps:
+            config = step.get_config()
+            inputs = step.get_inputs()
+            outputs = step.get_outputs()
+            items = outputs.get('items', [])
+            thumbnail_urls = outputs.get('thumbnail_urls', [])
+
+            model = config.get('model', '')
+            quality = config.get('quality', '')
+            model_info = f"{model}" + (f" • {quality}" if quality else "")
+
+            prompts = inputs.get('prompts', [])
+            first_prompt = prompts[0][:80] + "..." if prompts and len(prompts[0]) > 80 else (prompts[0] if prompts else None)
+            first_thumb = thumbnail_urls[0] if thumbnail_urls else (items[0].get('url') if items else None)
+
+            if step.pipeline_id not in step_summaries:
+                step_summaries[step.pipeline_id] = {}
+
+            step_summaries[step.pipeline_id].update({
+                'model_info': model_info,
+                'first_prompt': first_prompt,
+                'first_thumbnail_url': first_thumb,
+            })
+
+    # Build lightweight response
+    summaries = []
+    for p in pipelines:
+        summary_data = step_summaries.get(p.id, {})
+        summaries.append(PipelineSummary(
+            id=p.id,
+            name=p.name,
+            status=p.status,
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+            tags=json.loads(p.tags) if p.tags else None,
+            is_favorite=bool(p.is_favorite),
+            is_hidden=bool(p.is_hidden),
+            step_count=summary_data.get('step_count', 0),
+            total_cost=summary_data.get('total_cost'),
+            model_info=summary_data.get('model_info'),
+            first_prompt=summary_data.get('first_prompt'),
+            first_thumbnail_url=summary_data.get('first_thumbnail_url'),
+            output_count=summary_data.get('output_count', 0),
+        ))
+
+    # Cache response before returning
+    response = {"pipelines": summaries, "total": total}
+    await cache_set(cache_key, json.dumps(response, default=str))
+    return response
 
 
 @router.get("/{pipeline_id}", response_model=PipelineResponse)
@@ -171,6 +287,7 @@ async def update_pipeline(
     db.commit()
     db.refresh(pipeline)
 
+    await invalidate_pipelines_cache()
     return pipeline
 
 
@@ -188,6 +305,7 @@ async def toggle_favorite(
     db.commit()
     db.refresh(pipeline)
 
+    await invalidate_pipelines_cache()
     return pipeline
 
 
@@ -205,6 +323,7 @@ async def toggle_hidden(
     db.commit()
     db.refresh(pipeline)
 
+    await invalidate_pipelines_cache()
     return pipeline
 
 
@@ -223,6 +342,7 @@ async def update_tags(
     db.commit()
     db.refresh(pipeline)
 
+    await invalidate_pipelines_cache()
     return pipeline
 
 
@@ -241,6 +361,7 @@ async def delete_pipeline(
 
     db.delete(pipeline)
     db.commit()
+    await invalidate_pipelines_cache()
 
     logger.info("Pipeline deleted", pipeline_id=pipeline_id)
 
