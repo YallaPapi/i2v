@@ -1,31 +1,57 @@
 """Thumbnail generation service for fast image previews."""
+import os
 import io
+import hashlib
 import httpx
 import structlog
-import tempfile
-from pathlib import Path
 from PIL import Image
+import boto3
+from botocore.config import Config
 
 logger = structlog.get_logger()
 
-THUMBNAIL_WIDTH = 150  # Smaller = faster loading
-THUMBNAIL_QUALITY = 60  # Lower quality = smaller file size
+THUMBNAIL_WIDTH = 600  # High quality preview
+THUMBNAIL_QUALITY = 85  # Sharp quality
 DOWNLOAD_TIMEOUT = 15.0
+
+_s3_client = None
+
+
+def get_s3_client():
+    """Get or create S3 client for R2."""
+    global _s3_client
+    if _s3_client is not None:
+        return _s3_client
+
+    # Read env vars at runtime (after load_dotenv has run)
+    access_key = os.getenv("R2_ACCESS_KEY_ID")
+    secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    endpoint = os.getenv("R2_ENDPOINT")
+
+    if all([access_key, secret_key, endpoint]):
+        _s3_client = boto3.client(
+            's3',
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(signature_version='s3v4'),
+            region_name='auto'
+        )
+    return _s3_client
 
 
 async def generate_thumbnail(image_url: str) -> str | None:
     """
-    Generate a thumbnail from an image URL.
+    Generate a thumbnail from an image URL and upload to R2.
 
     1. Downloads the image from URL
-    2. Resizes to 150px width (maintaining aspect ratio)
-    3. Converts to JPEG at 60% quality
-    4. Uploads to Fal CDN
-    5. Returns thumbnail URL
+    2. Resizes to 400px width (maintaining aspect ratio)
+    3. Converts to JPEG at 80% quality
+    4. Uploads to Cloudflare R2
+    5. Returns R2 public URL
 
     Returns None if generation fails (caller should fallback to original URL).
     """
-    tmp_path = None
     try:
         # Download the image
         async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as client:
@@ -60,36 +86,63 @@ async def generate_thumbnail(image_url: str) -> str | None:
         # Resize using high-quality Lanczos resampling
         img = img.resize((THUMBNAIL_WIDTH, new_height), Image.Resampling.LANCZOS)
 
-        # Save to temp file as JPEG
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            img.save(tmp, format='JPEG', quality=THUMBNAIL_QUALITY, optimize=True)
-            tmp_path = Path(tmp.name)
+        # Save to bytes buffer
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=THUMBNAIL_QUALITY, optimize=True)
+        thumb_data = buffer.getvalue()
+        thumb_size = len(thumb_data)
 
-        thumb_size = tmp_path.stat().st_size
+        # Generate unique key from source URL
+        url_hash = hashlib.sha256(image_url.encode()).hexdigest()[:16]
+        key = f"thumbnails/{url_hash}.jpg"
 
-        # Upload to Fal CDN using upload_file (expects a path)
-        import fal_client
-        thumbnail_url = fal_client.upload_file(tmp_path)
+        # Upload to R2
+        s3 = get_s3_client()
+        if s3:
+            bucket = os.getenv("R2_BUCKET_NAME", "i2v")
+            public_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
 
-        logger.info("Generated thumbnail",
-                   original_url=image_url[:60],
-                   thumb_size_kb=thumb_size / 1024,
-                   dimensions=f"{THUMBNAIL_WIDTH}x{new_height}")
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=thumb_data,
+                ContentType='image/jpeg',
+                CacheControl='public, max-age=31536000'
+            )
+            # Return public URL
+            if public_domain:
+                thumbnail_url = f"https://{public_domain}/{key}"
+            else:
+                # Fallback to endpoint-based URL (requires public access)
+                endpoint = os.getenv("R2_ENDPOINT")
+                thumbnail_url = f"{endpoint}/{bucket}/{key}"
 
-        return thumbnail_url
+            logger.info("Generated thumbnail to R2",
+                       key=key,
+                       thumb_size_kb=thumb_size / 1024,
+                       dimensions=f"{THUMBNAIL_WIDTH}x{new_height}")
+            return thumbnail_url
+        else:
+            # Fallback to Fal CDN if R2 not configured
+            import tempfile
+            from pathlib import Path
+            import fal_client
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                tmp.write(thumb_data)
+                tmp_path = Path(tmp.name)
+            try:
+                thumbnail_url = fal_client.upload_file(tmp_path)
+                logger.info("Generated thumbnail to Fal (R2 not configured)",
+                           thumb_size_kb=thumb_size / 1024)
+                return thumbnail_url
+            finally:
+                tmp_path.unlink(missing_ok=True)
 
     except Exception as e:
         logger.error("Thumbnail generation failed",
                     url=image_url[:80] if image_url else "None",
                     error=str(e))
         return None
-    finally:
-        # Clean up temp file
-        if tmp_path and tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except Exception:
-                pass
 
 
 async def generate_thumbnails_batch(image_urls: list[str]) -> list[str | None]:

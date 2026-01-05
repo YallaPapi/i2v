@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -45,14 +45,53 @@ const STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
 ]
+// Hover preview component for full-res image on hover
+function HoverPreview({ output, position }: {
+  output: { url: string; thumbnailUrl?: string; prompt?: string } | null
+  position: { x: number; y: number }
+}) {
+  if (!output) return null
+  const previewWidth = 300
+  const previewHeight = 500
+  const padding = 20
+  let left = position.x + padding
+  let top = position.y - previewHeight / 2
+  if (typeof window !== 'undefined') {
+    if (left + previewWidth > window.innerWidth - padding) {
+      left = position.x - previewWidth - padding
+    }
+    if (top < padding) top = padding
+    if (top + previewHeight > window.innerHeight - padding) {
+      top = window.innerHeight - previewHeight - padding
+    }
+  }
+  return (
+    <div className="fixed z-50 pointer-events-none" style={{ left, top }}>
+      <div className="bg-black/90 rounded-lg shadow-2xl overflow-hidden border border-white/20">
+        <img src={output.url} alt={output.prompt || 'Preview'} className="w-[300px] h-auto max-h-[500px] object-contain" />
+        {output.prompt && (
+          <div className="p-2 text-xs text-white/80 max-w-[300px] truncate">{output.prompt}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Extract outputs from pipeline details
 function getOutputs(details: PipelineDetails | undefined) {
   if (!details) return []
-  const outputs: { url: string; type: 'image' | 'video'; prompt?: string }[] = []
+  const outputs: { url: string; thumbnailUrl?: string; type: 'image' | 'video'; prompt?: string }[] = []
   for (const step of details.steps) {
     if (step.outputs?.items) {
-      for (const item of step.outputs.items) {
-        outputs.push({ url: item.url, type: item.type as 'image' | 'video', prompt: item.prompt })
+      const thumbnailUrls = step.outputs.thumbnail_urls || []
+      for (let i = 0; i < step.outputs.items.length; i++) {
+        const item = step.outputs.items[i]
+        outputs.push({
+          url: item.url,
+          thumbnailUrl: thumbnailUrls[i],
+          type: item.type as 'image' | 'video',
+          prompt: item.prompt
+        })
       }
     }
   }
@@ -81,9 +120,26 @@ function PipelineItem({
   const updateTags = useUpdatePipelineTags()
   const [editingTags, setEditingTags] = useState(false)
   const [newTagInput, setNewTagInput] = useState('')
+  const [hoverOutput, setHoverOutput] = useState<{ url: string; thumbnailUrl?: string; prompt?: string } | null>(null)
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 })
+  const hoverTimeoutRef = useRef<number | null>(null)
   const pipelineTags = pipeline.tags || []
   const outputs = getOutputs(details)
   const pipelineSelected = outputs.filter(o => selectedOutputs.has(o.url))
+  const handleMouseEnter = (output: typeof outputs[0], e: React.MouseEvent) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    hoverTimeoutRef.current = window.setTimeout(() => {
+      setHoverOutput(output)
+      setHoverPosition({ x: e.clientX, y: e.clientY })
+    }, 300)
+  }
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (hoverOutput) setHoverPosition({ x: e.clientX, y: e.clientY })
+  }
+  const handleMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    setHoverOutput(null)
+  }
   const handleAddTag = (tag: string) => {
     if (!pipelineTags.includes(tag)) {
       updateTags.mutate({ id: pipeline.id, tags: [...pipelineTags, tag] })
@@ -196,10 +252,23 @@ function PipelineItem({
                     <Button variant="outline" size="sm" onClick={() => onSelectAll(outputs.map(o => o.url), !outputs.every(o => selectedOutputs.has(o.url)))}>
                       {outputs.every(o => selectedOutputs.has(o.url)) ? 'Deselect All' : 'Select All'}
                     </Button>
-                    <Button variant="default" size="sm" disabled={pipelineSelected.length === 0} onClick={() => {
-                      pipelineSelected.forEach((o, i) => setTimeout(() => {
-                        const a = document.createElement('a'); a.href = o.url; a.download = `output-${i}.${o.type === 'video' ? 'mp4' : 'png'}`; a.click()
-                      }, i * 200))
+                    <Button variant="default" size="sm" disabled={pipelineSelected.length === 0} onClick={async () => {
+                      for (let i = 0; i < pipelineSelected.length; i++) {
+                        const o = pipelineSelected[i]
+                        try {
+                          const response = await fetch(o.url)
+                          const blob = await response.blob()
+                          const blobUrl = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = blobUrl
+                          a.download = `output-${i + 1}.${o.type === 'video' ? 'mp4' : 'png'}`
+                          a.click()
+                          URL.revokeObjectURL(blobUrl)
+                          await new Promise(r => setTimeout(r, 300))
+                        } catch (e) {
+                          console.error('Download failed:', o.url, e)
+                        }
+                      }
                     }}>
                       <Download className="h-4 w-4 mr-1" /> Download ({pipelineSelected.length})
                     </Button>
@@ -209,12 +278,15 @@ function PipelineItem({
                       const isSelected = selectedOutputs.has(output.url)
                       return (
                         <div key={idx} className={`relative aspect-[9/16] bg-muted rounded-lg overflow-hidden cursor-pointer ${isSelected ? 'ring-2 ring-primary' : ''}`}
-                          onClick={() => onToggleSelect(output.url)}>
+                          onClick={() => onToggleSelect(output.url)}
+                          onMouseEnter={(e) => output.type === 'image' && handleMouseEnter(output, e)}
+                          onMouseMove={handleMouseMove}
+                          onMouseLeave={handleMouseLeave}>
                           {output.type === 'video' ? (
                             <video src={output.url} className="w-full h-full object-cover" muted playsInline preload="none"
                               onMouseEnter={(e) => e.currentTarget.play()} onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }} />
                           ) : (
-                            <img src={output.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                            <img src={output.thumbnailUrl || output.url} alt="" className="w-full h-full object-cover" loading="lazy" />
                           )}
                           <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80'}`}>
                             {isSelected && <CheckCircle className="h-3 w-3 text-white" />}
@@ -226,6 +298,7 @@ function PipelineItem({
                       )
                     })}
                   </div>
+                  <HoverPreview output={hoverOutput} position={hoverPosition} />
                 </>
               ) : <p className="text-sm text-muted-foreground">No outputs</p>}
             </>
@@ -255,8 +328,6 @@ export function Jobs() {
   const total = data?.total || 0
   // Save demo mode
   if (typeof window !== 'undefined') localStorage.setItem('demoMode', demoMode.toString())
-    count: pipelines.length,
-  })
   const toggleExpand = useCallback((id: number) => {
     setExpandedOutputs(prev => {
       const next = new Set(prev)

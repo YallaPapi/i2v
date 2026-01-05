@@ -9,6 +9,7 @@ from app.models import Pipeline, PipelineStep, PipelineStatus, StepStatus, StepT
 from app.services.prompt_enhancer import prompt_enhancer
 from app.services.cost_calculator import cost_calculator
 from app.services.thumbnail import generate_thumbnails_batch
+from app.services.r2_cache import cache_videos_batch, cache_images_batch
 
 logger = structlog.get_logger()
 
@@ -289,14 +290,18 @@ class PipelineExecutor:
                 )
                 results.extend(result if isinstance(result, list) else [result])
 
-        # Generate thumbnails for fast loading (originals preserved for download/video)
+        # Cache full-res images to R2 for fast loading
+        cached_image_urls = await cache_images_batch(results, prefix="images")
+        final_image_urls = [cached or orig for cached, orig in zip(cached_image_urls, results)]
+
+        # Generate thumbnails for grid preview (also goes to R2)
         thumbnail_urls = await generate_thumbnails_batch(results)
 
         return {
-            "image_urls": results,  # Full resolution for downloads/video
-            "thumbnail_urls": thumbnail_urls,  # Small previews for website grid
-            "items": [{"url": url, "type": "image"} for url in results],
-            "count": len(results),
+            "image_urls": final_image_urls,  # Full resolution cached on R2
+            "thumbnail_urls": thumbnail_urls,  # Smaller previews for grid
+            "items": [{"url": url, "type": "image"} for url in final_image_urls],
+            "count": len(final_image_urls),
         }
 
     async def _execute_i2v(
@@ -333,10 +338,15 @@ class PipelineExecutor:
                 )
                 results.append(result)
 
+        # Cache videos to R2 for fast loading
+        cached_urls = await cache_videos_batch(results)
+        # Use cached URL if available, otherwise original
+        final_urls = [cached or orig for cached, orig in zip(cached_urls, results)]
+
         return {
-            "video_urls": results,
-            "items": [{"url": url, "type": "video"} for url in results],
-            "count": len(results),
+            "video_urls": final_urls,
+            "items": [{"url": url, "type": "video"} for url in final_urls],
+            "count": len(final_urls),
         }
 
     def _expand_prompts_for_set_mode(self, prompts: list, set_mode: dict) -> list:
