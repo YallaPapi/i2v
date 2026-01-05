@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +10,7 @@ interface PipelineStep {
   id: number
   step_type: string
   status: string
-  config: { model?: string; resolution?: string; duration_sec?: number }
+  config: { model?: string; resolution?: string; duration_sec?: number; quality?: string }
   inputs: { prompts?: string[]; image_urls?: string[] } | null
   outputs: { items?: { url: string; type: string; prompt?: string }[] } | null
   cost_actual: number | null
@@ -65,12 +65,58 @@ const STATUS_OPTIONS = [
   { value: 'failed', label: 'Failed' },
 ]
 
+// Hover preview component for outputs
+function OutputPreview({ output, position }: { output: { url: string; type: 'image' | 'video'; prompt?: string } | null; position: { x: number; y: number } }) {
+  if (!output) return null
+
+  const previewWidth = 300
+  const previewHeight = 500
+  const padding = 20
+
+  let left = position.x + padding
+  let top = position.y - previewHeight / 2
+
+  if (left + previewWidth > window.innerWidth - padding) {
+    left = position.x - previewWidth - padding
+  }
+  if (top < padding) top = padding
+  if (top + previewHeight > window.innerHeight - padding) {
+    top = window.innerHeight - previewHeight - padding
+  }
+
+  return (
+    <div className="fixed z-50 pointer-events-none" style={{ left, top }}>
+      <div className="bg-black/90 rounded-lg shadow-2xl overflow-hidden border border-white/20">
+        {output.type === 'video' ? (
+          <video src={output.url} className="w-[300px] h-auto max-h-[500px] object-contain" autoPlay muted loop playsInline />
+        ) : (
+          <img src={output.url} alt="" className="w-[300px] h-auto max-h-[500px] object-contain" />
+        )}
+        {output.prompt && (
+          <div className="p-2 text-xs text-white/80 max-w-[300px] truncate">{output.prompt}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const PAGE_SIZE = 20
+
 export function Jobs() {
   const [statusFilter, setStatusFilter] = useState('')
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [pipelinesLoading, setPipelinesLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [total, setTotal] = useState(0)
   const [selectedOutputs, setSelectedOutputs] = useState<Set<string>>(new Set())
   const [expandedPipelines, setExpandedPipelines] = useState<Set<number>>(new Set())
+  const [expandedOutputs, setExpandedOutputs] = useState<Set<number>>(new Set())
+
+  // Hover preview state
+  const [hoverOutput, setHoverOutput] = useState<{ url: string; type: 'image' | 'video'; prompt?: string } | null>(null)
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 })
+  const hoverTimeoutRef = useRef<number | null>(null)
 
   // Categorization state
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem('demoMode') === 'true')
@@ -86,29 +132,76 @@ export function Jobs() {
     setExpandedPipelines(newSet)
   }
 
-  const fetchPipelines = async () => {
-    setPipelinesLoading(true)
+  const toggleOutputs = (id: number) => {
+    const newSet = new Set(expandedOutputs)
+    if (newSet.has(id)) newSet.delete(id)
+    else newSet.add(id)
+    setExpandedOutputs(newSet)
+  }
+
+  const fetchPipelines = async (offset = 0, append = false) => {
+    if (append) {
+      setLoadingMore(true)
+    } else {
+      setPipelinesLoading(true)
+    }
     try {
       const params = new URLSearchParams()
       if (demoMode) params.set('favorites', 'true')
       if (showHidden) params.set('hidden', 'true')
       if (tagFilter) params.set('tag', tagFilter)
+      params.set('limit', PAGE_SIZE.toString())
+      params.set('offset', offset.toString())
 
       const res = await fetch(`/api/pipelines?${params}`)
       if (res.ok) {
         const data = await res.json()
-        setPipelines(data.pipelines || [])
+        const newPipelines = data.pipelines || []
+        if (append) {
+          setPipelines(prev => [...prev, ...newPipelines])
+        } else {
+          setPipelines(newPipelines)
+        }
+        setTotal(data.total || newPipelines.length)
+        setHasMore(offset + newPipelines.length < (data.total || newPipelines.length))
       }
     } catch (error) {
       console.error('Failed to fetch pipelines:', error)
     } finally {
       setPipelinesLoading(false)
+      setLoadingMore(false)
+    }
+  }
+
+  const loadMore = () => {
+    if (!loadingMore && hasMore) {
+      fetchPipelines(pipelines.length, true)
     }
   }
 
   useEffect(() => {
-    fetchPipelines()
+    setPipelines([])
+    setHasMore(true)
+    fetchPipelines(0, false)
   }, [demoMode, showHidden, tagFilter])
+
+  // Hover handlers
+  const handleOutputHover = (output: { url: string; type: 'image' | 'video'; prompt?: string }, e: React.MouseEvent) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    hoverTimeoutRef.current = window.setTimeout(() => {
+      setHoverOutput(output)
+      setHoverPosition({ x: e.clientX, y: e.clientY })
+    }, 300)
+  }
+
+  const handleOutputMove = (e: React.MouseEvent) => {
+    if (hoverOutput) setHoverPosition({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleOutputLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    setHoverOutput(null)
+  }
 
   useEffect(() => {
     localStorage.setItem('demoMode', demoMode.toString())
@@ -176,20 +269,22 @@ export function Jobs() {
     return outputs
   }
 
-  // Get unique model configs used in pipeline (model + resolution + duration)
+  // Get unique model configs used in pipeline (model + resolution + duration + quality)
   const getModelConfigs = (steps: PipelineStep[]) => {
-    const configs: { model: string; resolution?: string; duration?: number; type: string }[] = []
+    const configs: { model: string; resolution?: string; duration?: number; quality?: string; type: string; prompts: string[] }[] = []
     const seen = new Set<string>()
     for (const step of steps) {
       if (step.config?.model) {
-        const key = `${step.step_type}-${step.config.model}-${step.config.resolution || ''}-${step.config.duration_sec || ''}`
+        const key = `${step.step_type}-${step.config.model}-${step.config.resolution || ''}-${step.config.duration_sec || ''}-${step.config.quality || ''}`
         if (!seen.has(key)) {
           seen.add(key)
           configs.push({
             model: step.config.model,
             resolution: step.config.resolution,
             duration: step.config.duration_sec,
+            quality: step.config.quality,
             type: step.step_type,
+            prompts: step.inputs?.prompts || [],
           })
         }
       }
@@ -287,7 +382,7 @@ export function Jobs() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Layers className="h-5 w-5" />
-            All Jobs ({pipelines.length})
+            All Jobs ({pipelines.length}{total > pipelines.length ? ` / ${total}` : ''})
           </CardTitle>
           <CardDescription>Your generated photos and videos from the Playground</CardDescription>
         </CardHeader>
@@ -320,18 +415,39 @@ export function Jobs() {
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-medium">{pipeline.name}</p>
-                                {/* Model badges with config details */}
+                                {/* Model badges with config details + prompt tooltip */}
                                 {modelConfigs.map((cfg, idx) => (
-                                  <span key={`${cfg.model}-${idx}`} className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">
+                                  <span
+                                    key={`${cfg.model}-${idx}`}
+                                    className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded cursor-help relative group/badge"
+                                    title={cfg.prompts.length > 0 ? cfg.prompts.join('\n\n') : undefined}
+                                  >
                                     {cfg.model}
+                                    {cfg.quality && ` • ${cfg.quality}`}
                                     {cfg.resolution && ` • ${cfg.resolution}`}
                                     {cfg.duration && ` • ${cfg.duration}s`}
+                                    {/* Prompt tooltip on hover */}
+                                    {cfg.prompts.length > 0 && (
+                                      <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/badge:block">
+                                        <div className="bg-black/95 text-white text-xs p-2 rounded shadow-lg max-w-xs whitespace-pre-wrap">
+                                          {cfg.prompts.map((p, i) => (
+                                            <p key={i} className="mb-1 last:mb-0">{p.length > 100 ? p.slice(0, 100) + '...' : p}</p>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
                                   </span>
                                 ))}
                               </div>
                               <p className="text-xs text-muted-foreground">
                                 {formatDate(pipeline.created_at)}
                               </p>
+                              {/* Prompt preview */}
+                              {prompts.length > 0 && (
+                                <p className="text-xs text-muted-foreground/80 italic truncate max-w-md" title={prompts[0]}>
+                                  "{prompts[0].length > 60 ? prompts[0].slice(0, 60) + '...' : prompts[0]}"
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -459,126 +575,159 @@ export function Jobs() {
                         )}
                         {outputs.length > 0 && (() => {
                           const pipelineSelected = outputs.filter(o => selectedOutputs.has(o.url))
+                          const isOutputsExpanded = expandedOutputs.has(pipeline.id)
                           return (
                           <div className="space-y-2">
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              <span className="text-sm font-medium">
-                                Outputs ({outputs.length})
-                                {pipelineSelected.length > 0 && (
-                                  <span className="ml-2 text-primary">• {pipelineSelected.length} selected</span>
-                                )}
-                              </span>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    const allSelected = outputs.every(o => selectedOutputs.has(o.url))
-                                    const newSet = new Set(selectedOutputs)
-                                    outputs.forEach(o => {
-                                      if (allSelected) newSet.delete(o.url)
-                                      else newSet.add(o.url)
-                                    })
-                                    setSelectedOutputs(newSet)
-                                  }}
-                                >
-                                  {outputs.every(o => selectedOutputs.has(o.url)) ? 'Deselect All' : 'Select All'}
-                                </Button>
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  disabled={pipelineSelected.length === 0}
-                                  onClick={() => {
-                                    pipelineSelected.forEach((output, i) => {
-                                      setTimeout(() => {
-                                        const a = document.createElement('a')
-                                        a.href = output.url
-                                        a.download = `output-${pipeline.id}-${i + 1}.${output.type === 'video' ? 'mp4' : 'png'}`
-                                        a.target = '_blank'
-                                        a.click()
-                                      }, i * 200)
-                                    })
-                                  }}
-                                >
-                                  <Download className="h-4 w-4 mr-1" />
-                                  Download {pipelineSelected.length > 0 ? `(${pipelineSelected.length})` : 'Selected'}
-                                </Button>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                              {outputs.map((output, idx) => {
-                                const isSelected = selectedOutputs.has(output.url)
-                                return (
-                                <div
-                                  key={idx}
-                                  className={`relative aspect-[9/16] bg-muted rounded-lg overflow-hidden group cursor-pointer ${isSelected ? 'ring-2 ring-primary' : ''}`}
-                                  onClick={() => {
-                                    const newSet = new Set(selectedOutputs)
-                                    if (isSelected) newSet.delete(output.url)
-                                    else newSet.add(output.url)
-                                    setSelectedOutputs(newSet)
-                                  }}
-                                >
-                                  {output.type === 'video' ? (
-                                    <video
-                                      src={output.url}
-                                      className="w-full h-full object-cover"
-                                      muted
-                                      playsInline
-                                      preload="none"
-                                      onMouseEnter={(e) => e.currentTarget.play()}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.pause()
-                                        e.currentTarget.currentTime = 0
-                                      }}
-                                    />
-                                  ) : (
-                                    <img src={output.url} alt="" className="w-full h-full object-cover" />
-                                  )}
-                                  {/* Selection checkbox */}
-                                  <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80'}`}>
-                                    {isSelected && <CheckCircle className="h-3 w-3 text-white" />}
-                                  </div>
-                                  {/* Type indicator */}
-                                  <div className="absolute top-2 right-2">
-                                    {output.type === 'video' ? (
-                                      <Play className="h-4 w-4 text-white drop-shadow" />
-                                    ) : (
-                                      <ImageIcon className="h-4 w-4 text-white drop-shadow" />
-                                    )}
-                                  </div>
-                                  {/* Quick actions on hover */}
-                                  <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <a
-                                      href={output.url}
-                                      download={`output-${idx + 1}.${output.type === 'video' ? 'mp4' : 'png'}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="p-1.5 bg-black/70 hover:bg-black/90 rounded"
-                                      title="Download"
-                                    >
-                                      <Download className="h-3 w-3 text-white" />
-                                    </a>
-                                    <a
-                                      href={output.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="p-1.5 bg-black/70 hover:bg-black/90 rounded"
-                                      title="Open"
-                                    >
-                                      <ExternalLink className="h-3 w-3 text-white" />
-                                    </a>
-                                  </div>
+                            {/* Collapsed: just show count and expand button */}
+                            <button
+                              onClick={() => toggleOutputs(pipeline.id)}
+                              className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors"
+                            >
+                              {isOutputsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                              Outputs ({outputs.length})
+                              {pipelineSelected.length > 0 && (
+                                <span className="text-primary">• {pipelineSelected.length} selected</span>
+                              )}
+                            </button>
+
+                            {/* Expanded: show full grid */}
+                            {isOutputsExpanded && (
+                              <>
+                                <div className="flex items-center justify-end gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      const allSelected = outputs.every(o => selectedOutputs.has(o.url))
+                                      const newSet = new Set(selectedOutputs)
+                                      outputs.forEach(o => {
+                                        if (allSelected) newSet.delete(o.url)
+                                        else newSet.add(o.url)
+                                      })
+                                      setSelectedOutputs(newSet)
+                                    }}
+                                  >
+                                    {outputs.every(o => selectedOutputs.has(o.url)) ? 'Deselect All' : 'Select All'}
+                                  </Button>
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    disabled={pipelineSelected.length === 0}
+                                    onClick={() => {
+                                      pipelineSelected.forEach((output, i) => {
+                                        setTimeout(() => {
+                                          const a = document.createElement('a')
+                                          a.href = output.url
+                                          a.download = `output-${pipeline.id}-${i + 1}.${output.type === 'video' ? 'mp4' : 'png'}`
+                                          a.target = '_blank'
+                                          a.click()
+                                        }, i * 200)
+                                      })
+                                    }}
+                                  >
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Download {pipelineSelected.length > 0 ? `(${pipelineSelected.length})` : 'Selected'}
+                                  </Button>
                                 </div>
-                              )})}
-                            </div>
+                                <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                                  {outputs.map((output, idx) => {
+                                    const isSelected = selectedOutputs.has(output.url)
+                                    return (
+                                    <div
+                                      key={idx}
+                                      className={`relative aspect-[9/16] bg-muted rounded-lg overflow-hidden group cursor-pointer ${isSelected ? 'ring-2 ring-primary' : ''}`}
+                                      onClick={() => {
+                                        const newSet = new Set(selectedOutputs)
+                                        if (isSelected) newSet.delete(output.url)
+                                        else newSet.add(output.url)
+                                        setSelectedOutputs(newSet)
+                                      }}
+                                      onMouseEnter={(e) => handleOutputHover(output, e)}
+                                      onMouseMove={handleOutputMove}
+                                      onMouseLeave={handleOutputLeave}
+                                    >
+                                      {output.type === 'video' ? (
+                                        <video
+                                          src={output.url}
+                                          className="w-full h-full object-cover"
+                                          muted
+                                          playsInline
+                                          preload="none"
+                                          onMouseEnter={(e) => e.currentTarget.play()}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.pause()
+                                            e.currentTarget.currentTime = 0
+                                          }}
+                                        />
+                                      ) : (
+                                        <img src={output.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                                      )}
+                                      {/* Selection checkbox */}
+                                      <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80'}`}>
+                                        {isSelected && <CheckCircle className="h-3 w-3 text-white" />}
+                                      </div>
+                                      {/* Type indicator */}
+                                      <div className="absolute top-2 right-2">
+                                        {output.type === 'video' ? (
+                                          <Play className="h-4 w-4 text-white drop-shadow" />
+                                        ) : (
+                                          <ImageIcon className="h-4 w-4 text-white drop-shadow" />
+                                        )}
+                                      </div>
+                                      {/* Quick actions on hover */}
+                                      <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <a
+                                          href={output.url}
+                                          download={`output-${idx + 1}.${output.type === 'video' ? 'mp4' : 'png'}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="p-1.5 bg-black/70 hover:bg-black/90 rounded"
+                                          title="Download"
+                                        >
+                                          <Download className="h-3 w-3 text-white" />
+                                        </a>
+                                        <a
+                                          href={output.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="p-1.5 bg-black/70 hover:bg-black/90 rounded"
+                                          title="Open"
+                                        >
+                                          <ExternalLink className="h-3 w-3 text-white" />
+                                        </a>
+                                      </div>
+                                    </div>
+                                  )})}
+                                </div>
+                              </>
+                            )}
                           </div>
                         )})()}
                       </div>
                     )
                   })}
+
+                  {/* Load More button */}
+                  {hasMore && (
+                    <div className="text-center pt-4">
+                      <Button
+                        variant="outline"
+                        onClick={loadMore}
+                        disabled={loadingMore}
+                      >
+                        {loadingMore ? (
+                          <>
+                            <Spinner size="sm" className="mr-2" />
+                            Loading...
+                          </>
+                        ) : (
+                          `Load More (${total - pipelines.length} remaining)`
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-8">
@@ -587,6 +736,9 @@ export function Jobs() {
               )}
         </CardContent>
       </Card>
+
+      {/* Hover preview popup */}
+      <OutputPreview output={hoverOutput} position={hoverPosition} />
     </div>
   )
 }
