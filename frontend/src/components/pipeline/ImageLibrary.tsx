@@ -23,6 +23,49 @@ interface ImageLibraryProps {
   disabled?: boolean
 }
 
+// Hover preview component
+function HoverPreview({ image, position }: { image: LibraryImage | null; position: { x: number; y: number } }) {
+  if (!image) return null
+
+  // Position the preview to the right of cursor, or left if too close to edge
+  const previewWidth = 300
+  const previewHeight = 500
+  const padding = 20
+
+  let left = position.x + padding
+  let top = position.y - previewHeight / 2
+
+  // Keep within viewport
+  if (left + previewWidth > window.innerWidth - padding) {
+    left = position.x - previewWidth - padding
+  }
+  if (top < padding) top = padding
+  if (top + previewHeight > window.innerHeight - padding) {
+    top = window.innerHeight - previewHeight - padding
+  }
+
+  return (
+    <div
+      className="fixed z-50 pointer-events-none"
+      style={{ left, top }}
+    >
+      <div className="bg-black/90 rounded-lg shadow-2xl overflow-hidden border border-white/20">
+        <img
+          src={image.url}
+          alt={image.prompt || 'Preview'}
+          className="w-[300px] h-auto max-h-[500px] object-contain"
+          loading="eager"
+        />
+        {image.prompt && (
+          <div className="p-2 text-xs text-white/80 max-w-[300px] truncate">
+            {image.prompt}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const BATCH_SIZE = 100  // Load 100 images at a time
 
 export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: ImageLibraryProps) {
@@ -32,6 +75,11 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Hover preview state
+  const [hoverImage, setHoverImage] = useState<LibraryImage | null>(null)
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 })
+  const hoverTimeoutRef = useRef<number | null>(null)
 
   const fetchImages = useCallback(async (offset = 0, append = false) => {
     if (append) {
@@ -96,6 +144,30 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
 
   const clearSelection = () => {
     onSelectionChange([])
+  }
+
+  // Hover handlers with delay to prevent flicker
+  const handleMouseEnter = (img: LibraryImage, e: React.MouseEvent) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+    hoverTimeoutRef.current = window.setTimeout(() => {
+      setHoverImage(img)
+      setHoverPosition({ x: e.clientX, y: e.clientY })
+    }, 300) // 300ms delay before showing preview
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (hoverImage) {
+      setHoverPosition({ x: e.clientX, y: e.clientY })
+    }
+  }
+
+  const handleMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+    setHoverImage(null)
   }
 
   if (loading && images.length === 0) {
@@ -179,6 +251,9 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
                 disabled && "opacity-50 cursor-not-allowed"
               )}
               onClick={() => toggleImage(img.url)}
+              onMouseEnter={(e) => handleMouseEnter(img, e)}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
             >
               {/* Use thumbnail if available, fallback to full image */}
               <img
@@ -245,6 +320,9 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
           {selectedImages.length} image{selectedImages.length !== 1 ? 's' : ''} selected for video generation
         </p>
       )}
+
+      {/* Hover preview popup */}
+      <HoverPreview image={hoverImage} position={hoverPosition} />
     </div>
   )
 }
