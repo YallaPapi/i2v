@@ -30,6 +30,7 @@ from app.services.prompt_enhancer import prompt_enhancer
 from app.services.cost_calculator import cost_calculator
 from app.services.pipeline_executor import pipeline_executor
 from app.services.generation_service import generate_image, generate_video
+from app.services.thumbnail import generate_thumbnails_batch
 
 logger = structlog.get_logger()
 
@@ -499,6 +500,59 @@ async def enhance_prompts(
         raise HTTPException(status_code=500, detail=f"Prompt enhancement failed: {str(e)}")
 
 
+@router.get("/prompts/recent")
+async def get_recent_prompts(
+    limit: int = Query(20, ge=1, le=100),
+    step_type: Optional[str] = Query(None, description="Filter by step type (i2i, i2v)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get recently used prompts from pipeline steps.
+
+    Returns unique prompts ordered by most recently used.
+    """
+    # Query recent steps with prompts
+    query = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.inputs.isnot(None))
+        .order_by(PipelineStep.created_at.desc())
+    )
+
+    if step_type:
+        if step_type not in ["i2i", "i2v"]:
+            raise HTTPException(status_code=400, detail="step_type must be 'i2i' or 'i2v'")
+        query = query.filter(PipelineStep.step_type == step_type)
+
+    # Get more steps to deduplicate
+    steps = query.limit(200).all()
+
+    # Extract unique prompts
+    seen_prompts = set()
+    prompts = []
+
+    for step in steps:
+        inputs = step.get_inputs()
+        if inputs and inputs.get("prompts"):
+            for prompt in inputs["prompts"]:
+                if prompt and prompt.strip() and prompt not in seen_prompts:
+                    seen_prompts.add(prompt)
+                    prompts.append({
+                        "prompt": prompt,
+                        "step_type": step.step_type,
+                        "model": step.get_config().get("model", "unknown"),
+                        "used_at": step.created_at.isoformat() if step.created_at else None,
+                    })
+                    if len(prompts) >= limit:
+                        break
+        if len(prompts) >= limit:
+            break
+
+    return {
+        "prompts": prompts,
+        "total": len(prompts),
+    }
+
+
 # ============== Cost Estimation ==============
 
 @router.post("/estimate", response_model=CostEstimateResponse)
@@ -741,7 +795,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
     import asyncio
 
     db = SessionLocal()
-    MAX_CONCURRENT = 3
+    MAX_CONCURRENT = 20
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
     try:
@@ -778,10 +832,14 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             num_images=config.get("images_per_prompt", 1),
                             negative_prompt=config.get("negative_prompt"),
                         )
+                        image_urls = result if isinstance(result, list) else [result]
+                        # Generate thumbnails for fast library loading
+                        thumbnail_urls = await generate_thumbnails_batch(image_urls)
                         step.set_outputs({
-                            "image_urls": result if isinstance(result, list) else [result],
-                            "items": [{"url": url, "type": "image"} for url in (result if isinstance(result, list) else [result])],
-                            "count": len(result) if isinstance(result, list) else 1,
+                            "image_urls": image_urls,
+                            "thumbnail_urls": thumbnail_urls,
+                            "items": [{"url": url, "type": "image"} for url in image_urls],
+                            "count": len(image_urls),
                         })
 
                     elif step.step_type == "i2v":
@@ -792,6 +850,7 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             resolution=config.get("resolution", "1080p"),
                             duration_sec=config.get("duration_sec", 5),
                             negative_prompt=config.get("negative_prompt"),
+                            enable_audio=config.get("enable_audio", False),
                         )
                         step.set_outputs({
                             "video_urls": [result],
@@ -1028,7 +1087,7 @@ async def animate_selected_images(
 
             steps = [s for s in pipeline.steps if s.step_type == "i2v"]
 
-            semaphore = asyncio.Semaphore(5)  # Max 5 concurrent
+            semaphore = asyncio.Semaphore(20)  # Max 20 concurrent
 
             async def execute_step(step):
                 async with semaphore:
@@ -1046,6 +1105,7 @@ async def animate_selected_images(
                             resolution=config.get("resolution", "1080p"),
                             duration_sec=config.get("duration_sec", 5),
                             negative_prompt=config.get("negative_prompt"),
+                            enable_audio=config.get("enable_audio", False),
                         )
 
                         if result.get("video_url"):
@@ -1172,4 +1232,55 @@ async def get_image_library(
         "total": total,
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.post("/images/library/generate-thumbnails")
+async def generate_library_thumbnails(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate thumbnails for existing images that don't have them.
+
+    Call this to backfill thumbnails for images created before thumbnail support.
+    """
+    # Get i2i steps that have images but no thumbnails
+    steps = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.step_type == "i2i")
+        .filter(PipelineStep.status == StepStatus.COMPLETED.value)
+        .order_by(PipelineStep.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    processed = 0
+    skipped = 0
+
+    for step in steps:
+        outputs = step.get_outputs()
+        if not outputs or not outputs.get("image_urls"):
+            continue
+
+        # Skip if thumbnails already exist
+        existing_thumbs = outputs.get("thumbnail_urls", [])
+        if existing_thumbs and len(existing_thumbs) == len(outputs["image_urls"]):
+            skipped += 1
+            continue
+
+        # Generate thumbnails
+        image_urls = outputs["image_urls"]
+        thumbnail_urls = await generate_thumbnails_batch(image_urls)
+
+        # Update outputs
+        outputs["thumbnail_urls"] = thumbnail_urls
+        step.set_outputs(outputs)
+        db.commit()
+        processed += 1
+
+    return {
+        "processed": processed,
+        "skipped": skipped,
+        "message": f"Generated thumbnails for {processed} steps, skipped {skipped} (already had thumbnails)",
     }

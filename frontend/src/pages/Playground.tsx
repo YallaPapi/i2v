@@ -14,7 +14,7 @@ import {
 } from '@/components/pipeline'
 import type { BulkCostEstimate, BulkStep, SourceGroup } from '@/components/pipeline'
 import { Textarea } from '@/components/ui/textarea'
-import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal } from 'lucide-react'
+import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal, History, ChevronDown, ChevronUp, Plus, Copy, Check } from 'lucide-react'
 
 type GenerationMode = 'bulk' | 'carousel'
 
@@ -41,7 +41,7 @@ export function Playground() {
   // I2I Settings
   const [i2iModel, setI2iModel] = useState('gpt-image-1.5')
   const [i2iAspectRatio, setI2iAspectRatio] = useState('9:16')
-  const [i2iQuality, setI2iQuality] = useState<'low' | 'medium' | 'high'>('high')
+  const [i2iQuality, setI2iQuality] = useState<'low' | 'medium' | 'high'>('low')
 
   // I2V Settings
   const [i2vModel, setI2vModel] = useState('kling')
@@ -72,9 +72,9 @@ export function Playground() {
     ]
   }
 
-  // Check if model supports audio (Veo 3.1 models only)
+  // Check if model supports audio (Veo models)
   const supportsAudio = (model: string) => {
-    return ['veo31', 'veo31-fast', 'veo31-flf', 'veo31-fast-flf'].includes(model)
+    return ['veo2', 'veo31', 'veo31-fast', 'veo31-flf', 'veo31-fast-flf'].includes(model)
   }
 
   // Reset duration when model changes (to a valid value for the new model)
@@ -95,8 +95,11 @@ export function Playground() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [pipelineStatus, setPipelineStatus] = useState<'pending' | 'running' | 'paused' | 'completed' | 'failed'>('pending')
 
-  // Bulk Mode State
-  const [bulkMode, setBulkMode] = useState<'photos' | 'videos' | 'both'>('videos')
+  // Bulk Mode State - persisted to localStorage
+  const [bulkMode, setBulkMode] = useState<'photos' | 'videos' | 'both'>(() => {
+    const saved = localStorage.getItem('playground-default-bulkMode')
+    return (saved as 'photos' | 'videos' | 'both') || 'videos'
+  })
   const [bulkI2iPrompts, setBulkI2iPrompts] = useState<string[]>([])
   const [bulkI2vPrompts, setBulkI2vPrompts] = useState<string[]>([])
   const [bulkI2iNegativePrompt, setBulkI2iNegativePrompt] = useState('')
@@ -115,6 +118,72 @@ export function Playground() {
   // Carousel Mode State - each prompt = one slide in the story
   const [carouselPrompts, setCarouselPrompts] = useState<string[]>([])
   const [carouselNegativePrompt, setCarouselNegativePrompt] = useState('')
+
+  // Recent prompts state
+  interface RecentPrompt {
+    prompt: string
+    step_type: string
+    model: string
+    used_at: string | null
+  }
+  const [recentI2iPrompts, setRecentI2iPrompts] = useState<RecentPrompt[]>([])
+  const [recentI2vPrompts, setRecentI2vPrompts] = useState<RecentPrompt[]>([])
+  const [showRecentI2i, setShowRecentI2i] = useState(false)
+  const [showRecentI2v, setShowRecentI2v] = useState(false)
+  const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null)
+
+  // Fetch recent prompts on mount
+  useEffect(() => {
+    const fetchRecentPrompts = async () => {
+      try {
+        // Fetch I2I prompts
+        const i2iRes = await fetch('/api/pipelines/prompts/recent?step_type=i2i&limit=15')
+        if (i2iRes.ok) {
+          const data = await i2iRes.json()
+          setRecentI2iPrompts(data.prompts)
+        }
+
+        // Fetch I2V prompts
+        const i2vRes = await fetch('/api/pipelines/prompts/recent?step_type=i2v&limit=15')
+        if (i2vRes.ok) {
+          const data = await i2vRes.json()
+          setRecentI2vPrompts(data.prompts)
+        }
+      } catch (error) {
+        console.error('Failed to fetch recent prompts:', error)
+      }
+    }
+
+    fetchRecentPrompts()
+  }, [])
+
+  // Add a recent prompt to the prompt list
+  const handleAddRecentPrompt = (type: 'i2i' | 'i2v' | 'carousel', prompt: string) => {
+    if (type === 'i2i') {
+      if (!bulkI2iPrompts.includes(prompt)) {
+        setBulkI2iPrompts([...bulkI2iPrompts, prompt])
+      }
+    } else if (type === 'i2v') {
+      if (!bulkI2vPrompts.includes(prompt)) {
+        setBulkI2vPrompts([...bulkI2vPrompts, prompt])
+      }
+    } else if (type === 'carousel') {
+      if (!carouselPrompts.includes(prompt)) {
+        setCarouselPrompts([...carouselPrompts, prompt])
+      }
+    }
+  }
+
+  // Copy prompt to clipboard
+  const handleCopyPrompt = async (prompt: string) => {
+    try {
+      await navigator.clipboard.writeText(prompt)
+      setCopiedPrompt(prompt)
+      setTimeout(() => setCopiedPrompt(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
 
   // Compute effective source images based on mode
   const effectiveSourceImages = imageSourceMode === 'upload'
@@ -239,6 +308,15 @@ export function Playground() {
       calculateBulkCost()
     }
   }, [mode, calculateBulkCost])
+
+  // Persist mode selections to localStorage
+  useEffect(() => {
+    localStorage.setItem('playground-default-mode', mode)
+  }, [mode])
+
+  useEffect(() => {
+    localStorage.setItem('playground-default-bulkMode', bulkMode)
+  }, [bulkMode])
 
   // Bulk generate handler
   const handleBulkGenerate = async () => {
@@ -593,24 +671,83 @@ export function Playground() {
                     <CardHeader>
                       <CardTitle className="text-lg flex items-center justify-between">
                         <span>Describe the photo variations you want</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleExpandBulkPrompts('i2i')}
-                          disabled={isGenerating || isExpandingI2i || bulkI2iPrompts.length === 0}
-                        >
-                          {isExpandingI2i ? (
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                          ) : (
-                            <Wand2 className="h-4 w-4 mr-1" />
+                        <div className="flex gap-2">
+                          {recentI2iPrompts.length > 0 && (
+                            <Button
+                              type="button"
+                              variant={showRecentI2i ? "secondary" : "outline"}
+                              size="sm"
+                              onClick={() => setShowRecentI2i(!showRecentI2i)}
+                              disabled={isGenerating}
+                            >
+                              <History className="h-4 w-4 mr-1" />
+                              Recent
+                              {showRecentI2i ? (
+                                <ChevronUp className="h-3 w-3 ml-1" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3 ml-1" />
+                              )}
+                            </Button>
                           )}
-                          Expand prompts
-                        </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleExpandBulkPrompts('i2i')}
+                            disabled={isGenerating || isExpandingI2i || bulkI2iPrompts.length === 0}
+                          >
+                            {isExpandingI2i ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                              <Wand2 className="h-4 w-4 mr-1" />
+                            )}
+                            Expand
+                          </Button>
+                        </div>
                       </CardTitle>
                       <CardDescription>
                         Write one description per line. Each one creates a new version of every photo you uploaded.
                       </CardDescription>
+
+                      {/* Recent Prompts Panel */}
+                      {showRecentI2i && recentI2iPrompts.length > 0 && (
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border max-h-64 overflow-y-auto">
+                          <p className="text-sm font-medium mb-2">Recently used prompts</p>
+                          <div className="space-y-2">
+                            {recentI2iPrompts.map((p, idx) => (
+                              <div key={idx} className="p-2 bg-background rounded border text-sm">
+                                <p className="text-foreground mb-2 whitespace-pre-wrap">{p.prompt}</p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleAddRecentPrompt('i2i', p.prompt)}
+                                    disabled={bulkI2iPrompts.includes(p.prompt)}
+                                  >
+                                    <Plus className="h-3 w-3 mr-1" />
+                                    {bulkI2iPrompts.includes(p.prompt) ? 'Added' : 'Add'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleCopyPrompt(p.prompt)}
+                                  >
+                                    {copiedPrompt === p.prompt ? (
+                                      <><Check className="h-3 w-3 mr-1" /> Copied</>
+                                    ) : (
+                                      <><Copy className="h-3 w-3 mr-1" /> Copy</>
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <MultiPromptInput
@@ -691,24 +828,83 @@ export function Playground() {
                     <CardHeader>
                       <CardTitle className="text-lg flex items-center justify-between">
                         <span>Describe how each video should move</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleExpandBulkPrompts('i2v')}
-                          disabled={isGenerating || isExpandingI2v || bulkI2vPrompts.length === 0}
-                        >
-                          {isExpandingI2v ? (
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                          ) : (
-                            <Wand2 className="h-4 w-4 mr-1" />
+                        <div className="flex gap-2">
+                          {recentI2vPrompts.length > 0 && (
+                            <Button
+                              type="button"
+                              variant={showRecentI2v ? "secondary" : "outline"}
+                              size="sm"
+                              onClick={() => setShowRecentI2v(!showRecentI2v)}
+                              disabled={isGenerating}
+                            >
+                              <History className="h-4 w-4 mr-1" />
+                              Recent
+                              {showRecentI2v ? (
+                                <ChevronUp className="h-3 w-3 ml-1" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3 ml-1" />
+                              )}
+                            </Button>
                           )}
-                          Expand prompts
-                        </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleExpandBulkPrompts('i2v')}
+                            disabled={isGenerating || isExpandingI2v || bulkI2vPrompts.length === 0}
+                          >
+                            {isExpandingI2v ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                              <Wand2 className="h-4 w-4 mr-1" />
+                            )}
+                            Expand
+                          </Button>
+                        </div>
                       </CardTitle>
                       <CardDescription>
                         Write one motion per line. Each one will be applied to {bulkMode === 'both' ? 'every photo variation' : 'every photo you uploaded'}.
                       </CardDescription>
+
+                      {/* Recent Prompts Panel */}
+                      {showRecentI2v && recentI2vPrompts.length > 0 && (
+                        <div className="mt-3 p-3 bg-muted/50 rounded-lg border max-h-64 overflow-y-auto">
+                          <p className="text-sm font-medium mb-2">Recently used motions</p>
+                          <div className="space-y-2">
+                            {recentI2vPrompts.map((p, idx) => (
+                              <div key={idx} className="p-2 bg-background rounded border text-sm">
+                                <p className="text-foreground mb-2 whitespace-pre-wrap">{p.prompt}</p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleAddRecentPrompt('i2v', p.prompt)}
+                                    disabled={bulkI2vPrompts.includes(p.prompt)}
+                                  >
+                                    <Plus className="h-3 w-3 mr-1" />
+                                    {bulkI2vPrompts.includes(p.prompt) ? 'Added' : 'Add'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleCopyPrompt(p.prompt)}
+                                  >
+                                    {copiedPrompt === p.prompt ? (
+                                      <><Check className="h-3 w-3 mr-1" /> Copied</>
+                                    ) : (
+                                      <><Copy className="h-3 w-3 mr-1" /> Copy</>
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <MultiPromptInput
@@ -956,32 +1152,28 @@ export function Playground() {
                           </div>
                         </div>
 
-                        {/* Audio toggle for Veo 3.1 models */}
-                        {supportsAudio(i2vModel) && (
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <Label>Generate with audio</Label>
-                              <button
-                                type="button"
-                                onClick={() => setEnableAudio(!enableAudio)}
-                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                                  enableAudio ? 'bg-primary' : 'bg-muted'
-                                }`}
-                              >
-                                <span
-                                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                    enableAudio ? 'translate-x-6' : 'translate-x-1'
-                                  }`}
-                                />
-                              </button>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {enableAudio
-                                ? 'Audio enabled - costs ~1.5-2x more'
-                                : 'Audio disabled - lower cost'}
-                            </p>
-                          </div>
-                        )}
+                        {/* Audio checkbox */}
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={enableAudio}
+                              onChange={(e) => setEnableAudio(e.target.checked)}
+                              disabled={!supportsAudio(i2vModel)}
+                              className="w-5 h-5 rounded border-2 border-gray-400 accent-primary"
+                            />
+                            <span className={!supportsAudio(i2vModel) ? 'text-muted-foreground' : ''}>
+                              Generate with audio
+                            </span>
+                          </label>
+                          <p className="text-xs text-muted-foreground ml-8">
+                            {!supportsAudio(i2vModel)
+                              ? 'Only available with Veo models'
+                              : enableAudio
+                                ? 'Audio ON - costs ~1.5-2x more'
+                                : 'Audio OFF'}
+                          </p>
+                        </div>
                       </>
                     )}
                   </>

@@ -4,14 +4,15 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Select } from '@/components/ui/select'
-import { Video, Image as ImageIcon, CheckCircle, XCircle, Clock, ExternalLink, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus } from 'lucide-react'
+import { Video, Image as ImageIcon, CheckCircle, XCircle, Clock, ExternalLink, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Info } from 'lucide-react'
 
 interface PipelineStep {
   id: number
   step_type: string
   status: string
-  config: { model?: string }
-  outputs: { items?: { url: string; type: string }[] } | null
+  config: { model?: string; resolution?: string; duration_sec?: number }
+  inputs: { prompts?: string[]; image_urls?: string[] } | null
+  outputs: { items?: { url: string; type: string; prompt?: string }[] } | null
   cost_actual: number | null
   error_message: string | null
 }
@@ -69,6 +70,7 @@ export function Jobs() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [pipelinesLoading, setPipelinesLoading] = useState(true)
   const [selectedOutputs, setSelectedOutputs] = useState<Set<string>>(new Set())
+  const [expandedPipelines, setExpandedPipelines] = useState<Set<number>>(new Set())
 
   // Categorization state
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem('demoMode') === 'true')
@@ -76,6 +78,13 @@ export function Jobs() {
   const [tagFilter, setTagFilter] = useState('')
   const [editingTagsId, setEditingTagsId] = useState<number | null>(null)
   const [newTagInput, setNewTagInput] = useState('')
+
+  const toggleExpanded = (id: number) => {
+    const newSet = new Set(expandedPipelines)
+    if (newSet.has(id)) newSet.delete(id)
+    else newSet.add(id)
+    setExpandedPipelines(newSet)
+  }
 
   const fetchPipelines = async () => {
     setPipelinesLoading(true)
@@ -156,15 +165,61 @@ export function Jobs() {
   // Simplified - Pipeline view only (Video/Image Jobs were for legacy API)
 
   const getOutputs = (steps: PipelineStep[]) => {
-    const outputs: { url: string; type: 'image' | 'video' }[] = []
+    const outputs: { url: string; type: 'image' | 'video'; prompt?: string }[] = []
     for (const step of steps) {
       if (step.outputs?.items) {
         for (const item of step.outputs.items) {
-          outputs.push({ url: item.url, type: item.type as 'image' | 'video' })
+          outputs.push({ url: item.url, type: item.type as 'image' | 'video', prompt: item.prompt })
         }
       }
     }
     return outputs
+  }
+
+  // Get unique model configs used in pipeline (model + resolution + duration)
+  const getModelConfigs = (steps: PipelineStep[]) => {
+    const configs: { model: string; resolution?: string; duration?: number; type: string }[] = []
+    const seen = new Set<string>()
+    for (const step of steps) {
+      if (step.config?.model) {
+        const key = `${step.step_type}-${step.config.model}-${step.config.resolution || ''}-${step.config.duration_sec || ''}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          configs.push({
+            model: step.config.model,
+            resolution: step.config.resolution,
+            duration: step.config.duration_sec,
+            type: step.step_type,
+          })
+        }
+      }
+    }
+    return configs
+  }
+
+  // Get all prompts from pipeline steps
+  const getPrompts = (steps: PipelineStep[]) => {
+    const prompts: string[] = []
+    for (const step of steps) {
+      if (step.inputs?.prompts) {
+        prompts.push(...step.inputs.prompts)
+      }
+    }
+    return [...new Set(prompts)] // unique prompts
+  }
+
+  // Get step details for display
+  const getStepDetails = (steps: PipelineStep[]) => {
+    return steps.map(step => ({
+      type: step.step_type,
+      model: step.config?.model || 'unknown',
+      resolution: step.config?.resolution,
+      duration: step.config?.duration_sec,
+      prompts: step.inputs?.prompts || [],
+      outputCount: step.outputs?.items?.length || 0,
+      status: step.status,
+      cost: step.cost_actual,
+    }))
   }
 
   return (
@@ -246,6 +301,10 @@ export function Jobs() {
                   {pipelines.map((pipeline) => {
                     const outputs = getOutputs(pipeline.steps)
                     const pipelineTags = pipeline.tags || []
+                    const modelConfigs = getModelConfigs(pipeline.steps)
+                    const prompts = getPrompts(pipeline.steps)
+                    const isExpanded = expandedPipelines.has(pipeline.id)
+                    const stepDetails = getStepDetails(pipeline.steps)
                     return (
                       <div key={pipeline.id} className={`border rounded-lg p-4 ${pipeline.is_hidden ? 'opacity-60' : ''}`}>
                         <div className="flex items-start justify-between mb-2">
@@ -259,13 +318,33 @@ export function Jobs() {
                               <Star className={`h-5 w-5 ${pipeline.is_favorite ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`} />
                             </button>
                             <div>
-                              <p className="font-medium">{pipeline.name}</p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-medium">{pipeline.name}</p>
+                                {/* Model badges with config details */}
+                                {modelConfigs.map((cfg, idx) => (
+                                  <span key={`${cfg.model}-${idx}`} className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">
+                                    {cfg.model}
+                                    {cfg.resolution && ` • ${cfg.resolution}`}
+                                    {cfg.duration && ` • ${cfg.duration}s`}
+                                  </span>
+                                ))}
+                              </div>
                               <p className="text-xs text-muted-foreground">
                                 {formatDate(pipeline.created_at)}
                               </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            {/* Details toggle */}
+                            {prompts.length > 0 && (
+                              <button
+                                onClick={() => toggleExpanded(pipeline.id)}
+                                className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground"
+                                title="Show details"
+                              >
+                                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <Info className="h-4 w-4" />}
+                              </button>
+                            )}
                             {/* Hide button */}
                             <button
                               onClick={() => toggleHidden(pipeline.id)}
@@ -277,6 +356,33 @@ export function Jobs() {
                             {getStatusBadge(pipeline.status)}
                           </div>
                         </div>
+
+                        {/* Expandable details section */}
+                        {isExpanded && (
+                          <div className="mb-3 p-3 bg-muted/50 rounded-lg text-sm space-y-2">
+                            {stepDetails.map((step, idx) => (
+                              <div key={idx} className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span className="font-medium uppercase">{step.type}</span>
+                                  <span>•</span>
+                                  <span>{step.model}</span>
+                                  {step.resolution && <><span>•</span><span>{step.resolution}</span></>}
+                                  {step.duration && <><span>•</span><span>{step.duration}s</span></>}
+                                  {step.cost && <><span>•</span><span className="text-green-500">${step.cost.toFixed(2)}</span></>}
+                                </div>
+                                {step.prompts.length > 0 && (
+                                  <div className="pl-2 border-l-2 border-muted-foreground/20">
+                                    {step.prompts.map((prompt, pIdx) => (
+                                      <p key={pIdx} className="text-xs text-muted-foreground italic truncate" title={prompt}>
+                                        "{prompt.length > 80 ? prompt.slice(0, 80) + '...' : prompt}"
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {/* Tags section */}
                         <div className="flex flex-wrap items-center gap-1 mb-2">
@@ -419,6 +525,7 @@ export function Jobs() {
                                       className="w-full h-full object-cover"
                                       muted
                                       playsInline
+                                      preload="none"
                                       onMouseEnter={(e) => e.currentTarget.play()}
                                       onMouseLeave={(e) => {
                                         e.currentTarget.pause()

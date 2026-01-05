@@ -7,8 +7,29 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { ChevronDown, Download, Image, Video, ExternalLink, Play, Check, Square } from 'lucide-react'
+import { ChevronDown, Download, Image, Video, ExternalLink, Play, Check, Square, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+// Helper to download a file from URL
+async function downloadFile(url: string, filename?: string) {
+  try {
+    const response = await fetch(url)
+    const blob = await response.blob()
+    const blobUrl = URL.createObjectURL(blob)
+
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = filename || url.split('/').pop() || 'download'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(blobUrl)
+  } catch (error) {
+    console.error('Download failed:', error)
+    // Fallback: open in new tab
+    window.open(url, '_blank')
+  }
+}
 
 interface SourceGroup {
   source_image: string
@@ -33,6 +54,7 @@ export function BulkResults({ groups, totals, onAnimateSelected }: BulkResultsPr
   const [openGroups, setOpenGroups] = useState<Set<number>>(new Set([0]))
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set())
   const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
 
   const toggleGroup = (index: number) => {
     const newOpen = new Set(openGroups)
@@ -77,14 +99,32 @@ export function BulkResults({ groups, totals, onAnimateSelected }: BulkResultsPr
 
   const downloadAll = async () => {
     const allUrls = groups.flatMap(g => [...g.i2i_outputs, ...g.i2v_outputs])
-    for (const url of allUrls) {
-      window.open(url, '_blank')
+    if (allUrls.length === 0) return
+
+    setIsDownloading(true)
+    try {
+      // Download files with a small delay between each to avoid overwhelming the browser
+      for (let i = 0; i < allUrls.length; i++) {
+        const url = allUrls[i]
+        const ext = url.includes('.mp4') || url.includes('video') ? 'mp4' : 'png'
+        await downloadFile(url, `output_${i + 1}.${ext}`)
+        // Small delay to prevent browser from blocking multiple downloads
+        if (i < allUrls.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+    } finally {
+      setIsDownloading(false)
     }
   }
 
-  const downloadGroupVideos = (group: SourceGroup) => {
-    for (const url of group.i2v_outputs) {
-      window.open(url, '_blank')
+  const downloadGroupVideos = async (group: SourceGroup) => {
+    for (let i = 0; i < group.i2v_outputs.length; i++) {
+      const url = group.i2v_outputs[i]
+      await downloadFile(url, `video_${group.source_index + 1}_${i + 1}.mp4`)
+      if (i < group.i2v_outputs.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
     }
   }
 
@@ -113,9 +153,13 @@ export function BulkResults({ groups, totals, onAnimateSelected }: BulkResultsPr
                 ${totals.total_cost.toFixed(2)}
               </Badge>
             )}
-            <Button size="sm" variant="outline" onClick={downloadAll}>
-              <Download className="h-4 w-4 mr-1" />
-              Download All
+            <Button size="sm" variant="outline" onClick={downloadAll} disabled={isDownloading}>
+              {isDownloading ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-1" />
+              )}
+              {isDownloading ? 'Downloading...' : 'Download All'}
             </Button>
           </div>
         </div>

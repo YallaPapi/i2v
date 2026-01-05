@@ -138,34 +138,41 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
         }
     # Veo2 model - duration: 5-8 seconds (fixed)
     elif model == "veo2":
-        return {
+        payload = {
             "prompt": prompt,
             "image_url": image_url,
             "duration": "5s",
             "aspect_ratio": "9:16",
         }
+        if enable_audio:
+            payload["enable_audio"] = True
+        return payload
     # Veo 3.1 models (image-to-video) - duration: 4, 6, 8 seconds
     elif model in ("veo31", "veo31-fast"):
         # Map to valid Veo durations: 4s, 6s, 8s
         veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
-        return {
+        payload = {
             "prompt": prompt,
             "image_url": image_url,
             "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
-            "enable_audio": enable_audio,  # Audio costs 1.5-2x more
         }
+        if enable_audio:
+            payload["enable_audio"] = True
+        return payload
     # Veo 3.1 First-Last Frame models - duration: 4, 6, 8 seconds
     elif model in ("veo31-flf", "veo31-fast-flf"):
         veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
-        return {
+        payload = {
             "prompt": prompt,
             "first_frame_image": image_url,
             "last_frame_image": image_url,  # Same image for now - can be extended
             "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
-            "enable_audio": enable_audio,
         }
+        if enable_audio:
+            payload["enable_audio"] = True
+        return payload
     # Sora 2 models (OpenAI) - duration: 4, 8, 12 seconds
     elif model in ("sora-2", "sora-2-pro"):
         # Map to valid Sora durations: 4, 8, 12
@@ -209,7 +216,7 @@ async def submit_job(
     config = MODELS[model]
     payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec, negative_prompt, enable_audio)
 
-    logger.debug("Submitting job to Fal", model=model, image_url=image_url, resolution=resolution)
+    logger.info("Submitting job to Fal", model=model, enable_audio=enable_audio, payload_audio=payload.get("enable_audio"))
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(

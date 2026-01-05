@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -23,30 +23,63 @@ interface ImageLibraryProps {
   disabled?: boolean
 }
 
+const BATCH_SIZE = 100  // Load 100 images at a time
+
 export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: ImageLibraryProps) {
   const [images, setImages] = useState<LibraryImage[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  const fetchImages = useCallback(async () => {
-    setLoading(true)
+  const fetchImages = useCallback(async (offset = 0, append = false) => {
+    if (append) {
+      setLoadingMore(true)
+    } else {
+      setLoading(true)
+    }
+
     try {
-      const response = await fetch('/api/pipelines/images/library?limit=50')
+      const response = await fetch(`/api/pipelines/images/library?limit=${BATCH_SIZE}&offset=${offset}`)
       if (response.ok) {
         const data = await response.json()
-        setImages(data.images)
+        if (append) {
+          setImages(prev => [...prev, ...data.images])
+        } else {
+          setImages(data.images)
+        }
         setTotal(data.total)
+        setHasMore(offset + data.images.length < data.total)
       }
     } catch (error) {
       console.error('Failed to fetch image library:', error)
     } finally {
       setLoading(false)
+      setLoadingMore(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchImages()
+    fetchImages(0, false)
   }, [fetchImages])
+
+  // Infinite scroll - load more when scrolled near bottom
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current || loadingMore || !hasMore) return
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
+    if (scrollHeight - scrollTop - clientHeight < 200) {
+      setLoadingMore(true)
+      fetchImages(images.length, true)
+    }
+  }, [fetchImages, images.length, loadingMore, hasMore])
+
+  const loadMore = useCallback(() => {
+    if (!loadingMore && hasMore) {
+      fetchImages(images.length, true)
+    }
+  }, [fetchImages, images.length, loadingMore, hasMore])
 
   const toggleImage = (url: string) => {
     if (disabled) return
@@ -89,6 +122,9 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Badge variant="outline">{total} images</Badge>
+          <Badge variant="outline" className="text-xs">
+            {images.length} loaded
+          </Badge>
           {selectedImages.length > 0 && (
             <Badge variant="default">{selectedImages.length} selected</Badge>
           )}
@@ -97,7 +133,7 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
           <Button
             size="sm"
             variant="ghost"
-            onClick={fetchImages}
+            onClick={() => fetchImages(0, false)}
             disabled={loading}
           >
             <RefreshCw className={cn("h-4 w-4 mr-1", loading && "animate-spin")} />
@@ -126,49 +162,83 @@ export function ImageLibrary({ selectedImages, onSelectionChange, disabled }: Im
         </div>
       </div>
 
-      {/* Image grid */}
-      <div className="grid grid-cols-5 gap-2 max-h-[400px] overflow-y-auto pr-2">
-        {images.map((img, idx) => (
-          <div
-            key={`${img.step_id}-${idx}`}
-            className={cn(
-              "relative aspect-[9/16] rounded overflow-hidden border cursor-pointer group transition-all",
-              selectedImages.includes(img.url) && "ring-2 ring-primary ring-offset-2",
-              disabled && "opacity-50 cursor-not-allowed"
-            )}
-            onClick={() => toggleImage(img.url)}
-          >
-            <img
-              src={img.thumbnail_url || img.url}
-              alt={img.prompt || `Image ${idx + 1}`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-
-            {/* Selection checkbox */}
+      {/* Image grid with scroll */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="grid grid-cols-5 gap-2 max-h-[400px] overflow-y-auto pr-2"
+      >
+        {images.map((img, idx) => {
+          const isSelected = selectedImages.includes(img.url)
+          return (
             <div
+              key={`${img.step_id}-${idx}`}
               className={cn(
-                "absolute top-1 left-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
-                selectedImages.includes(img.url)
-                  ? "bg-primary border-primary"
-                  : "bg-white/80 border-gray-300 opacity-0 group-hover:opacity-100"
+                "relative aspect-[9/16] rounded overflow-hidden border cursor-pointer group transition-all",
+                isSelected && "ring-2 ring-primary ring-offset-2",
+                disabled && "opacity-50 cursor-not-allowed"
               )}
+              onClick={() => toggleImage(img.url)}
             >
-              {selectedImages.includes(img.url) && (
-                <Check className="h-3 w-3 text-white" />
-              )}
-            </div>
+              {/* Use thumbnail if available, fallback to full image */}
+              <img
+                src={img.thumbnail_url || img.url}
+                alt={img.prompt || `Image ${idx + 1}`}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
 
-            {/* Model badge */}
-            <div className="absolute bottom-1 left-1 right-1">
-              <Badge variant="secondary" className="text-[10px] px-1 py-0 opacity-80">
-                {img.model}
-              </Badge>
+              {/* Selection checkbox */}
+              <div
+                className={cn(
+                  "absolute top-1 left-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
+                  isSelected
+                    ? "bg-primary border-primary"
+                    : "bg-white/80 border-gray-300 opacity-0 group-hover:opacity-100"
+                )}
+              >
+                {isSelected && (
+                  <Check className="h-3 w-3 text-white" />
+                )}
+              </div>
+
+              {/* Model badge */}
+              <div className="absolute bottom-1 left-1 right-1">
+                <Badge variant="secondary" className="text-[10px] px-1 py-0 opacity-80">
+                  {img.model}
+                </Badge>
+              </div>
             </div>
-          </div>
+          )
+        })}
+
+        {/* Loading placeholder cells */}
+        {loadingMore && Array.from({ length: 5 }).map((_, i) => (
+          <div key={`loading-${i}`} className="aspect-[9/16] rounded bg-muted animate-pulse" />
         ))}
       </div>
+
+      {/* Load more button */}
+      {hasMore && (
+        <div className="text-center">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={loadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              `Load more (${total - images.length} remaining)`
+            )}
+          </Button>
+        </div>
+      )}
 
       {selectedImages.length > 0 && (
         <p className="text-sm text-muted-foreground text-center">

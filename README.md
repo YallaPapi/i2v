@@ -285,3 +285,43 @@ pytest tests/ -v
 curl http://localhost:8000/health
 # {"status": "ok"}
 ```
+
+---
+
+## Frontend Features
+
+### Image Library Performance
+- **Auto-thumbnail generation**: Small 150px JPEG previews automatically created for all generated images
+- **Batch loading**: Library loads 100 images at a time with infinite scroll
+- **Native lazy loading**: Browser-native deferred image loading
+- **Background migration**: On startup, auto-generates thumbnails for existing images that don't have them
+
+### Playground Settings
+- **Default mode persistence**: Photos/Videos/Both mode saved to localStorage
+- **GPT image quality default**: Low quality by default for faster/cheaper generation
+
+### Jobs Page
+- **Model badges with details**: Shows model name, resolution, and duration for each job
+
+---
+
+## Recent Changes (January 2026)
+
+### Performance Improvements
+- Image library now loads instantly with small thumbnails
+- Thumbnails auto-generated on every i2i run (150px, 60% quality JPEG)
+- Existing images get thumbnails on backend startup
+- Frontend uses pagination + infinite scroll instead of loading all images
+
+### UX Improvements
+- GPT image quality defaults to "low"
+- Mode selection (photos/videos/both) persists across sessions
+- Audio toggle for Veo models (checkbox, not fancy toggle)
+- Jobs page shows resolution and duration in model badges
+- Download All button actually downloads files now (was broken)
+- Recent prompts panel with Add/Copy buttons
+
+### Backend Changes
+- Parallel job processing increased to 20 concurrent
+- Thumbnail service at `app/services/thumbnail.py`
+- Auto-migration endpoint: `POST /api/pipelines/images/library/generate-thumbnails`

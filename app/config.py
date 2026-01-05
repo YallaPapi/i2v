@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Worker
     worker_poll_interval_seconds: int = 10
-    max_concurrent_submits: int = 5
+    max_concurrent_submits: int = 20
     max_concurrent_polls: int = 20
 
     # Auto-download

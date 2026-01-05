@@ -6,8 +6,8 @@ from PIL import Image
 
 logger = structlog.get_logger()
 
-THUMBNAIL_WIDTH = 300
-THUMBNAIL_QUALITY = 80
+THUMBNAIL_WIDTH = 150  # Smaller = faster loading
+THUMBNAIL_QUALITY = 60  # Lower quality = smaller file size
 DOWNLOAD_TIMEOUT = 15.0
 
 

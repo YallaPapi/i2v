@@ -50,10 +50,75 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to recover jobs on startup", error=str(e))
 
+    # Auto-generate thumbnails for existing images that don't have them
+    try:
+        import asyncio
+        asyncio.create_task(_generate_missing_thumbnails())
+    except Exception as e:
+        logger.warning("Failed to start thumbnail generation", error=str(e))
+
     yield
 
     # Shutdown
     logger.info("Shutting down i2v service")
+
+
+async def _generate_missing_thumbnails():
+    """Background task to generate thumbnails for images that don't have them."""
+    import asyncio
+    from app.database import SessionLocal
+    from app.models import PipelineStep, StepStatus
+    from app.services.thumbnail import generate_thumbnails_batch
+
+    # Wait a bit for app to fully start
+    await asyncio.sleep(2)
+
+    logger.info("Starting background thumbnail generation for existing images")
+
+    db = SessionLocal()
+    try:
+        # Get all i2i steps
+        steps = (
+            db.query(PipelineStep)
+            .filter(PipelineStep.step_type == "i2i")
+            .filter(PipelineStep.status == StepStatus.COMPLETED.value)
+            .all()
+        )
+
+        processed = 0
+        for step in steps:
+            outputs = step.get_outputs()
+            if not outputs or not outputs.get("image_urls"):
+                continue
+
+            # Skip if thumbnails already exist
+            existing_thumbs = outputs.get("thumbnail_urls", [])
+            image_urls = outputs["image_urls"]
+            if existing_thumbs and len(existing_thumbs) == len(image_urls):
+                continue
+
+            # Generate thumbnails
+            try:
+                thumbnail_urls = await generate_thumbnails_batch(image_urls)
+                outputs["thumbnail_urls"] = thumbnail_urls
+                step.set_outputs(outputs)
+                db.commit()
+                processed += 1
+
+                # Don't overwhelm the system
+                if processed % 10 == 0:
+                    logger.info(f"Generated thumbnails for {processed} steps so far...")
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"Failed to generate thumbnail for step {step.id}: {e}")
+                continue
+
+        logger.info(f"Thumbnail generation complete. Processed {processed} steps.")
+
+    except Exception as e:
+        logger.error(f"Thumbnail generation failed: {e}")
+    finally:
+        db.close()
 
 
 app = FastAPI(
