@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -97,7 +97,7 @@ function getOutputs(details: PipelineDetails | undefined) {
   }
   return outputs
 }
-const PAGE_SIZE = 50
+const PAGE_SIZE = 10
 // Individual pipeline item component
 function PipelineItem({
   pipeline,
@@ -256,7 +256,9 @@ function PipelineItem({
                       for (let i = 0; i < pipelineSelected.length; i++) {
                         const o = pipelineSelected[i]
                         try {
-                          const response = await fetch(o.url)
+                          // Use backend proxy to avoid CORS issues
+                          const proxyUrl = `/api/pipelines/download?url=${encodeURIComponent(o.url)}`
+                          const response = await fetch(proxyUrl)
                           const blob = await response.blob()
                           const blobUrl = URL.createObjectURL(blob)
                           const a = document.createElement('a')
@@ -315,17 +317,22 @@ export function Jobs() {
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem('demoMode') === 'true')
   const [showHidden, setShowHidden] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
-  // Query params
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE)
+  // Query params - fetch more than displayed to enable smooth "load more"
   const queryParams = useMemo(() => ({
     favorites: demoMode || undefined,
     hidden: showHidden || undefined,
     tag: tagFilter || undefined,
-    limit: PAGE_SIZE,
+    limit: displayCount,
     offset: 0,
-  }), [demoMode, showHidden, tagFilter])
+  }), [demoMode, showHidden, tagFilter, displayCount])
   const { data, isLoading, isFetching, refetch } = usePipelines(queryParams)
   const pipelines = data?.pipelines || []
   const total = data?.total || 0
+  // Reset display count when filters change
+  useEffect(() => {
+    setDisplayCount(PAGE_SIZE)
+  }, [demoMode, showHidden, tagFilter])
   // Save demo mode
   if (typeof window !== 'undefined') localStorage.setItem('demoMode', demoMode.toString())
   const toggleExpand = useCallback((id: number) => {
@@ -400,6 +407,14 @@ export function Jobs() {
                   onSelectAll={selectAll}
                 />
               ))}
+              {pipelines.length < total && (
+                <div className="flex justify-center py-4">
+                  <Button variant="outline" onClick={() => setDisplayCount(prev => prev + PAGE_SIZE)} disabled={isFetching}>
+                    {isFetching ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Load More ({pipelines.length} / {total})
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-8">
