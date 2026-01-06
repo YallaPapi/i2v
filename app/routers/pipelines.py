@@ -245,6 +245,42 @@ async def list_pipelines(
     return response
 
 
+# ============== Download Proxy ==============
+# NOTE: This must come BEFORE /{pipeline_id} routes to avoid route conflict
+
+@router.get("/download")
+async def download_file(url: str = Query(..., description="URL of file to download")):
+    """Proxy download to avoid CORS issues with external CDNs."""
+    from urllib.parse import urlparse
+
+    # Validate URL is from allowed domains
+    allowed_domains = ["fal.media", "fal.ai", "r2.dev", "r2.cloudflarestorage.com"]
+    parsed = urlparse(url)
+
+    if not any(domain in parsed.netloc for domain in allowed_domains):
+        raise HTTPException(status_code=400, detail="URL not from allowed domain")
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            filename = parsed.path.split("/")[-1] or "download"
+
+            return StreamingResponse(
+                iter([response.content]),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Access-Control-Allow-Origin": "*",
+                }
+            )
+    except httpx.HTTPError as e:
+        logger.error("Download proxy failed", url=url, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {str(e)}")
+
+
 @router.get("/{pipeline_id}", response_model=PipelineResponse)
 async def get_pipeline(
     pipeline_id: int,
@@ -1407,42 +1443,3 @@ async def generate_library_thumbnails(
         "skipped": skipped,
         "message": f"Generated thumbnails for {processed} steps, skipped {skipped} (already had thumbnails)",
     }
-
-
-# ============== Download Proxy ==============
-
-@router.get("/download")
-async def download_file(url: str = Query(..., description="URL of file to download")):
-    """Proxy download to avoid CORS issues with external CDNs."""
-    # Validate URL is from allowed domains
-    allowed_domains = ["fal.media", "fal.ai", "r2.dev", "r2.cloudflarestorage.com"]
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-
-    if not any(domain in parsed.netloc for domain in allowed_domains):
-        raise HTTPException(status_code=400, detail="URL not from allowed domain")
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-
-            # Determine content type
-            content_type = response.headers.get("content-type", "application/octet-stream")
-
-            # Determine filename from URL
-            filename = parsed.path.split("/")[-1]
-            if not filename:
-                filename = "download"
-
-            return StreamingResponse(
-                iter([response.content]),
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f'attachment; filename="{filename}"',
-                    "Access-Control-Allow-Origin": "*",
-                }
-            )
-    except httpx.HTTPError as e:
-        logger.error("Download proxy failed", url=url, error=str(e))
-        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {str(e)}")
