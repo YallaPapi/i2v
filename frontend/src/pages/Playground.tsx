@@ -14,7 +14,7 @@ import {
 } from '@/components/pipeline'
 import type { BulkCostEstimate, BulkStep, SourceGroup } from '@/components/pipeline'
 import { Textarea } from '@/components/ui/textarea'
-import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal, History, ChevronDown, ChevronUp, Plus, Copy, Check } from 'lucide-react'
+import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal, History, ChevronDown, ChevronUp, Plus, Copy, Check, Sparkles } from 'lucide-react'
 
 type GenerationMode = 'bulk' | 'carousel'
 
@@ -133,6 +133,15 @@ export function Playground() {
   const [showRecentI2v, setShowRecentI2v] = useState(false)
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null)
 
+  // Prompt Builder state
+  const [showPromptBuilder, setShowPromptBuilder] = useState(false)
+  const [promptBuilderStyle, setPromptBuilderStyle] = useState<'cosplay' | 'cottagecore'>('cosplay')
+  const [promptBuilderLocation, setPromptBuilderLocation] = useState<'outdoor' | 'indoor' | 'mixed'>('mixed')
+  const [promptBuilderCount, setPromptBuilderCount] = useState(10)
+  const [promptBuilderLoading, setPromptBuilderLoading] = useState(false)
+  const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([])
+  const [promptBuilderCopied, setPromptBuilderCopied] = useState(false)
+
   // Fetch recent prompts on mount
   useEffect(() => {
     const fetchRecentPrompts = async () => {
@@ -184,6 +193,51 @@ export function Playground() {
     } catch (err) {
       console.error('Failed to copy:', err)
     }
+  }
+
+  // Prompt Builder handlers
+  const handleGeneratePrompts = async () => {
+    setPromptBuilderLoading(true)
+    try {
+      const response = await fetch('/api/generate-prompts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          count: promptBuilderCount,
+          style: promptBuilderStyle,
+          location: promptBuilderLocation,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setGeneratedPrompts(data.prompts)
+      } else {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        alert(`Failed to generate prompts: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error('Failed to generate prompts:', error)
+      alert('Failed to generate prompts. Check console for details.')
+    } finally {
+      setPromptBuilderLoading(false)
+    }
+  }
+
+  const handleCopyAllPrompts = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedPrompts.join('\n'))
+      setPromptBuilderCopied(true)
+      setTimeout(() => setPromptBuilderCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
+
+  const handleAddGeneratedToI2i = () => {
+    // Add generated prompts to I2I prompts (deduplicated)
+    const combined = [...new Set([...bulkI2iPrompts, ...generatedPrompts])]
+    setBulkI2iPrompts(combined)
   }
 
   // Compute effective source images based on mode
@@ -665,6 +719,128 @@ export function Playground() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Prompt Builder - AI prompt generation */}
+                {(bulkMode === 'photos' || bulkMode === 'both') && (
+                  <Card>
+                    <CardHeader
+                      className="cursor-pointer"
+                      onClick={() => setShowPromptBuilder(!showPromptBuilder)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-primary" />
+                          <CardTitle className="text-lg">AI Prompt Builder</CardTitle>
+                        </div>
+                        <Button variant="ghost" size="sm">
+                          {showPromptBuilder ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <CardDescription>
+                        Generate i2i prompts with on-screen TikTok captions
+                      </CardDescription>
+                    </CardHeader>
+
+                    {showPromptBuilder && (
+                      <CardContent className="space-y-4">
+                        {/* Settings Row */}
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Style</Label>
+                            <select
+                              value={promptBuilderStyle}
+                              onChange={(e) => setPromptBuilderStyle(e.target.value as 'cosplay' | 'cottagecore')}
+                              className="w-full h-9 px-2 text-sm rounded-md border bg-background"
+                              disabled={promptBuilderLoading}
+                            >
+                              <option value="cosplay">Cosplay (anime)</option>
+                              <option value="cottagecore">Cottagecore</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Location</Label>
+                            <select
+                              value={promptBuilderLocation}
+                              onChange={(e) => setPromptBuilderLocation(e.target.value as 'outdoor' | 'indoor' | 'mixed')}
+                              className="w-full h-9 px-2 text-sm rounded-md border bg-background"
+                              disabled={promptBuilderLoading}
+                            >
+                              <option value="mixed">Mixed</option>
+                              <option value="outdoor">Outdoor</option>
+                              <option value="indoor">Indoor</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Count</Label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={50}
+                              value={promptBuilderCount}
+                              onChange={(e) => setPromptBuilderCount(Math.min(50, Math.max(1, parseInt(e.target.value) || 1)))}
+                              className="w-full h-9 px-2 text-sm rounded-md border bg-background"
+                              disabled={promptBuilderLoading}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Generate Button */}
+                        <Button
+                          onClick={handleGeneratePrompts}
+                          disabled={promptBuilderLoading}
+                          className="w-full"
+                        >
+                          {promptBuilderLoading ? (
+                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating...</>
+                          ) : (
+                            <><Sparkles className="h-4 w-4 mr-2" /> Generate {promptBuilderCount} Prompts</>
+                          )}
+                        </Button>
+
+                        {/* Generated Prompts Output */}
+                        {generatedPrompts.length > 0 && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm font-medium">Generated Prompts ({generatedPrompts.length})</Label>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={handleAddGeneratedToI2i}
+                                  disabled={isGenerating}
+                                >
+                                  <Plus className="h-4 w-4 mr-1" />
+                                  Add to Photo Prompts
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={handleCopyAllPrompts}
+                                >
+                                  {promptBuilderCopied ? (
+                                    <><Check className="h-4 w-4 mr-1" /> Copied!</>
+                                  ) : (
+                                    <><Copy className="h-4 w-4 mr-1" /> Copy All</>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                            <Textarea
+                              value={generatedPrompts.join('\n\n')}
+                              readOnly
+                              rows={10}
+                              className="font-mono text-xs"
+                            />
+                          </div>
+                        )}
+                      </CardContent>
+                    )}
+                  </Card>
+                )}
 
                 {/* Photo descriptions - shown for 'photos' and 'both' modes */}
                 {(bulkMode === 'photos' || bulkMode === 'both') && (

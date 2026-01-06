@@ -1,0 +1,434 @@
+### Tailored Prompts for Improving the i2v Project
+
+Below, I've written out each prompt fully, adapted specifically to the context of the i2v repository (https://github.com/YallaPapi/i2v). This project is a FastAPI-based backend service for AI image-to-video and image generation, integrated with Fal.ai for AI processing, using SQLAlchemy for job management in a PostgreSQL database, and including TypeScript frontend components for user interaction. It features bulk processing scripts (e.g., for video generation from images), Docker support for deployment, caching mechanisms, auto-download functionalities, and some pytest-based testing. The codebase includes directories like `app/` for the core backend, `scripts/` for utilities like bulk generation, `tests/` for unit tests, and frontend elements in TypeScript. Documentation exists in README.md and PRODUCTION_HARDENING_PLAYBOOK.md, with ongoing focuses on performance, UX, and scalability.
+
+These prompts are ordered in the sequence they should be executed by your coding agent: starting with quality assessments, moving to security and architecture for hardening, then performance and debt for ease of updates, followed by refactoring, and ending with testing and documentation for overall improvement. Each prompt is ready-to-use—your agent can apply it directly to a digest or clone of the i2v codebase. I've incorporated project-specific details where relevant (e.g., referencing key files, languages, or components) to make the analysis and suggestions more targeted.
+
+1. **Code Style Consistency Analysis for i2v**  
+   **Objective:** Conduct a thorough analysis of the i2v codebase to evaluate consistency in code style, naming conventions, and formatting, identifying deviations from the project's style guide or industry best practices (e.g., PEP 8 for Python, standard TypeScript conventions), and providing actionable recommendations for improvement, with a focus on the mixed Python (FastAPI backend) and TypeScript (frontend) elements.  
+
+   **Instructions:**  
+
+   1. Review the entire i2v codebase, focusing on:  
+      - Naming conventions (variables, functions, classes, modules) in files like app/main.py, app/fal_client.py, and TypeScript frontend components.  
+      - Code formatting (indentation, line length, whitespace usage) across backend (e.g., worker.py) and scripts (e.g., bulk_generate_videos.py).  
+      - Comment style and frequency in job management logic and Fal.ai integrations.  
+      - File organization and structure in directories like app/, scripts/, and tests/.  
+      - Language-specific idioms and best practices for FastAPI, SQLAlchemy, and TypeScript.  
+
+   2. For each identified inconsistency or style issue, analyze:  
+
+      a. Location:  
+         - File path (e.g., app/worker.py)  
+         - Line number(s) or range  
+
+      b. Issue Details:  
+         - Type of inconsistency (e.g., naming, formatting, structure)  
+         - Description of the deviation from expected style  
+         - Comparison with the correct style (if applicable, e.g., camelCase in TypeScript vs. snake_case in Python)  
+
+      c. Impact Assessment:  
+         - Effect on code readability in features like caching or auto-downloads.  
+         - Potential for introducing bugs or maintenance issues in bulk processing scripts.  
+         - Impact on team collaboration and onboarding of new developers for a project with ongoing UX and performance updates.  
+
+      d. Correction Suggestions:  
+         - Specific recommendations for addressing the issue, such as using black for Python formatting or prettier for TypeScript.  
+         - Code snippets demonstrating the correct style (if applicable).  
+         - Explanation of the rationale behind the suggested changes.  
+
+   3. Identify patterns and trends in style inconsistencies across the i2v codebase:  
+      - Are certain types of issues more prevalent (e.g., inconsistent async handling in FastAPI endpoints)?  
+      - Do inconsistencies cluster in specific modules or areas, like job polling in worker.py or frontend components?  
+      - Are there differences in style between different team members or over time, based on commit history?  
+
+   4. Assess the overall adherence to the project's style guide or industry standards:  
+      - Percentage of code adhering to expected style in backend vs. frontend.  
+      - Areas of high compliance (e.g., tests/) and areas needing improvement (e.g., scripts/).  
+      - Comparison with similar projects or industry benchmarks for AI service backends (if available).  
+
+   5. Analyze the effectiveness of current style enforcement mechanisms:  
+      - Evaluate the use of linters (e.g., pylint for Python), formatters, or other automated tools in the i2v setup.  
+      - Assess the consistency of code review practices related to style, considering Docker and deployment configs.  
+
+   6. Provide strategic recommendations for improving code style consistency:  
+      - Suggest updates or clarifications to the project's style guide in README.md.  
+      - Recommend tools or processes to automate style enforcement, like pre-commit hooks for black and eslint.  
+      - Propose training or knowledge-sharing initiatives to improve team awareness for mixed-language projects.  
+      - Suggest a phased approach for addressing identified issues, prioritizing based on impact and effort, starting with core backend files.  
+
+   **Expected Output:** A comprehensive analysis of the i2v codebase's style consistency, including:  
+
+   1. Executive summary of findings and key recommendations.  
+   2. Detailed analysis of style inconsistencies, grouped by category and severity.  
+   3. Statistical overview of style adherence across the codebase.  
+   4. In-depth discussion of patterns and trends in style issues.  
+   5. Evaluation of current style enforcement mechanisms.  
+   6. Strategic recommendations for improving overall code style consistency.  
+   7. Appendices with detailed examples and code snippets.  
+
+   For each identified issue, use the following format:  
+
+   File: [file path]  
+   Line(s): [line number(s) or range]  
+   Issue Type: [naming/formatting/structure/etc.]  
+   Description: [detailed description of the inconsistency]  
+   Impact:  
+     - Readability: [low/medium/high] - [brief explanation]  
+     - Maintainability: [low/medium/high] - [brief explanation]  
+     - Collaboration: [low/medium/high] - [brief explanation]  
+   Correct Style:  
+   ```[language]  
+   [code snippet demonstrating correct style]  
+   ```  
+   Suggestion:  
+     - [specific correction recommendation]  
+     - Rationale: [explanation of why this change improves consistency]  
+
+   Conclude with an overall assessment of the code style consistency in the i2v project, including a roadmap for addressing identified issues and implementing long-term improvements in coding practices and team collaboration.
+
+2. **Code Duplication Analysis for i2v**  
+   **Objective:** Analyze the i2v codebase to identify duplicated code fragments, providing insights into potential maintainability issues and suggesting refactoring opportunities, especially in repeated logic like Fal.ai API calls or job status handling.  
+
+   **Instructions:**  
+
+   1. Review the i2v codebase and identify instances of duplicated code, such as similar polling logic in worker.py and bulk scripts.  
+
+   2. For each identified duplication, analyze:  
+
+      a. Location:  
+         - File paths of affected files (e.g., app/fal_client.py and scripts/bulk_generate_videos.py)  
+         - Line numbers in each file  
+
+      b. Duplication Details:  
+         - Length of the duplicated code fragment (in lines of code)  
+         - Content or purpose of the duplicated code (e.g., image/video generation workflows)  
+
+      c. Impact Assessment:  
+         - Potential impact on code maintainability for features like caching or auto-downloads.  
+         - Risks associated with the duplication (e.g., inconsistent updates in FastAPI endpoints).  
+
+      d. Refactoring Opportunities:  
+         - Suggestions for extracting duplicated code into reusable functions or classes (e.g., a shared utility module for Fal.ai interactions).  
+         - Potential design patterns or architectural changes to eliminate duplication in job management.  
+
+   3. Identify patterns or trends in code duplication across the i2v codebase, such as repetitions between backend and scripts.  
+
+   4. Assess the overall impact of code duplication on the project's maintainability and scalability, considering growth in AI features.  
+
+   5. Suggest improvements to reduce code duplication, considering:  
+      - Priority areas based on the extent and impact of duplication (e.g., prioritize core app/ files).  
+      - Refactoring strategies that align with the project's FastAPI and SQLAlchemy architecture.  
+      - Tools or processes to prevent future code duplication, like code duplication detectors in CI.  
+
+   **Expected Output:** A comprehensive analysis of the i2v codebase's code duplication, including:  
+
+   1. An overview of the duplication analysis findings.  
+   2. Detailed breakdowns for each identified duplication.  
+   3. General recommendations for reducing and preventing code duplication.  
+   4. If applicable, a summary of duplication trends or patterns observed in the codebase.  
+
+   For each identified duplication, use the following format:  
+
+   Files:  
+   - [file path 1]  
+   - [file path 2]  
+   Line(s):   
+   - [file 1 line numbers]  
+   - [file 2 line numbers]  
+   Length: [number of duplicated lines]  
+   Impact: [potential impact on maintainability]  
+   Suggestions:  
+   - [refactoring suggestion 1]  
+   - [refactoring suggestion 2]  
+   - ...  
+
+   If no significant duplications are found, provide a summary stating that the i2v codebase has minimal code duplication.  
+
+   Conclude with an overall assessment of the code duplication in the i2v project, including recommendations for addressing the most critical instances and strategies for maintaining a DRY (Don't Repeat Yourself) codebase.
+
+3. **Code Complexity Analysis for i2v**  
+   **Objective:** Analyze the i2v codebase to identify areas with high cyclomatic complexity, deep nesting, or excessive method lengths, providing insights into potential readability and maintainability issues, particularly in worker polling, bulk generation logic, or Fal.ai integrations.  
+
+   **Instructions:**  
+
+   1. Review the i2v codebase and identify areas with:  
+      - High cyclomatic complexity (e.g., in async job handling).  
+      - Deep nesting (e.g., in API endpoint conditionals).  
+      - Excessive method lengths (e.g., in main.py or bulk scripts).  
+
+   2. For each identified issue, analyze:  
+      a. Location:  
+         - File path (e.g., app/worker.py)  
+         - Line number(s)  
+
+      b. Description:  
+         - Brief explanation of the complexity issue.  
+
+      c. Impact:  
+         - Potential effects on code readability for TypeScript frontend or Python backend.  
+         - Potential effects on code maintainability during feature updates like new AI models.  
+
+      d. Refactoring Suggestions:  
+         - Propose methods to simplify or restructure the code (e.g., extract methods for nested loops).  
+         - Suggest alternative approaches to reduce complexity, like using async generators.  
+
+   3. If no significant issues are found, provide a summary stating that the i2v codebase has acceptable complexity levels.  
+
+   4. Consider the overall complexity trends in the i2v codebase:  
+      - Are there specific areas or modules that consistently show higher complexity (e.g., job management vs. tests/)?  
+      - Are there patterns in the types of complexity issues encountered (e.g., in SQLAlchemy queries)?  
+
+   5. Suggest general best practices or coding standards that could help prevent future complexity issues, tailored to FastAPI and TypeScript.  
+
+   **Expected Output:** A comprehensive analysis of the i2v codebase's complexity, detailing specific issues found, their impact, and suggestions for improvement. The report should include:  
+
+   1. An overview of the complexity analysis findings.  
+   2. Detailed breakdowns of each identified issue.  
+   3. General recommendations for maintaining code simplicity.  
+   4. If applicable, a summary of complexity trends or patterns observed in the codebase.  
+
+   For each identified issue, use the following format:  
+
+   File: [file path]  
+   Line(s): [line number(s)]  
+   Issue: [brief description]  
+   Impact: [potential impact on readability and maintainability]  
+   Suggestions:  
+   - [refactoring suggestion 1]  
+   - [refactoring suggestion 2]
+
+4. **Security Vulnerability Analysis for i2v**  
+   **Objective:** Identify potential security vulnerabilities within the i2v codebase, focusing on API endpoints, file handling (e.g., uploads/downloads), and integrations like Fal.ai.  
+
+   **Instructions:**  
+
+   1. Analyze the i2v codebase with a focus on identifying common security weaknesses such as:  
+      - SQL injection in SQLAlchemy queries.  
+      - Cross-site scripting (XSS) in frontend TypeScript components.  
+      - Cross-site request forgery (CSRF) in FastAPI endpoints.  
+      - Authentication and authorization bypasses (e.g., in job access).  
+      - Data exposure in caching or auto-download features.  
+
+   2. For each identified vulnerability, provide a detailed explanation of:  
+      - The nature of the vulnerability (e.g., unsanitized inputs in bulk scripts).  
+      - The potential impact of exploitation (e.g., unauthorized video generation).  
+      - Recommendations for mitigation using secure coding practices (e.g., use of pydantic for validation).  
+
+   3. Prioritize vulnerabilities based on their severity and potential impact, especially for production hardening as per PRODUCTION_HARDENING_PLAYBOOK.md.  
+
+   **Expected Output:** A comprehensive security report highlighting potential vulnerabilities within the i2v codebase, along with clear explanations of their risks and actionable recommendations for remediation.
+
+5. **Best Practice Analysis for i2v**  
+   **Objective:** Analyze the i2v codebase and identify examples of both good and bad programming practices, particularly in FastAPI usage, SQLAlchemy models, and TypeScript frontend.  
+
+   **Instructions:**  
+
+   1. Carefully review the i2v codebase and pinpoint instances of exemplary and problematic coding practices (e.g., good async handling in worker.py vs. bad error handling in scripts).  
+
+   2. For each example, provide a detailed analysis that includes:  
+      - What is good/bad about the specific solution?  
+      - What concepts or principles underpin the solution (e.g., SOLID principles in job management)?  
+      - What are the potential positive/negative consequences of using this solution (e.g., scalability in Docker deployments)?  
+
+   **Expected Output:** A comprehensive report highlighting both positive and negative coding practices within the i2v codebase, with in-depth explanations and analysis of their impact.
+
+6. **Design Pattern Identification for i2v**  
+   **Objective:** Analyze the i2v codebase to identify and understand the implementation and purpose of common design patterns, such as in job queuing or Fal.ai client wrappers.  
+
+   **Instructions:**  
+
+   1. Examine the i2v codebase structure and logic: Look for recurring code structures, relationships between classes (e.g., SQLAlchemy models), or ways that common software design problems are addressed in backend and frontend.  
+
+   2. Identify design pattern instances: Determine if any of the following design patterns (or others) are used:  
+      - Creational Patterns: Singleton, Factory, Abstract Factory, Builder, Prototype (e.g., for Fal.ai client instantiation).  
+      - Structural Patterns: Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy (e.g., in caching layers).  
+      - Behavioral Patterns: Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor (e.g., in job status updates).  
+
+   3. For each identified pattern:  
+      - Name the pattern.  
+      - Provide a brief description of the pattern and its general purpose.   
+      - Explain the specific implementation details within the codebase, including relevant classes, interfaces, and relationships (e.g., in app/models.py).  
+      - Explain the reasoning behind using the pattern in the context of the i2v codebase. What benefits does it provide (e.g., easier feature additions like new AI endpoints)?   
+
+   **Expected Output:** A structured analysis that:  
+
+   1. Lists all identified design patterns found in the i2v codebase.  
+   2. Provides a clear description and explanation for each identified pattern instance.  
+   3. Explains the reasoning and benefits of using each design pattern within the specific context of the i2v codebase.
+
+7. **Coupling and Cohesion Analysis for i2v**  
+   **Objective:** Evaluate the coupling and cohesion of modules or components within the i2v codebase, identifying areas of high coupling or low cohesion that might indicate design flaws, such as tight dependencies between backend and frontend or in scripts.   
+
+   **Instructions:**  
+
+   1. Analyze module dependencies: Examine how different modules or components in the i2v codebase depend on each other (e.g., app/ relying on fal_client.py). Tools like dependency graphs can be helpful for visualization.  
+
+   2. Evaluate coupling:  
+      - Identify areas of high coupling: Look for modules that depend heavily on many other modules or have complex, intertwined dependencies (e.g., worker.py with database and API).   
+      - Explain the implications of high coupling: For example, explain how high coupling can make modules harder to understand, test, and maintain independently in a scalable AI service.   
+
+   3. Evaluate cohesion:  
+      - Identify areas of low cohesion: Look for modules that contain unrelated functionalities or classes that don't seem to belong together logically (e.g., mixed utilities in scripts/).   
+      - Explain the implications of low cohesion: For example, explain how low cohesion can make modules harder to understand and can lead to code that is more difficult to reuse for new features.   
+
+   4. Provide concrete examples: Illustrate your findings with specific code examples from the i2v codebase. Show instances of tight coupling, complex dependencies, or modules with low cohesion.  
+
+   5. Suggest potential improvements: Where applicable, suggest ways to refactor the code to reduce coupling and improve cohesion, such as:  
+      - Extracting shared functionality into separate modules (e.g., a dedicated utils/ for Fal.ai helpers).   
+      - Applying design principles like the Single Responsibility Principle to job models.  
+
+   **Expected Output:** A well-structured report that:  
+
+   1. Provides an assessment of the i2v codebase's overall coupling and cohesion.  
+   2. Identifies specific areas of high coupling and low cohesion, supported by code examples.  
+   3. Explains the potential negative consequences of these design issues.  
+   4. Suggests actionable steps to improve the codebase's structure.
+
+8. **Performance and Scalability Analysis for i2v**  
+   **Objective:** Assess the i2v codebase's ability to handle increasing loads and identify potential limitations that might hinder scalability, suggesting improvements to enhance scalability, especially for job processing and API concurrency.   
+
+   **Instructions:**  
+
+   1. Understand the current architecture: Analyze the i2v codebase's architecture to determine its components (e.g., FastAPI, SQLAlchemy, Fal.ai), their interactions, and data flow (e.g., job queuing).  
+
+   2. Identify scaling bottlenecks: Look for potential scaling limits in areas like:  
+      - Database: Analyze query performance under load in PostgreSQL, database connection pooling, and potential for sharding or replication in models.py.  
+      - Application Servers: Assess the capacity to handle concurrent requests, session management, and load balancing in main.py.  
+      - Network: Evaluate network bandwidth, latency, and capacity to manage increased traffic for video downloads.  
+      - Caching: Determine if caching mechanisms are in place and if they can be optimized for scalability in AI generations.  
+
+   3. Consider different scaling strategies: Evaluate the suitability of:  
+      - Vertical scaling (upgrading hardware for Docker containers).  
+      - Horizontal scaling (adding more instances for worker processes).   
+
+   4. Suggest architectural improvements: Recommend changes to the codebase or infrastructure to address scalability limitations:  
+      - Introduce asynchronous processing or queuing mechanisms (e.g., with Celery for jobs).  
+      - Optimize database interactions for concurrency in SQLAlchemy.  
+      - Implement distributed caching solutions like Redis.  
+      - Consider microservices architecture for independent scaling of components like frontend and backend.   
+
+   **Expected Output:** A detailed report covering:  
+
+   - An assessment of the i2v codebase's current scalability.  
+   - Identification of potential bottlenecks and their impact.   
+   - Specific recommendations for architectural changes, code optimization, or infrastructure adjustments to improve scalability.
+
+9. **Technical Debt Estimation for i2v**  
+   **Objective:** Estimate the amount of technical debt present in the i2v codebase based on historical code analysis, focusing on identifying areas where past code evolution has led to accumulated technical debt, such as hardcoded configs or legacy scripts.  
+
+   **Instructions:**   
+
+   1. Analyze commit history: Examine commit messages, code changes, and refactoring patterns over time to identify potential sources of technical debt, such as:  
+      - Hasty bug fixes or workarounds that weren't properly addressed in worker.py.  
+      - Lack of consistent coding standards or code reviews, leading to inconsistent code style and potential issues in bulk scripts.  
+      - Postponed refactoring or architectural improvements in Fal.ai integrations.   
+
+   2. Identify code quality indicators: Look for signs of technical debt based on historical changes, such as:  
+      - Increased code complexity over time in job management.  
+      - High code churn in specific areas, indicating frequent rework or fixes (e.g., in tests/).  
+      - Presence of code smells or anti-patterns that have accumulated over time, like magic numbers in configs.  
+
+   3. Estimate the impact: Assess the potential consequences of the identified technical debt:  
+      - Increased maintenance effort and costs for UX updates.   
+      - Reduced development velocity due to difficult-to-understand or modify code in performance-critical areas.  
+      - Increased risk of bugs or regressions in AI features.  
+
+   4. Prioritize areas for refactoring: Rank areas with high technical debt based on their potential impact and the feasibility of addressing them (e.g., prioritize app/ over scripts/).   
+
+   **Expected Output:** A technical debt report that provides:  
+
+   - An overview of the estimated technical debt in the i2v codebase.  
+   - Identification of specific areas with high technical debt, supported by evidence from the code's history.  
+   - An assessment of the potential impact of the technical debt.  
+   - A prioritized list of recommendations for addressing the technical debt through refactoring or code improvements.
+
+10. **Refactoring for i2v**  
+    **Objective:** Refactor the i2v codebase to enhance its readability, maintainability, and performance, targeting areas like worker.py, fal_client.py, and bulk scripts.  
+
+    **Instructions:**  
+
+    1. Analyze the i2v codebase and identify areas that can be improved in terms of code clarity, structure, and efficiency (e.g., redundant checks in job polling).  
+
+    2. Suggest specific code transformations and optimizations to address the identified areas for improvement, such as modularizing Fal.ai calls.  
+
+    3. Prioritize refactoring techniques that improve code readability without introducing unnecessary complexity, aligning with FastAPI best practices.  
+
+    4. Consider performance implications of your suggested refactoring and aim for solutions that enhance efficiency without sacrificing clarity (e.g., optimize async waits).  
+
+    5. Provide clear explanations for each refactoring suggestion, justifying its benefits and potential impact.  
+
+    **Expected Output:** A set of actionable refactoring suggestions with detailed explanations of their benefits and potential impact on code quality and performance in the i2v project.
+
+11. **Unit Test Generation for i2v**  
+    **Objective:** Generate unit tests for the i2v codebase to ensure code correctness and prevent regressions, focusing on core components like fal_client.py, worker.py, and bulk scripts.  
+
+    **Instructions:**  
+
+    1. Analyze the i2v codebase and identify its core functions and methods (e.g., generate_video in fal_client.py).  
+
+    2. Generate unit tests that cover a wide range of input values and expected outputs for each function/method, using pytest for Python parts.  
+
+    3. Follow best practices for unit testing, including:  
+      - Test one function/method per test case.  
+      - Use descriptive test names.  
+      - Assert expected outcomes clearly.  
+      - Keep tests independent and isolated (e.g., mock Fal.ai API calls).  
+
+    4. Prioritize test coverage for critical functionalities and edge cases, like failed job statuses or invalid images.  
+
+    **Expected Output:** A comprehensive suite of unit tests that can be used to verify the correctness of the i2v codebase and prevent regressions during future development.
+
+12. **Documentation Generation for i2v**  
+    **Objective:** Generate comprehensive and user-friendly documentation for the i2v codebase, building on existing README.md and PLAYBOOK.  
+
+    **Instructions:**  
+
+    1. Analyze the i2v codebase and identify key components, functionalities, and APIs (e.g., FastAPI endpoints, SQLAlchemy models).  
+
+    2. Generate documentation that includes:  
+      - API specifications with detailed descriptions of endpoints, parameters, and responses in main.py.  
+      - Function descriptions with clear explanations of their purpose, inputs, and outputs (e.g., for bulk_generate_videos.py).  
+      - Usage examples demonstrating how to interact with the codebase effectively, including Docker setup.  
+
+    3. Structure the documentation logically and use a consistent format for clarity, perhaps in Markdown.  
+
+    4. Prioritize clarity, conciseness, and accuracy in your documentation.  
+
+    **Expected Output:** Well-structured and informative documentation that facilitates understanding and utilization of the i2v codebase by developers and other stakeholders.
+
+13. **Backend API Documentation for i2v**  
+    **Objective:** Generate documentation for i2v backend APIs, including endpoints, request/response formats, and authentication requirements.  
+
+    **Instructions:**  
+
+    1. Identify the main backend API endpoints in the i2v codebase (e.g., /generate-video, /jobs in main.py).  
+
+    2. For each endpoint, document its HTTP method, URL path, and purpose (e.g., image-to-video generation).  
+
+    3. Specify the expected request format, including headers, query parameters, and request body (if applicable, using pydantic schemas).  
+
+    4. Describe the response format, including the structure of the response data and any relevant status codes.  
+
+    5. Detail any authentication or authorization requirements for accessing the endpoint (e.g., API keys for Fal.ai).  
+
+    6. Provide clear and concise code examples demonstrating how to interact with the API using popular tools or libraries (e.g., curl or Python requests).  
+
+    **Expected Output:** Comprehensive documentation for the i2v backend APIs, including endpoints, request/response formats, authentication requirements, and code examples, ready to be integrated into the project's documentation system.
+
+14. **Frontend Component Documentation for i2v**  
+    **Objective:** Generate documentation for i2v frontend components, including props, usage examples, and best practices.  
+
+    **Instructions:**  
+
+    1. Identify the main frontend components in the i2v codebase (e.g., TypeScript UI elements for job monitoring or upload forms).  
+
+    2. For each component, document its purpose, props (including their types and default values), and any relevant usage notes.  
+
+    3. Provide clear and concise code examples demonstrating how to use the component in various scenarios (e.g., integrating with backend APIs).  
+
+    4. Include best practices and tips for effectively utilizing and customizing the component, considering UX improvements.  
+
+    5. Ensure the documentation is well-organized, easy to navigate, and follows a consistent format.  
+
+    **Expected Output:** Comprehensive documentation for the i2v frontend components, including props, usage examples, and best practices, ready to be integrated into the project's documentation system.

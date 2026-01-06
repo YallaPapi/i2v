@@ -26,6 +26,8 @@ from app.schemas import (
     FaceSwapCreate,
     FaceSwapResponse,
     FaceSwapModelsResponse,
+    PromptGeneratorRequest,
+    PromptGeneratorResponse,
 )
 from app.image_client import list_image_models
 from app.face_swap_client import (
@@ -439,3 +441,54 @@ async def upload_file(file: UploadFile = File(...)):
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+# ============== Prompt Generator Endpoints ==============
+
+
+@app.post("/api/generate-prompts", response_model=PromptGeneratorResponse)
+async def generate_prompts_endpoint(request: PromptGeneratorRequest):
+    """
+    Generate i2i prompts with on-screen captions for Instagram/TikTok style photos.
+
+    Uses Claude to generate prompts based on style (cosplay or cottagecore)
+    and location (outdoor, indoor, or mixed).
+    """
+    from app.services.prompt_generator import generate_prompts
+
+    # Check for API key
+    api_key = settings.anthropic_api_key
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="ANTHROPIC_API_KEY not configured. Add it to your .env file.",
+        )
+
+    # Validate count
+    if request.count < 1 or request.count > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="Count must be between 1 and 50",
+        )
+
+    try:
+        prompts = await generate_prompts(
+            api_key=api_key,
+            count=request.count,
+            style=request.style,
+            location=request.location,
+        )
+
+        return PromptGeneratorResponse(
+            prompts=prompts,
+            count=len(prompts),
+            style=request.style,
+            location=request.location,
+        )
+
+    except Exception as e:
+        logger.error("Prompt generation failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prompt generation failed: {str(e)}",
+        )

@@ -584,3 +584,23 @@ class AnimateSelectedRequest(BaseModel):
     negative_prompt: Optional[str] = None
     enable_audio: bool = False  # Veo 3.1 models only
     name: str = "Animate Selected"
+
+
+# ============== Prompt Generator Schemas ==============
+
+
+class PromptGeneratorRequest(BaseModel):
+    """Request to generate i2i prompts with on-screen captions."""
+
+    count: int = 10  # 1-50 prompts
+    style: Literal["cosplay", "cottagecore"] = "cosplay"
+    location: Literal["outdoor", "indoor", "mixed"] = "mixed"
+
+
+class PromptGeneratorResponse(BaseModel):
+    """Response with generated prompts."""
+
+    prompts: List[str]
+    count: int
+    style: str
+    location: str
