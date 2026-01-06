@@ -62,11 +62,18 @@ async def generate_video(
 
     Returns the video URL.
     """
-    logger.info("Generating video", model=model, image_url=image_url[:50], enable_audio=enable_audio)
+    logger.info(
+        "Generating video",
+        model=model,
+        image_url=image_url[:50],
+        enable_audio=enable_audio,
+    )
 
     # Validate model
     if model not in VIDEO_MODELS:
-        raise ValueError(f"Unknown video model: {model}. Available: {list(VIDEO_MODELS.keys())}")
+        raise ValueError(
+            f"Unknown video model: {model}. Available: {list(VIDEO_MODELS.keys())}"
+        )
 
     # Submit job
     request_id = await submit_job(
@@ -107,7 +114,9 @@ async def generate_image(
 
     # Validate model
     if model not in IMAGE_MODELS:
-        raise ValueError(f"Unknown image model: {model}. Available: {list(IMAGE_MODELS.keys())}")
+        raise ValueError(
+            f"Unknown image model: {model}. Available: {list(IMAGE_MODELS.keys())}"
+        )
 
     # Submit job
     request_id = await submit_image_job(
@@ -155,11 +164,13 @@ async def generate_images_batch(
                 num_images=1,
             )
             for url in urls:
-                results.append({
-                    "url": url,
-                    "prompt": prompt,
-                    "type": "image",
-                })
+                results.append(
+                    {
+                        "url": url,
+                        "prompt": prompt,
+                        "type": "image",
+                    }
+                )
         except Exception as e:
             logger.error("Image generation failed", prompt=prompt[:50], error=str(e))
             # Continue with other prompts
@@ -192,14 +203,21 @@ async def generate_videos_batch(
                     resolution=resolution,
                     duration_sec=duration_sec,
                 )
-                results.append({
-                    "url": video_url,
-                    "source_image": image_url,
-                    "prompt": prompt,
-                    "type": "video",
-                })
+                results.append(
+                    {
+                        "url": video_url,
+                        "source_image": image_url,
+                        "prompt": prompt,
+                        "type": "video",
+                    }
+                )
             except Exception as e:
-                logger.error("Video generation failed", image=image_url[:50], prompt=prompt[:50], error=str(e))
+                logger.error(
+                    "Video generation failed",
+                    image=image_url[:50],
+                    prompt=prompt[:50],
+                    error=str(e),
+                )
                 # Continue with other combinations
 
     return results

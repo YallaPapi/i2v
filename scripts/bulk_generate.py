@@ -31,8 +31,14 @@ def load_prompts(prompts_file: Path) -> list[str]:
     return [p for p in prompts if p and not p.startswith("#")]
 
 
-def submit_job(api_url: str, image_url: str, prompt: str, resolution: str,
-               duration: int, model: str) -> dict:
+def submit_job(
+    api_url: str,
+    image_url: str,
+    prompt: str,
+    resolution: str,
+    duration: int,
+    model: str,
+) -> dict:
     """Submit a single job to the API."""
     payload = {
         "image_url": image_url,
@@ -46,8 +52,9 @@ def submit_job(api_url: str, image_url: str, prompt: str, resolution: str,
     return response.json()
 
 
-async def process_images_dir(images_dir: Path, prompts: list[str],
-                              one_to_one: bool) -> list[tuple[str, str, Path]]:
+async def process_images_dir(
+    images_dir: Path, prompts: list[str], one_to_one: bool
+) -> list[tuple[str, str, Path]]:
     """
     Scan images dir, upload to Fal CDN, and pair with prompts.
 
@@ -72,7 +79,9 @@ async def process_images_dir(images_dir: Path, prompts: list[str],
         # All combinations (cartesian product)
         pairs = list(itertools.product(images, prompts))
 
-    print(f"Will create {len(pairs)} jobs ({'one-to-one' if one_to_one else 'all combinations'})")
+    print(
+        f"Will create {len(pairs)} jobs ({'one-to-one' if one_to_one else 'all combinations'})"
+    )
 
     # Upload images and build final list
     result = []
@@ -103,9 +112,7 @@ async def async_main(args):
     # Build job pairs
     if args.images_dir:
         # Local folder mode - upload images first
-        pairs = await process_images_dir(
-            args.images_dir, prompts, args.one_to_one
-        )
+        pairs = await process_images_dir(args.images_dir, prompts, args.one_to_one)
     elif args.image_url:
         # Single URL mode (backward compatible)
         pairs = [(args.image_url, p, None) for p in prompts]
@@ -129,8 +136,12 @@ async def async_main(args):
         print(f"[{i}/{len(pairs)}] {src} ({args.model}): {prompt[:40]}...")
         try:
             job = submit_job(
-                args.api_url, fal_url, prompt,
-                args.resolution, args.duration, args.model
+                args.api_url,
+                fal_url,
+                prompt,
+                args.resolution,
+                args.duration,
+                args.model,
             )
             jobs.append(job)
             print(f"    -> Job ID: {job['id']}")
@@ -151,47 +162,57 @@ def main():
     # Image source (one required)
     img_group = parser.add_mutually_exclusive_group(required=True)
     img_group.add_argument(
-        "--images-dir", type=Path,
-        help="Local directory containing images (jpg/png/webp)"
+        "--images-dir",
+        type=Path,
+        help="Local directory containing images (jpg/png/webp)",
     )
     img_group.add_argument(
-        "--image-url",
-        help="Single image URL to use for all prompts"
+        "--image-url", help="Single image URL to use for all prompts"
     )
 
     # Pairing mode
     parser.add_argument(
-        "--one-to-one", action="store_true",
-        help="Pair images with prompts 1:1 instead of all combinations"
+        "--one-to-one",
+        action="store_true",
+        help="Pair images with prompts 1:1 instead of all combinations",
     )
 
     # Job options
     parser.add_argument(
-        "--resolution", default="1080p",
-        choices=["480p", "720p", "1080p"]
+        "--resolution", default="1080p", choices=["480p", "720p", "1080p"]
+    )
+    parser.add_argument("--duration", type=int, default=5, choices=[5, 10])
+    parser.add_argument(
+        "--model",
+        default="wan",
+        choices=[
+            "wan",
+            "wan21",
+            "wan22",
+            "wan-pro",
+            "kling",
+            "veo2",
+            "veo31-fast",
+            "veo31",
+            "veo31-flf",
+            "veo31-fast-flf",
+        ],
+        help="Model to use",
     )
     parser.add_argument(
-        "--duration", type=int, default=5,
-        choices=[5, 10]
-    )
-    parser.add_argument(
-        "--model", default="wan",
-        choices=["wan", "wan21", "wan22", "wan-pro", "kling", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf"],
-        help="Model to use"
-    )
-    parser.add_argument(
-        "--list-models", action="store_true",
-        help="List available models with pricing and exit"
+        "--list-models",
+        action="store_true",
+        help="List available models with pricing and exit",
     )
 
     # Other options
     parser.add_argument(
-        "--api-url", default="http://127.0.0.1:8000",
-        help="API base URL"
+        "--api-url", default="http://127.0.0.1:8000", help="API base URL"
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Show what would be submitted without actually submitting"
+        "--dry-run",
+        action="store_true",
+        help="Show what would be submitted without actually submitting",
     )
 
     args = parser.parse_args()

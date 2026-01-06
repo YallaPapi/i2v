@@ -82,7 +82,7 @@ export function DropdownMenuTrigger({ asChild, children }: DropdownMenuTriggerPr
 }
 
 export function DropdownMenuContent({ align = "end", className, children }: DropdownMenuContentProps) {
-  const { open, setOpen } = React.useContext(DropdownMenuContext)
+  const { open } = React.useContext(DropdownMenuContext)
 
   if (!open) return null
 

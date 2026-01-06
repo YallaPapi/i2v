@@ -1,10 +1,15 @@
 """Cloudflare R2 caching service for fast image/video loading."""
+
 import os
 import hashlib
 import httpx
 import boto3
 from botocore.config import Config
 import structlog
+from dotenv import load_dotenv
+
+# Load .env file so os.getenv() can read R2 credentials
+load_dotenv()
 
 logger = structlog.get_logger()
 
@@ -27,12 +32,12 @@ def get_s3_client():
         return None
 
     _s3_client = boto3.client(
-        's3',
+        "s3",
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        config=Config(signature_version='s3v4'),
-        region_name='auto'
+        config=Config(signature_version="s3v4"),
+        region_name="auto",
     )
     return _s3_client
 
@@ -78,15 +83,19 @@ async def cache_image(source_url: str, prefix: str = "images") -> str | None:
         cached_url = f"{public_url}/{key}"
         logger.debug("Image already cached", key=key)
         return cached_url
-    except:
-        pass
+    except Exception:
+        pass  # Object doesn't exist, proceed to cache it
 
     # Download from source
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             response = await http.get(source_url)
             if response.status_code != 200:
-                logger.warning("Failed to download image for caching", url=source_url[:60], status=response.status_code)
+                logger.warning(
+                    "Failed to download image for caching",
+                    url=source_url[:60],
+                    status=response.status_code,
+                )
                 return None
             image_data = response.content
             content_type = response.headers.get("content-type", "image/jpeg")
@@ -101,7 +110,7 @@ async def cache_image(source_url: str, prefix: str = "images") -> str | None:
             Key=key,
             Body=image_data,
             ContentType=content_type,
-            CacheControl="public, max-age=31536000"
+            CacheControl="public, max-age=31536000",
         )
         cached_url = f"{public_url}/{key}"
         logger.info("Cached image to R2", key=key, size_kb=len(image_data) / 1024)
@@ -111,9 +120,12 @@ async def cache_image(source_url: str, prefix: str = "images") -> str | None:
         return None
 
 
-async def cache_images_batch(urls: list[str], prefix: str = "images") -> list[str | None]:
+async def cache_images_batch(
+    urls: list[str], prefix: str = "images"
+) -> list[str | None]:
     """Cache multiple images to R2. Returns list of cached URLs (or None for failures)."""
     import asyncio
+
     tasks = [cache_image(url, prefix) for url in urls]
     return await asyncio.gather(*tasks, return_exceptions=False)
 
@@ -125,7 +137,11 @@ async def cache_video(source_url: str) -> str | None:
     bucket = get_bucket()
 
     if not client or not public_url:
+        logger.warning("R2 caching skipped - client or public_url not configured",
+                      has_client=client is not None, has_public_url=public_url is not None)
         return None
+
+    logger.info("Starting R2 cache for video", url=source_url[:60])
 
     url_hash = hashlib.sha256(source_url.encode()).hexdigest()[:16]
     key = f"videos/{url_hash}.mp4"
@@ -136,15 +152,19 @@ async def cache_video(source_url: str) -> str | None:
         cached_url = f"{public_url}/{key}"
         logger.debug("Video already cached", key=key)
         return cached_url
-    except:
-        pass
+    except Exception:
+        pass  # Object doesn't exist, proceed to cache it
 
     # Download video (longer timeout for large files)
     try:
         async with httpx.AsyncClient(timeout=120.0) as http:
             response = await http.get(source_url)
             if response.status_code != 200:
-                logger.warning("Failed to download video", url=source_url[:60], status=response.status_code)
+                logger.warning(
+                    "Failed to download video",
+                    url=source_url[:60],
+                    status=response.status_code,
+                )
                 return None
             video_data = response.content
     except Exception as e:
@@ -158,10 +178,12 @@ async def cache_video(source_url: str) -> str | None:
             Key=key,
             Body=video_data,
             ContentType="video/mp4",
-            CacheControl="public, max-age=31536000"
+            CacheControl="public, max-age=31536000",
         )
         cached_url = f"{public_url}/{key}"
-        logger.info("Cached video to R2", key=key, size_mb=len(video_data) / (1024 * 1024))
+        logger.info(
+            "Cached video to R2", key=key, size_mb=len(video_data) / (1024 * 1024)
+        )
         return cached_url
     except Exception as e:
         logger.error("Failed to upload video to R2", key=key, error=str(e))
@@ -171,6 +193,7 @@ async def cache_video(source_url: str) -> str | None:
 async def cache_videos_batch(urls: list[str]) -> list[str | None]:
     """Cache multiple videos to R2."""
     import asyncio
+
     tasks = [cache_video(url) for url in urls]
     return await asyncio.gather(*tasks, return_exceptions=False)
 
@@ -188,5 +211,5 @@ def get_cached_url(source_url: str, prefix: str = "images") -> str | None:
     try:
         client.head_object(Bucket=bucket, Key=key)
         return f"{public_url}/{key}"
-    except:
+    except Exception:
         return None

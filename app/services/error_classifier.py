@@ -11,7 +11,7 @@ Not all errors are equal. Classify them and handle accordingly.
 
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Optional
 import httpx
 import structlog
 
@@ -20,17 +20,19 @@ logger = structlog.get_logger()
 
 class ErrorType(Enum):
     """Classification of errors for retry decisions."""
-    NETWORK = auto()      # Timeouts, connection issues - retry with backoff
-    RATE_LIMIT = auto()   # HTTP 429, quota exceeded - retry with longer backoff
-    INVALID_INPUT = auto() # HTTP 400, validation errors - fail immediately
-    TRANSIENT = auto()    # HTTP 500-503 - retry 2-3x then fail
-    PERMANENT = auto()    # HTTP 401/403, suspended - fail, flag for review
-    UNKNOWN = auto()      # Unclassified errors - default to transient behavior
+
+    NETWORK = auto()  # Timeouts, connection issues - retry with backoff
+    RATE_LIMIT = auto()  # HTTP 429, quota exceeded - retry with longer backoff
+    INVALID_INPUT = auto()  # HTTP 400, validation errors - fail immediately
+    TRANSIENT = auto()  # HTTP 500-503 - retry 2-3x then fail
+    PERMANENT = auto()  # HTTP 401/403, suspended - fail, flag for review
+    UNKNOWN = auto()  # Unclassified errors - default to transient behavior
 
 
 @dataclass
 class ClassifiedError:
     """Error with classification and context for intelligent handling."""
+
     error_type: ErrorType
     original_error: Exception
     message: str
@@ -84,18 +86,15 @@ class ErrorClassifier:
     STATUS_CODE_MAP = {
         # Rate limiting
         429: ErrorType.RATE_LIMIT,
-
         # Invalid input - don't retry
         400: ErrorType.INVALID_INPUT,
         404: ErrorType.INVALID_INPUT,
         405: ErrorType.INVALID_INPUT,
         422: ErrorType.INVALID_INPUT,
-
         # Permanent errors - don't retry, flag for review
         401: ErrorType.PERMANENT,
         403: ErrorType.PERMANENT,
         402: ErrorType.PERMANENT,  # Payment required
-
         # Transient server errors - retry a few times
         500: ErrorType.TRANSIENT,
         502: ErrorType.TRANSIENT,
@@ -113,7 +112,9 @@ class ErrorClassifier:
         OSError,
     )
 
-    def classify(self, error: Exception, context: Optional[dict] = None) -> ClassifiedError:
+    def classify(
+        self, error: Exception, context: Optional[dict] = None
+    ) -> ClassifiedError:
         """
         Classify an error for retry decisions.
 
@@ -173,16 +174,21 @@ class ErrorClassifier:
         # Check error message patterns
         error_str = str(error).lower()
 
-        if any(term in error_str for term in ['timeout', 'timed out']):
+        if any(term in error_str for term in ["timeout", "timed out"]):
             return ErrorType.NETWORK
 
-        if any(term in error_str for term in ['rate limit', 'too many requests', 'quota']):
+        if any(
+            term in error_str for term in ["rate limit", "too many requests", "quota"]
+        ):
             return ErrorType.RATE_LIMIT
 
-        if any(term in error_str for term in ['invalid', 'validation', 'bad request']):
+        if any(term in error_str for term in ["invalid", "validation", "bad request"]):
             return ErrorType.INVALID_INPUT
 
-        if any(term in error_str for term in ['unauthorized', 'forbidden', 'api key', 'authentication']):
+        if any(
+            term in error_str
+            for term in ["unauthorized", "forbidden", "api key", "authentication"]
+        ):
             return ErrorType.PERMANENT
 
         # Default to unknown
@@ -195,13 +201,13 @@ class ErrorClassifier:
             return error.response.status_code
 
         # Check for status_code attribute
-        if hasattr(error, 'status_code'):
-            return getattr(error, 'status_code')
+        if hasattr(error, "status_code"):
+            return getattr(error, "status_code")
 
         # Check for response attribute with status_code
-        if hasattr(error, 'response'):
-            response = getattr(error, 'response')
-            if hasattr(response, 'status_code'):
+        if hasattr(error, "response"):
+            response = getattr(error, "response")
+            if hasattr(response, "status_code"):
                 return response.status_code
 
         return None

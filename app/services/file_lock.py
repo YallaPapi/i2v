@@ -23,6 +23,7 @@ import structlog
 
 try:
     import portalocker
+
     PORTALOCKER_AVAILABLE = True
 except ImportError:
     PORTALOCKER_AVAILABLE = False
@@ -32,6 +33,7 @@ logger = structlog.get_logger()
 
 class LockAcquisitionError(Exception):
     """Raised when a lock cannot be acquired within the timeout."""
+
     pass
 
 
@@ -120,20 +122,16 @@ class FileLock:
             return True
 
         start_time = time.monotonic()
-        last_error = None
 
         logger.debug("Attempting to acquire lock", lock=self.name, timeout=self.timeout)
 
         while True:
             try:
                 # Open the lock file (create if doesn't exist)
-                self._file = open(self.lock_path, 'w')
+                self._file = open(self.lock_path, "w")
 
                 # Try to acquire exclusive lock (non-blocking)
-                portalocker.lock(
-                    self._file,
-                    portalocker.LOCK_EX | portalocker.LOCK_NB
-                )
+                portalocker.lock(self._file, portalocker.LOCK_EX | portalocker.LOCK_NB)
 
                 # Write PID for debugging
                 self._file.write(f"{os.getpid()}\n")
@@ -148,8 +146,7 @@ class FileLock:
                 )
                 return True
 
-            except portalocker.LockException as e:
-                last_error = e
+            except portalocker.LockException:
                 # Lock held by another process
 
                 # Clean up failed attempt

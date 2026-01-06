@@ -30,12 +30,11 @@ Usage:
     status = cooldown.get_status(entity_id)
 """
 
-import time
 import json
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
 from threading import Lock
 import structlog
 
@@ -45,6 +44,7 @@ logger = structlog.get_logger()
 @dataclass
 class CooldownState:
     """State for a single entity's cooldown tracking."""
+
     entity_id: str
     consecutive_failures: int = 0
     last_failure_at: Optional[str] = None
@@ -59,7 +59,7 @@ class CooldownState:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'CooldownState':
+    def from_dict(cls, data: dict) -> "CooldownState":
         """Create from dictionary."""
         return cls(**data)
 
@@ -69,7 +69,9 @@ class CooldownState:
             return False
 
         try:
-            cooldown_dt = datetime.fromisoformat(self.cooldown_until.replace('Z', '+00:00'))
+            cooldown_dt = datetime.fromisoformat(
+                self.cooldown_until.replace("Z", "+00:00")
+            )
             return datetime.now(timezone.utc) < cooldown_dt
         except Exception:
             return False
@@ -80,7 +82,9 @@ class CooldownState:
             return 0.0
 
         try:
-            cooldown_dt = datetime.fromisoformat(self.cooldown_until.replace('Z', '+00:00'))
+            cooldown_dt = datetime.fromisoformat(
+                self.cooldown_until.replace("Z", "+00:00")
+            )
             remaining = (cooldown_dt - datetime.now(timezone.utc)).total_seconds()
             return max(0.0, remaining)
         except Exception:
@@ -142,7 +146,7 @@ class CooldownManager:
             return
 
         try:
-            with open(self.persist_path, 'r') as f:
+            with open(self.persist_path, "r") as f:
                 data = json.load(f)
 
             for entity_id, state_data in data.items():
@@ -163,10 +167,9 @@ class CooldownManager:
 
         try:
             data = {
-                entity_id: state.to_dict()
-                for entity_id, state in self._states.items()
+                entity_id: state.to_dict() for entity_id, state in self._states.items()
             }
-            with open(self.persist_path, 'w') as f:
+            with open(self.persist_path, "w") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.warning("Failed to save cooldown state", error=str(e))
@@ -242,7 +245,9 @@ class CooldownManager:
 
             # Calculate and set cooldown
             cooldown_seconds = self._get_cooldown_duration(state.consecutive_failures)
-            cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=cooldown_seconds)
+            cooldown_until = datetime.now(timezone.utc) + timedelta(
+                seconds=cooldown_seconds
+            )
             state.cooldown_until = cooldown_until.isoformat()
 
             logger.info(
@@ -353,7 +358,7 @@ class CooldownManager:
 
             try:
                 return datetime.fromisoformat(
-                    state.cooldown_until.replace('Z', '+00:00')
+                    state.cooldown_until.replace("Z", "+00:00")
                 )
             except Exception:
                 return None
@@ -402,10 +407,7 @@ class CooldownManager:
             List of CooldownState for entities in cooldown
         """
         with self._lock:
-            return [
-                state for state in self._states.values()
-                if state.is_in_cooldown()
-            ]
+            return [state for state in self._states.values() if state.is_in_cooldown()]
 
     def get_stats(self) -> dict:
         """
@@ -426,8 +428,11 @@ class CooldownManager:
                 "available": total - in_cooldown,
                 "total_failures": total_failures,
                 "total_successes": total_successes,
-                "success_rate": total_successes / (total_failures + total_successes)
-                    if (total_failures + total_successes) > 0 else 1.0,
+                "success_rate": (
+                    total_successes / (total_failures + total_successes)
+                    if (total_failures + total_successes) > 0
+                    else 1.0
+                ),
             }
 
     def prune_old_entries(self, max_age_days: int = 30):

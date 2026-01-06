@@ -1,5 +1,13 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Index, Text, Numeric, ForeignKey, Enum
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Index,
+    Text,
+    Numeric,
+    ForeignKey,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -10,8 +18,10 @@ from app.database import Base
 
 # ============== Pipeline Enums ==============
 
+
 class PipelineStatus(str, enum.Enum):
     """Pipeline execution status."""
+
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
@@ -21,6 +31,7 @@ class PipelineStatus(str, enum.Enum):
 
 class PipelineMode(str, enum.Enum):
     """Pipeline execution mode."""
+
     MANUAL = "manual"
     AUTO = "auto"
     CHECKPOINT = "checkpoint"
@@ -28,6 +39,7 @@ class PipelineMode(str, enum.Enum):
 
 class StepType(str, enum.Enum):
     """Pipeline step types."""
+
     PROMPT_ENHANCE = "prompt_enhance"
     I2I = "i2i"
     I2V = "i2v"
@@ -35,6 +47,7 @@ class StepType(str, enum.Enum):
 
 class StepStatus(str, enum.Enum):
     """Pipeline step status."""
+
     PENDING = "pending"
     RUNNING = "running"
     REVIEW = "review"
@@ -43,6 +56,7 @@ class StepStatus(str, enum.Enum):
 
 
 # ============== Pipeline Models ==============
+
 
 class Pipeline(Base):
     """Pipeline model for chaining generation steps."""
@@ -57,16 +71,26 @@ class Pipeline(Base):
 
     # Categorization fields
     tags = Column(Text, nullable=True)  # JSON array of tag strings
-    is_favorite = Column(Integer, nullable=False, default=0)  # SQLite uses INTEGER for bool
+    is_favorite = Column(
+        Integer, nullable=False, default=0
+    )  # SQLite uses INTEGER for bool
     is_hidden = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     # Relationships - lazy='select' prevents eager loading in list views
-    steps = relationship("PipelineStep", back_populates="pipeline", order_by="PipelineStep.step_order", cascade="all, delete-orphan", lazy="select")
+    steps = relationship(
+        "PipelineStep",
+        back_populates="pipeline",
+        order_by="PipelineStep.step_order",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
 
     __table_args__ = (
         Index("idx_pipeline_status", "status"),
@@ -121,7 +145,9 @@ class PipelineStep(Base):
     __tablename__ = "pipeline_steps"
 
     id = Column(Integer, primary_key=True, index=True)
-    pipeline_id = Column(Integer, ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False)
+    pipeline_id = Column(
+        Integer, ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False
+    )
     step_type = Column(String(20), nullable=False)  # prompt_enhance, i2i, i2v
     step_order = Column(Integer, nullable=False)
     config = Column(Text, nullable=True)  # JSON config
@@ -134,7 +160,9 @@ class PipelineStep(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     # Relationships
     pipeline = relationship("Pipeline", back_populates="steps")
@@ -238,10 +266,14 @@ class Job(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     def __repr__(self) -> str:
-        return f"<Job(id={self.id}, status={self.wan_status}, created={self.created_at})>"
+        return (
+            f"<Job(id={self.id}, status={self.wan_status}, created={self.created_at})>"
+        )
 
     def to_dict(self) -> dict:
         """Convert model to dictionary for JSON serialization."""
@@ -285,7 +317,9 @@ class ImageJob(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     def __repr__(self) -> str:
         return f"<ImageJob(id={self.id}, model={self.model}, status={self.status})>"
@@ -293,6 +327,7 @@ class ImageJob(Base):
     def to_dict(self) -> dict:
         """Convert model to dictionary for JSON serialization."""
         import json
+
         return {
             "id": self.id,
             "source_image_url": self.source_image_url,
@@ -304,8 +339,12 @@ class ImageJob(Base):
             "num_images": self.num_images,
             "request_id": self.request_id,
             "status": self.status,
-            "result_image_urls": json.loads(self.result_image_urls) if self.result_image_urls else None,
-            "local_image_paths": json.loads(self.local_image_paths) if self.local_image_paths else None,
+            "result_image_urls": (
+                json.loads(self.result_image_urls) if self.result_image_urls else None
+            ),
+            "local_image_paths": (
+                json.loads(self.local_image_paths) if self.local_image_paths else None
+            ),
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

@@ -1,4 +1,5 @@
 """Thumbnail generation service for fast image previews."""
+
 import os
 import io
 import hashlib
@@ -7,6 +8,10 @@ import structlog
 from PIL import Image
 import boto3
 from botocore.config import Config
+from dotenv import load_dotenv
+
+# Load .env file so os.getenv() can read R2 credentials
+load_dotenv()
 
 logger = structlog.get_logger()
 
@@ -30,12 +35,12 @@ def get_s3_client():
 
     if all([access_key, secret_key, endpoint]):
         _s3_client = boto3.client(
-            's3',
+            "s3",
             endpoint_url=endpoint,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
-            config=Config(signature_version='s3v4'),
-            region_name='auto'
+            config=Config(signature_version="s3v4"),
+            region_name="auto",
         )
     return _s3_client
 
@@ -57,8 +62,11 @@ async def generate_thumbnail(image_url: str) -> str | None:
         async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as client:
             response = await client.get(image_url)
             if response.status_code != 200:
-                logger.warning("Failed to download image for thumbnail",
-                             url=image_url[:80], status=response.status_code)
+                logger.warning(
+                    "Failed to download image for thumbnail",
+                    url=image_url[:80],
+                    status=response.status_code,
+                )
                 return None
             image_data = response.content
 
@@ -66,17 +74,17 @@ async def generate_thumbnail(image_url: str) -> str | None:
         img = Image.open(io.BytesIO(image_data))
 
         # Convert to RGB if necessary (for PNG with transparency)
-        if img.mode in ('RGBA', 'P', 'LA'):
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
-                img = img.convert('RGBA')
-            if img.mode in ('RGBA', 'LA'):
+        if img.mode in ("RGBA", "P", "LA"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            if img.mode in ("RGBA", "LA"):
                 background.paste(img, mask=img.split()[-1])
             else:
                 background.paste(img)
             img = background
-        elif img.mode != 'RGB':
-            img = img.convert('RGB')
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
 
         # Calculate new dimensions maintaining aspect ratio
         original_width, original_height = img.size
@@ -88,7 +96,7 @@ async def generate_thumbnail(image_url: str) -> str | None:
 
         # Save to bytes buffer
         buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=THUMBNAIL_QUALITY, optimize=True)
+        img.save(buffer, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
         thumb_data = buffer.getvalue()
         thumb_size = len(thumb_data)
 
@@ -106,8 +114,8 @@ async def generate_thumbnail(image_url: str) -> str | None:
                 Bucket=bucket,
                 Key=key,
                 Body=thumb_data,
-                ContentType='image/jpeg',
-                CacheControl='public, max-age=31536000'
+                ContentType="image/jpeg",
+                CacheControl="public, max-age=31536000",
             )
             # Return public URL
             if public_domain:
@@ -117,31 +125,38 @@ async def generate_thumbnail(image_url: str) -> str | None:
                 endpoint = os.getenv("R2_ENDPOINT")
                 thumbnail_url = f"{endpoint}/{bucket}/{key}"
 
-            logger.info("Generated thumbnail to R2",
-                       key=key,
-                       thumb_size_kb=thumb_size / 1024,
-                       dimensions=f"{THUMBNAIL_WIDTH}x{new_height}")
+            logger.info(
+                "Generated thumbnail to R2",
+                key=key,
+                thumb_size_kb=thumb_size / 1024,
+                dimensions=f"{THUMBNAIL_WIDTH}x{new_height}",
+            )
             return thumbnail_url
         else:
             # Fallback to Fal CDN if R2 not configured
             import tempfile
             from pathlib import Path
             import fal_client
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
                 tmp.write(thumb_data)
                 tmp_path = Path(tmp.name)
             try:
                 thumbnail_url = fal_client.upload_file(tmp_path)
-                logger.info("Generated thumbnail to Fal (R2 not configured)",
-                           thumb_size_kb=thumb_size / 1024)
+                logger.info(
+                    "Generated thumbnail to Fal (R2 not configured)",
+                    thumb_size_kb=thumb_size / 1024,
+                )
                 return thumbnail_url
             finally:
                 tmp_path.unlink(missing_ok=True)
 
     except Exception as e:
-        logger.error("Thumbnail generation failed",
-                    url=image_url[:80] if image_url else "None",
-                    error=str(e))
+        logger.error(
+            "Thumbnail generation failed",
+            url=image_url[:80] if image_url else "None",
+            error=str(e),
+        )
         return None
 
 

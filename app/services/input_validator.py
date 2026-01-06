@@ -51,6 +51,7 @@ class ValidationError(Exception):
         value: The invalid value (optional, for debugging)
         code: Machine-readable error code
     """
+
     field: str
     message: str
     value: Any = None
@@ -118,12 +119,14 @@ class InputValidator:
 
     # URL regex pattern
     URL_PATTERN = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain
-        r'localhost|'  # localhost
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # or IP
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        r"^https?://"  # http:// or https://
+        r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"  # domain
+        r"localhost|"  # localhost
+        r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"  # or IP
+        r"(?::\d+)?"  # optional port
+        r"(?:/?|[/?]\S+)$",
+        re.IGNORECASE,
+    )
 
     # Model resolution mapping (duplicated for validation)
     MODEL_RESOLUTIONS: Dict[str, List[str]] = {
@@ -285,7 +288,9 @@ class InputValidator:
 
             # Some URLs don't have extensions but are still valid (e.g., CDN URLs)
             # We'll allow them but log a warning
-            if ext is None and not any(path.endswith(e) for e in self.VALID_IMAGE_EXTENSIONS):
+            if ext is None and not any(
+                path.endswith(e) for e in self.VALID_IMAGE_EXTENSIONS
+            ):
                 logger.debug(
                     "Image URL has no recognizable extension",
                     url=url[:100],
@@ -405,31 +410,39 @@ class InputValidator:
 
         for field in required_fields:
             if field not in data:
-                errors.append(ValidationError(
-                    field=field,
-                    message="Field is required",
-                    code="required",
-                ))
+                errors.append(
+                    ValidationError(
+                        field=field,
+                        message="Field is required",
+                        code="required",
+                    )
+                )
             elif not allow_empty:
                 value = data[field]
                 if value is None:
-                    errors.append(ValidationError(
-                        field=field,
-                        message="Field cannot be null",
-                        code="null_value",
-                    ))
+                    errors.append(
+                        ValidationError(
+                            field=field,
+                            message="Field cannot be null",
+                            code="null_value",
+                        )
+                    )
                 elif isinstance(value, str) and not value.strip():
-                    errors.append(ValidationError(
-                        field=field,
-                        message="Field cannot be empty",
-                        code="empty_string",
-                    ))
+                    errors.append(
+                        ValidationError(
+                            field=field,
+                            message="Field cannot be empty",
+                            code="empty_string",
+                        )
+                    )
                 elif isinstance(value, (list, dict)) and len(value) == 0:
-                    errors.append(ValidationError(
-                        field=field,
-                        message="Field cannot be empty",
-                        code="empty_collection",
-                    ))
+                    errors.append(
+                        ValidationError(
+                            field=field,
+                            message="Field cannot be empty",
+                            code="empty_collection",
+                        )
+                    )
 
         if errors:
             raise ValidationErrorCollection(errors)
@@ -512,8 +525,12 @@ class InputValidator:
 
         prompt = prompt.strip()
 
-        min_len = min_length if min_length is not None else self.DEFAULT_MIN_PROMPT_LENGTH
-        max_len = max_length if max_length is not None else self.DEFAULT_MAX_PROMPT_LENGTH
+        min_len = (
+            min_length if min_length is not None else self.DEFAULT_MIN_PROMPT_LENGTH
+        )
+        max_len = (
+            max_length if max_length is not None else self.DEFAULT_MAX_PROMPT_LENGTH
+        )
 
         if not prompt and not allow_empty:
             raise ValidationError(
@@ -590,11 +607,13 @@ class InputValidator:
 
         for i, prompt in enumerate(prompts):
             try:
-                validated.append(self.validate_prompt(
-                    prompt,
-                    field_name=f"{field_name}[{i}]",
-                    max_length=max_prompt_length,
-                ))
+                validated.append(
+                    self.validate_prompt(
+                        prompt,
+                        field_name=f"{field_name}[{i}]",
+                        max_length=max_prompt_length,
+                    )
+                )
             except ValidationError as e:
                 errors.append(e)
 
@@ -630,7 +649,7 @@ class InputValidator:
         if valid_resolutions is None:
             raise ValidationError(
                 field=model_field,
-                message=f"Unknown model",
+                message="Unknown model",
                 value=model,
                 code="unknown_model",
             )
@@ -707,7 +726,9 @@ class InputValidator:
         Raises:
             ValidationError: If file exceeds size limit
         """
-        max_mb = max_size_mb if max_size_mb is not None else self.DEFAULT_MAX_FILE_SIZE_MB
+        max_mb = (
+            max_size_mb if max_size_mb is not None else self.DEFAULT_MAX_FILE_SIZE_MB
+        )
         max_bytes = int(max_mb * 1024 * 1024)
 
         if size_bytes > max_bytes:
@@ -769,10 +790,12 @@ class InputValidator:
 
         for i, url in enumerate(urls):
             try:
-                validated.append(self.validate_image_url(
-                    url,
-                    field_name=f"{field_name}[{i}]",
-                ))
+                validated.append(
+                    self.validate_image_url(
+                        url,
+                        field_name=f"{field_name}[{i}]",
+                    )
+                )
             except ValidationError as e:
                 errors.append(e)
 
@@ -869,13 +892,13 @@ def validate_bulk_pipeline_input(
     validated_images = validator.validate_image_urls_list(
         source_images,
         "source_images",
-        max_count=10,
+        max_count=200,
     )
 
     validated_i2v_prompts = validator.validate_prompts_list(
         i2v_prompts,
         "i2v_prompts",
-        max_count=10,
+        max_count=200,
     )
 
     validator.validate_model_resolution(i2v_model, i2v_resolution)
@@ -886,7 +909,7 @@ def validate_bulk_pipeline_input(
         validated_i2i_prompts = validator.validate_prompts_list(
             i2i_prompts,
             "i2i_prompts",
-            max_count=10,
+            max_count=200,
         )
 
     return {

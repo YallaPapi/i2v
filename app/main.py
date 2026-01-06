@@ -4,10 +4,10 @@ import os
 import structlog
 import tempfile
 from pathlib import Path
-from datetime import datetime
 
 # Set FAL_KEY before any fal_client imports happen anywhere in the app
 from app.config import settings
+
 if settings.fal_api_key:
     os.environ["FAL_KEY"] = settings.fal_api_key
 
@@ -17,10 +17,22 @@ from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 from app.models import Job, ImageJob
 from app.schemas import (
-    JobCreate, JobResponse, HealthResponse,
-    ImageJobCreate, ImageJobResponse, ImageModelsResponse
+    JobCreate,
+    JobResponse,
+    HealthResponse,
+    ImageJobCreate,
+    ImageJobResponse,
+    ImageModelsResponse,
+    FaceSwapCreate,
+    FaceSwapResponse,
+    FaceSwapModelsResponse,
 )
 from app.image_client import list_image_models
+from app.face_swap_client import (
+    submit_face_swap_job,
+    get_face_swap_result,
+    list_face_swap_models,
+)
 from app.fal_upload import upload_image, SUPPORTED_FORMATS
 from app.routers.pipelines import router as pipelines_router
 
@@ -41,6 +53,7 @@ async def lifespan(app: FastAPI):
     # Recover interrupted jobs from previous crash (Production Hardening Principle 3)
     try:
         from app.services import recover_jobs_on_startup
+
         recovered_jobs = await recover_jobs_on_startup()
         if recovered_jobs:
             logger.info(
@@ -53,6 +66,7 @@ async def lifespan(app: FastAPI):
     # Auto-generate thumbnails for existing images that don't have them
     try:
         import asyncio
+
         asyncio.create_task(_generate_missing_thumbnails())
     except Exception as e:
         logger.warning("Failed to start thumbnail generation", error=str(e))
@@ -128,13 +142,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware - configure allowed origins for production
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+# Add production frontend URL if configured
+if os.getenv("FRONTEND_URL"):
+    CORS_ORIGINS.append(os.getenv("FRONTEND_URL"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS if os.getenv("PRODUCTION") else ["*"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # Include routers
@@ -159,6 +183,7 @@ async def get_api_status(db: Session = Depends(get_db)):
     # Get orchestrator stats for production hardening visibility
     try:
         from app.services import job_orchestrator
+
         orchestrator_stats = job_orchestrator.get_stats()
     except Exception:
         orchestrator_stats = None
@@ -174,7 +199,9 @@ async def get_api_status(db: Session = Depends(get_db)):
         },
         "image_jobs": {
             "pending": db.query(ImageJob).filter(ImageJob.status == "pending").count(),
-            "completed": db.query(ImageJob).filter(ImageJob.status == "completed").count(),
+            "completed": db.query(ImageJob)
+            .filter(ImageJob.status == "completed")
+            .count(),
             "failed": db.query(ImageJob).filter(ImageJob.status == "failed").count(),
         },
         "hardening": orchestrator_stats,
@@ -225,7 +252,7 @@ async def list_jobs(
         if status not in valid_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status. Must be one of: {valid_statuses}"
+                detail=f"Invalid status. Must be one of: {valid_statuses}",
             )
         query = query.filter(Job.wan_status == status)
 
@@ -234,6 +261,7 @@ async def list_jobs(
 
 
 # ============== Image Generation Endpoints ==============
+
 
 @app.get("/images/models", response_model=ImageModelsResponse)
 async def get_image_models():
@@ -287,7 +315,7 @@ async def list_image_jobs(
         if status not in valid_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status. Must be one of: {valid_statuses}"
+                detail=f"Invalid status. Must be one of: {valid_statuses}",
             )
         query = query.filter(ImageJob.status == status)
 
@@ -298,7 +326,76 @@ async def list_image_jobs(
     return jobs
 
 
+# ============== Face Swap Endpoints ==============
+
+
+@app.post("/face-swap", response_model=FaceSwapResponse, status_code=201)
+async def create_face_swap(swap_data: FaceSwapCreate):
+    """
+    Create a face swap job.
+
+    Takes a face from face_image_url and swaps it onto target_image_url.
+
+    - **face_image_url**: Image containing the face to swap FROM
+    - **target_image_url**: Image to swap the face TO
+    - **gender**: Gender of person in face image (male/female/non-binary)
+    - **workflow_type**: 'target_hair' keeps target's hair, 'user_hair' keeps source's hair
+    - **upscale**: Apply 2x upscale (default True)
+    - **detailer**: Apply detail enhancement (default False)
+
+    Returns request_id for polling status.
+    """
+    try:
+        request_id = await submit_face_swap_job(
+            face_image_url=swap_data.face_image_url,
+            target_image_url=swap_data.target_image_url,
+            gender=swap_data.gender,
+            workflow_type=swap_data.workflow_type,
+            upscale=swap_data.upscale,
+            detailer=swap_data.detailer,
+            face_image_url_2=swap_data.face_image_url_2,
+            gender_2=swap_data.gender_2,
+        )
+
+        logger.info("Face swap job created", request_id=request_id)
+        return FaceSwapResponse(
+            request_id=request_id,
+            status="pending",
+            model="easel-advanced",
+            cost=0.05,
+        )
+    except Exception as e:
+        logger.error("Face swap submission failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Face swap failed: {str(e)}")
+
+
+@app.get("/face-swap/{request_id}", response_model=FaceSwapResponse)
+async def get_face_swap_status(request_id: str):
+    """Get the status of a face swap job."""
+    try:
+        result = await get_face_swap_result(request_id)
+
+        return FaceSwapResponse(
+            request_id=request_id,
+            status=result["status"],
+            result_image_url=result.get("image_url"),
+            error_message=result.get("error_message"),
+            model="easel-advanced",
+            cost=0.05,
+        )
+    except Exception as e:
+        logger.error("Face swap status check failed", request_id=request_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+@app.get("/face-swap-models", response_model=FaceSwapModelsResponse)
+async def get_face_swap_models():
+    """List available face swap models with pricing."""
+    return FaceSwapModelsResponse(models=list_face_swap_models())
+
+
 # ============== Upload Endpoints ==============
+
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -310,7 +407,7 @@ async def upload_file(file: UploadFile = File(...)):
     if suffix not in SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file format. Supported: {SUPPORTED_FORMATS}"
+            detail=f"Unsupported file format. Supported: {SUPPORTED_FORMATS}",
         )
 
     # Save to temp file and upload
@@ -342,4 +439,3 @@ async def upload_file(file: UploadFile = File(...)):
             except Exception:
                 pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-

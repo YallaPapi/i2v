@@ -15,7 +15,6 @@ from app.schemas import (
     PipelineCreate,
     PipelineUpdate,
     PipelineResponse,
-    PipelineListResponse,
     PipelineSummary,
     PipelineSummaryListResponse,
     PipelineStepResponse,
@@ -36,7 +35,12 @@ from app.services.cost_calculator import cost_calculator
 from app.services.pipeline_executor import pipeline_executor
 from app.services.generation_service import generate_image, generate_video
 from app.services.thumbnail import generate_thumbnails_batch
-from app.services.cache import cache_get, cache_set, invalidate_pipelines_cache, make_cache_key
+from app.services.cache import (
+    cache_get,
+    cache_set,
+    invalidate_pipelines_cache,
+    make_cache_key,
+)
 
 logger = structlog.get_logger()
 
@@ -44,6 +48,7 @@ router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 
 
 # ============== Pipeline CRUD ==============
+
 
 @router.post("", response_model=PipelineResponse, status_code=201)
 async def create_pipeline(
@@ -108,7 +113,15 @@ async def list_pipelines(
     import json
 
     # Check Redis cache first
-    cache_key = make_cache_key("pipelines", status=status, tag=tag, favorites=favorites, hidden=hidden, limit=limit, offset=offset)
+    cache_key = make_cache_key(
+        "pipelines",
+        status=status,
+        tag=tag,
+        favorites=favorites,
+        hidden=hidden,
+        limit=limit,
+        offset=offset,
+    )
     cached = await cache_get(cache_key)
     if cached:
         logger.debug("Cache hit", key=cache_key)
@@ -117,8 +130,14 @@ async def list_pipelines(
     # Base query - only load pipeline columns, NOT relationships
     query = db.query(Pipeline).options(
         load_only(
-            Pipeline.id, Pipeline.name, Pipeline.status, Pipeline.created_at,
-            Pipeline.updated_at, Pipeline.tags, Pipeline.is_favorite, Pipeline.is_hidden
+            Pipeline.id,
+            Pipeline.name,
+            Pipeline.status,
+            Pipeline.created_at,
+            Pipeline.updated_at,
+            Pipeline.tags,
+            Pipeline.is_favorite,
+            Pipeline.is_hidden,
         )
     )
 
@@ -127,7 +146,7 @@ async def list_pipelines(
         if status not in valid_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status. Must be one of: {valid_statuses}"
+                detail=f"Invalid status. Must be one of: {valid_statuses}",
             )
         query = query.filter(Pipeline.status == status)
 
@@ -144,7 +163,9 @@ async def list_pipelines(
         query = query.filter(Pipeline.is_hidden == 0)
 
     total = query.count()
-    pipelines = query.order_by(Pipeline.created_at.desc()).offset(offset).limit(limit).all()
+    pipelines = (
+        query.order_by(Pipeline.created_at.desc()).offset(offset).limit(limit).all()
+    )
 
     # Get step counts and summary info efficiently
     pipeline_ids = [p.id for p in pipelines]
@@ -155,24 +176,30 @@ async def list_pipelines(
         from sqlalchemy import text
 
         # Step counts and costs (fast aggregation)
-        step_query = db.query(
-            PipelineStep.pipeline_id,
-            func.count(PipelineStep.id).label('step_count'),
-            func.sum(PipelineStep.cost_actual).label('total_cost'),
-        ).filter(
-            PipelineStep.pipeline_id.in_(pipeline_ids)
-        ).group_by(PipelineStep.pipeline_id).all()
+        step_query = (
+            db.query(
+                PipelineStep.pipeline_id,
+                func.count(PipelineStep.id).label("step_count"),
+                func.sum(PipelineStep.cost_actual).label("total_cost"),
+            )
+            .filter(PipelineStep.pipeline_id.in_(pipeline_ids))
+            .group_by(PipelineStep.pipeline_id)
+            .all()
+        )
 
         for row in step_query:
             step_summaries[row.pipeline_id] = {
-                'step_count': row.step_count,
-                'total_cost': float(row.total_cost) if row.total_cost else None,
-                'output_count': 0,
+                "step_count": row.step_count,
+                "total_cost": float(row.total_cost) if row.total_cost else None,
+                "output_count": 0,
             }
 
         # Count outputs using SQL JSON function (much faster than loading all JSON)
         # Use raw connection for SQLite-specific JSON functions
-        placeholders = ','.join([str(pid) for pid in pipeline_ids])
+        # Note: pipeline_ids are integers from DB query, safe to format directly
+        # Using numbered params for explicit parameterization
+        params = {f"id_{i}": pid for i, pid in enumerate(pipeline_ids)}
+        placeholders = ",".join([f":id_{i}" for i in range(len(pipeline_ids))])
         output_count_sql = f"""
             SELECT pipeline_id,
                    SUM(COALESCE(json_array_length(json_extract(outputs, '$.items')), 0)) as output_count
@@ -180,64 +207,97 @@ async def list_pipelines(
             WHERE pipeline_id IN ({placeholders}) AND outputs IS NOT NULL
             GROUP BY pipeline_id
         """
-        output_counts = db.execute(text(output_count_sql)).fetchall()
+        output_counts = db.execute(text(output_count_sql), params).fetchall()
         for row in output_counts:
             if row[0] in step_summaries:
-                step_summaries[row[0]]['output_count'] = row[1] or 0
+                step_summaries[row[0]]["output_count"] = row[1] or 0
 
         # Get ONLY first step (step_order == 0) for model/prompt/thumbnail - single query
-        first_steps = db.query(PipelineStep).options(
-            load_only(PipelineStep.id, PipelineStep.pipeline_id,
-                      PipelineStep.config, PipelineStep.inputs, PipelineStep.outputs)
-        ).filter(
-            PipelineStep.pipeline_id.in_(pipeline_ids),
-            PipelineStep.step_order == 0
-        ).all()
+        first_steps = (
+            db.query(PipelineStep)
+            .options(
+                load_only(
+                    PipelineStep.id,
+                    PipelineStep.pipeline_id,
+                    PipelineStep.config,
+                    PipelineStep.inputs,
+                    PipelineStep.outputs,
+                )
+            )
+            .filter(
+                PipelineStep.pipeline_id.in_(pipeline_ids), PipelineStep.step_order == 0
+            )
+            .all()
+        )
 
         for step in first_steps:
             config = step.get_config()
             inputs = step.get_inputs()
             outputs = step.get_outputs()
-            items = outputs.get('items', [])
-            thumbnail_urls = outputs.get('thumbnail_urls', [])
+            items = outputs.get("items", [])
+            thumbnail_urls = outputs.get("thumbnail_urls", [])
 
-            model = config.get('model', '')
-            quality = config.get('quality', '')
-            model_info = f"{model}" + (f" • {quality}" if quality else "")
+            model = config.get("model", "")
+            quality = config.get("quality", "")
+            resolution = config.get("resolution", "")
+            duration = config.get("duration_sec", "")
 
-            prompts = inputs.get('prompts', [])
-            first_prompt = prompts[0][:80] + "..." if prompts and len(prompts[0]) > 80 else (prompts[0] if prompts else None)
-            first_thumb = thumbnail_urls[0] if thumbnail_urls else (items[0].get('url') if items else None)
+            # Build model_info with relevant details
+            info_parts = [model]
+            if resolution:
+                info_parts.append(resolution)
+            if duration:
+                info_parts.append(f"{duration}s")
+            # Only show quality for gpt-image models
+            if quality and model.startswith("gpt-image"):
+                info_parts.append(quality)
+            model_info = " • ".join(info_parts)
+
+            prompts = inputs.get("prompts", [])
+            first_prompt = (
+                prompts[0][:80] + "..."
+                if prompts and len(prompts[0]) > 80
+                else (prompts[0] if prompts else None)
+            )
+            first_thumb = (
+                thumbnail_urls[0]
+                if thumbnail_urls
+                else (items[0].get("url") if items else None)
+            )
 
             if step.pipeline_id not in step_summaries:
                 step_summaries[step.pipeline_id] = {}
 
-            step_summaries[step.pipeline_id].update({
-                'model_info': model_info,
-                'first_prompt': first_prompt,
-                'first_thumbnail_url': first_thumb,
-            })
+            step_summaries[step.pipeline_id].update(
+                {
+                    "model_info": model_info,
+                    "first_prompt": first_prompt,
+                    "first_thumbnail_url": first_thumb,
+                }
+            )
 
     # Build lightweight response
     summaries = []
     for p in pipelines:
         summary_data = step_summaries.get(p.id, {})
-        summaries.append(PipelineSummary(
-            id=p.id,
-            name=p.name,
-            status=p.status,
-            created_at=p.created_at,
-            updated_at=p.updated_at,
-            tags=json.loads(p.tags) if p.tags else None,
-            is_favorite=bool(p.is_favorite),
-            is_hidden=bool(p.is_hidden),
-            step_count=summary_data.get('step_count', 0),
-            total_cost=summary_data.get('total_cost'),
-            model_info=summary_data.get('model_info'),
-            first_prompt=summary_data.get('first_prompt'),
-            first_thumbnail_url=summary_data.get('first_thumbnail_url'),
-            output_count=summary_data.get('output_count', 0),
-        ))
+        summaries.append(
+            PipelineSummary(
+                id=p.id,
+                name=p.name,
+                status=p.status,
+                created_at=p.created_at,
+                updated_at=p.updated_at,
+                tags=json.loads(p.tags) if p.tags else None,
+                is_favorite=bool(p.is_favorite),
+                is_hidden=bool(p.is_hidden),
+                step_count=summary_data.get("step_count", 0),
+                total_cost=summary_data.get("total_cost"),
+                model_info=summary_data.get("model_info"),
+                first_prompt=summary_data.get("first_prompt"),
+                first_thumbnail_url=summary_data.get("first_thumbnail_url"),
+                output_count=summary_data.get("output_count", 0),
+            )
+        )
 
     # Cache response before returning
     response = {"pipelines": summaries, "total": total}
@@ -247,6 +307,7 @@ async def list_pipelines(
 
 # ============== Download Proxy ==============
 # NOTE: This must come BEFORE /{pipeline_id} routes to avoid route conflict
+
 
 @router.get("/download")
 async def download_file(url: str = Query(..., description="URL of file to download")):
@@ -265,7 +326,9 @@ async def download_file(url: str = Query(..., description="URL of file to downlo
             response = await client.get(url)
             response.raise_for_status()
 
-            content_type = response.headers.get("content-type", "application/octet-stream")
+            content_type = response.headers.get(
+                "content-type", "application/octet-stream"
+            )
             filename = parsed.path.split("/")[-1] or "download"
 
             return StreamingResponse(
@@ -274,11 +337,26 @@ async def download_file(url: str = Query(..., description="URL of file to downlo
                 headers={
                     "Content-Disposition": f'attachment; filename="{filename}"',
                     "Access-Control-Allow-Origin": "*",
-                }
+                },
             )
     except httpx.HTTPError as e:
         logger.error("Download proxy failed", url=url, error=str(e))
         raise HTTPException(status_code=502, detail=f"Failed to fetch file: {str(e)}")
+
+
+# ============== Server Restart ==============
+# NOTE: This must come BEFORE /{pipeline_id} routes to avoid route conflict
+
+
+@router.post("/restart")
+async def restart_server():
+    """Restart the server by touching main.py to trigger uvicorn reload."""
+    from pathlib import Path
+    import app.main
+    main_file = Path(app.main.__file__)
+    main_file.touch()
+    logger.info("Server restart triggered via API")
+    return {"status": "restarting", "message": "Server will restart in ~1 second"}
 
 
 @router.get("/{pipeline_id}", response_model=PipelineResponse)
@@ -406,6 +484,7 @@ async def delete_pipeline(
 
 # ============== Pipeline Execution ==============
 
+
 async def _execute_pipeline_task(pipeline_id: int):
     """Background task to execute a pipeline."""
     from app.database import SessionLocal
@@ -413,9 +492,14 @@ async def _execute_pipeline_task(pipeline_id: int):
     db = SessionLocal()
     try:
         # Define generation functions that match executor's expected signatures
-        async def image_generator(source_image_url: str, prompt: str, model: str,
-                                  num_images: int = 1, aspect_ratio: str = "9:16",
-                                  quality: str = "high"):
+        async def image_generator(
+            source_image_url: str,
+            prompt: str,
+            model: str,
+            num_images: int = 1,
+            aspect_ratio: str = "9:16",
+            quality: str = "high",
+        ):
             urls = await generate_image(
                 image_url=source_image_url,
                 prompt=prompt,
@@ -426,9 +510,14 @@ async def _execute_pipeline_task(pipeline_id: int):
             )
             return urls
 
-        async def video_generator(image_url: str, motion_prompt: str, model: str,
-                                  resolution: str = "1080p", duration_sec: int = 5,
-                                  enable_audio: bool = False):
+        async def video_generator(
+            image_url: str,
+            motion_prompt: str,
+            model: str,
+            resolution: str = "1080p",
+            duration_sec: int = 5,
+            enable_audio: bool = False,
+        ):
             url = await generate_video(
                 image_url=image_url,
                 prompt=motion_prompt,
@@ -514,6 +603,7 @@ async def cancel_pipeline(
 
 # ============== Step Management ==============
 
+
 @router.get("/{pipeline_id}/steps", response_model=List[PipelineStepResponse])
 async def list_steps(
     pipeline_id: int,
@@ -535,10 +625,11 @@ async def get_step(
     db: Session = Depends(get_db),
 ):
     """Get a specific step."""
-    step = db.query(PipelineStep).filter(
-        PipelineStep.id == step_id,
-        PipelineStep.pipeline_id == pipeline_id
-    ).first()
+    step = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.id == step_id, PipelineStep.pipeline_id == pipeline_id)
+        .first()
+    )
 
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
@@ -554,16 +645,19 @@ async def update_step(
     db: Session = Depends(get_db),
 ):
     """Update a step's configuration (only in pending/review status)."""
-    step = db.query(PipelineStep).filter(
-        PipelineStep.id == step_id,
-        PipelineStep.pipeline_id == pipeline_id
-    ).first()
+    step = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.id == step_id, PipelineStep.pipeline_id == pipeline_id)
+        .first()
+    )
 
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
 
     if step.status not in [StepStatus.PENDING.value, StepStatus.REVIEW.value]:
-        raise HTTPException(status_code=400, detail="Can only update pending or review steps")
+        raise HTTPException(
+            status_code=400, detail="Can only update pending or review steps"
+        )
 
     step.set_config(config)
 
@@ -577,17 +671,20 @@ async def update_step(
     return step
 
 
-@router.post("/{pipeline_id}/steps/{step_id}/approve", response_model=PipelineStepResponse)
+@router.post(
+    "/{pipeline_id}/steps/{step_id}/approve", response_model=PipelineStepResponse
+)
 async def approve_step(
     pipeline_id: int,
     step_id: int,
     db: Session = Depends(get_db),
 ):
     """Approve a step waiting for review and continue pipeline."""
-    step = db.query(PipelineStep).filter(
-        PipelineStep.id == step_id,
-        PipelineStep.pipeline_id == pipeline_id
-    ).first()
+    step = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.id == step_id, PipelineStep.pipeline_id == pipeline_id)
+        .first()
+    )
 
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
@@ -599,17 +696,20 @@ async def approve_step(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/{pipeline_id}/steps/{step_id}/retry", response_model=PipelineStepResponse)
+@router.post(
+    "/{pipeline_id}/steps/{step_id}/retry", response_model=PipelineStepResponse
+)
 async def retry_step(
     pipeline_id: int,
     step_id: int,
     db: Session = Depends(get_db),
 ):
     """Retry a failed step."""
-    step = db.query(PipelineStep).filter(
-        PipelineStep.id == step_id,
-        PipelineStep.pipeline_id == pipeline_id
-    ).first()
+    step = (
+        db.query(PipelineStep)
+        .filter(PipelineStep.id == step_id, PipelineStep.pipeline_id == pipeline_id)
+        .first()
+    )
 
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
@@ -622,6 +722,7 @@ async def retry_step(
 
 
 # ============== Prompt Enhancement ==============
+
 
 @router.post("/prompts/enhance", response_model=PromptEnhanceResponse)
 async def enhance_prompts(
@@ -656,13 +757,17 @@ async def enhance_prompts(
         }
     except Exception as e:
         logger.error("Prompt enhancement failed", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Prompt enhancement failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Prompt enhancement failed: {str(e)}"
+        )
 
 
 @router.get("/prompts/recent")
 async def get_recent_prompts(
     limit: int = Query(20, ge=1, le=100),
-    step_type: Optional[str] = Query(None, description="Filter by step type (i2i, i2v)"),
+    step_type: Optional[str] = Query(
+        None, description="Filter by step type (i2i, i2v)"
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -679,7 +784,9 @@ async def get_recent_prompts(
 
     if step_type:
         if step_type not in ["i2i", "i2v"]:
-            raise HTTPException(status_code=400, detail="step_type must be 'i2i' or 'i2v'")
+            raise HTTPException(
+                status_code=400, detail="step_type must be 'i2i' or 'i2v'"
+            )
         query = query.filter(PipelineStep.step_type == step_type)
 
     # Get more steps to deduplicate
@@ -695,12 +802,16 @@ async def get_recent_prompts(
             for prompt in inputs["prompts"]:
                 if prompt and prompt.strip() and prompt not in seen_prompts:
                     seen_prompts.add(prompt)
-                    prompts.append({
-                        "prompt": prompt,
-                        "step_type": step.step_type,
-                        "model": step.get_config().get("model", "unknown"),
-                        "used_at": step.created_at.isoformat() if step.created_at else None,
-                    })
+                    prompts.append(
+                        {
+                            "prompt": prompt,
+                            "step_type": step.step_type,
+                            "model": step.get_config().get("model", "unknown"),
+                            "used_at": (
+                                step.created_at.isoformat() if step.created_at else None
+                            ),
+                        }
+                    )
                     if len(prompts) >= limit:
                         break
         if len(prompts) >= limit:
@@ -714,13 +825,18 @@ async def get_recent_prompts(
 
 # ============== Cost Estimation ==============
 
+
 @router.post("/estimate", response_model=CostEstimateResponse)
 async def estimate_cost(
     request: CostEstimateRequest,
 ):
     """Estimate cost for a pipeline configuration."""
     steps_data = [
-        {"step_type": step.step_type, "step_order": step.step_order, "config": step.config}
+        {
+            "step_type": step.step_type,
+            "step_order": step.step_order,
+            "config": step.config,
+        }
         for step in request.steps
     ]
 
@@ -730,6 +846,7 @@ async def estimate_cost(
 
 
 # ============== Helper Functions ==============
+
 
 def _calculate_step_cost_estimate(step_type: str, config: dict) -> dict:
     """Calculate cost estimate for a single step."""
@@ -743,6 +860,7 @@ def _calculate_step_cost_estimate(step_type: str, config: dict) -> dict:
 
 
 # ============== Bulk Pipeline ==============
+
 
 @router.post("/bulk/estimate", response_model=BulkCostEstimateResponse)
 async def estimate_bulk_cost(
@@ -761,11 +879,14 @@ async def estimate_bulk_cost(
         images_per = request.i2i_config.images_per_prompt
         i2i_count = num_sources * i2i_prompts * images_per
 
-        i2i_cost_info = cost_calculator.calculate_i2i_cost({
-            "model": request.i2i_config.model,
-            "quality": request.i2i_config.quality,
-            "images_per_prompt": 1,
-        }, num_inputs=1)
+        i2i_cost_info = cost_calculator.calculate_i2i_cost(
+            {
+                "model": request.i2i_config.model,
+                "quality": request.i2i_config.quality,
+                "images_per_prompt": 1,
+            },
+            num_inputs=1,
+        )
         i2i_cost_per_image = i2i_cost_info["unit_price"]
         i2i_total = i2i_count * i2i_cost_per_image
 
@@ -776,12 +897,15 @@ async def estimate_bulk_cost(
     i2v_prompts = len(request.i2v_config.prompts)
     i2v_count = i2v_input_count * i2v_prompts
 
-    i2v_cost_info = cost_calculator.calculate_i2v_cost({
-        "model": request.i2v_config.model,
-        "resolution": request.i2v_config.resolution,
-        "duration_sec": request.i2v_config.duration_sec,
-        "videos_per_image": 1,
-    }, num_inputs=1)
+    i2v_cost_info = cost_calculator.calculate_i2v_cost(
+        {
+            "model": request.i2v_config.model,
+            "resolution": request.i2v_config.resolution,
+            "duration_sec": request.i2v_config.duration_sec,
+            "videos_per_image": 1,
+        },
+        num_inputs=1,
+    )
     i2v_cost_per_video = i2v_cost_info["unit_price"]
     i2v_total = i2v_count * i2v_cost_per_video
 
@@ -817,15 +941,21 @@ async def create_bulk_pipeline(
     """Create and start a bulk pipeline."""
     # Validate inputs
     if not request.source_images:
-        raise HTTPException(status_code=400, detail="At least one source image is required")
-    if len(request.source_images) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 source images allowed")
+        raise HTTPException(
+            status_code=400, detail="At least one source image is required"
+        )
+    if len(request.source_images) > 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 source images allowed")
 
     # Check that at least one mode has prompts
-    has_i2i = request.i2i_config and request.i2i_config.enabled and request.i2i_config.prompts
+    has_i2i = (
+        request.i2i_config and request.i2i_config.enabled and request.i2i_config.prompts
+    )
     has_i2v = request.i2v_config and request.i2v_config.prompts
     if not has_i2i and not has_i2v:
-        raise HTTPException(status_code=400, detail="At least one prompt is required (photo or video)")
+        raise HTTPException(
+            status_code=400, detail="At least one prompt is required (photo or video)"
+        )
 
     # Create pipeline
     pipeline = Pipeline(
@@ -855,19 +985,23 @@ async def create_bulk_pipeline(
                     step_order=step_order,
                     status=StepStatus.PENDING.value,
                 )
-                step.set_config({
-                    "model": request.i2i_config.model,
-                    "images_per_prompt": request.i2i_config.images_per_prompt,
-                    "aspect_ratio": request.i2i_config.aspect_ratio,
-                    "quality": request.i2i_config.quality,
-                    "negative_prompt": request.i2i_config.negative_prompt,
-                })
-                step.set_inputs({
-                    "image_urls": [source_url],
-                    "prompts": [prompt],
-                    "source_image_index": src_idx,
-                    "prompt_index": prompt_idx,
-                })
+                step.set_config(
+                    {
+                        "model": request.i2i_config.model,
+                        "images_per_prompt": request.i2i_config.images_per_prompt,
+                        "aspect_ratio": request.i2i_config.aspect_ratio,
+                        "quality": request.i2i_config.quality,
+                        "negative_prompt": request.i2i_config.negative_prompt,
+                    }
+                )
+                step.set_inputs(
+                    {
+                        "image_urls": [source_url],
+                        "prompts": [prompt],
+                        "source_image_index": src_idx,
+                        "prompt_index": prompt_idx,
+                    }
+                )
 
                 # Calculate cost estimate
                 cost_info = cost_calculator.calculate_i2i_cost(step.get_config(), 1)
@@ -883,7 +1017,9 @@ async def create_bulk_pipeline(
         if request.i2i_config and request.i2i_config.enabled:
             # I2V steps will be created dynamically after I2I completes
             # Store the config for the executor to use
-            pipeline.set_checkpoints([])  # Use checkpoints field to store bulk config temporarily
+            pipeline.set_checkpoints(
+                []
+            )  # Use checkpoints field to store bulk config temporarily
         else:
             # No I2I, create I2V steps directly from source images
             for src_idx, source_url in enumerate(request.source_images):
@@ -894,20 +1030,24 @@ async def create_bulk_pipeline(
                         step_order=step_order,
                         status=StepStatus.PENDING.value,
                     )
-                    step.set_config({
-                        "model": request.i2v_config.model,
-                        "videos_per_image": 1,
-                        "resolution": request.i2v_config.resolution,
-                        "duration_sec": request.i2v_config.duration_sec,
-                        "negative_prompt": request.i2v_config.negative_prompt,
-                        "enable_audio": request.i2v_config.enable_audio,
-                    })
-                    step.set_inputs({
-                        "image_urls": [source_url],
-                        "prompts": [prompt],
-                        "source_image_index": src_idx,
-                        "prompt_index": prompt_idx,
-                    })
+                    step.set_config(
+                        {
+                            "model": request.i2v_config.model,
+                            "videos_per_image": 1,
+                            "resolution": request.i2v_config.resolution,
+                            "duration_sec": request.i2v_config.duration_sec,
+                            "negative_prompt": request.i2v_config.negative_prompt,
+                            "enable_audio": request.i2v_config.enable_audio,
+                        }
+                    )
+                    step.set_inputs(
+                        {
+                            "image_urls": [source_url],
+                            "prompts": [prompt],
+                            "source_image_index": src_idx,
+                            "prompt_index": prompt_idx,
+                        }
+                    )
 
                     cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
                     step.cost_estimate = cost_info["total"]
@@ -918,7 +1058,9 @@ async def create_bulk_pipeline(
     db.commit()
     db.refresh(pipeline)
 
-    logger.info("Bulk pipeline created", pipeline_id=pipeline.id, steps=len(pipeline.steps))
+    logger.info(
+        "Bulk pipeline created", pipeline_id=pipeline.id, steps=len(pipeline.steps)
+    )
 
     # Start execution in background
     background_tasks.add_task(_execute_bulk_pipeline_task, pipeline.id, request)
@@ -994,12 +1136,16 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                         image_urls = result if isinstance(result, list) else [result]
                         # Generate thumbnails for fast library loading
                         thumbnail_urls = await generate_thumbnails_batch(image_urls)
-                        step.set_outputs({
-                            "image_urls": image_urls,
-                            "thumbnail_urls": thumbnail_urls,
-                            "items": [{"url": url, "type": "image"} for url in image_urls],
-                            "count": len(image_urls),
-                        })
+                        step.set_outputs(
+                            {
+                                "image_urls": image_urls,
+                                "thumbnail_urls": thumbnail_urls,
+                                "items": [
+                                    {"url": url, "type": "image"} for url in image_urls
+                                ],
+                                "count": len(image_urls),
+                            }
+                        )
 
                     elif step.step_type == "i2v":
                         result = await generate_video(
@@ -1011,11 +1157,13 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             negative_prompt=config.get("negative_prompt"),
                             enable_audio=config.get("enable_audio", False),
                         )
-                        step.set_outputs({
-                            "video_urls": [result],
-                            "items": [{"url": result, "type": "video"}],
-                            "count": 1,
-                        })
+                        step.set_outputs(
+                            {
+                                "video_urls": [result],
+                                "items": [{"url": result, "type": "video"}],
+                                "count": 1,
+                            }
+                        )
 
                     step.status = StepStatus.COMPLETED.value
 
@@ -1057,23 +1205,29 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                                 step_order=step_order,
                                 status=StepStatus.PENDING.value,
                             )
-                            step.set_config({
-                                "model": request.i2v_config.model,
-                                "videos_per_image": 1,
-                                "resolution": request.i2v_config.resolution,
-                                "duration_sec": request.i2v_config.duration_sec,
-                                "negative_prompt": request.i2v_config.negative_prompt,
-                                "enable_audio": request.i2v_config.enable_audio,
-                            })
-                            step.set_inputs({
-                                "image_urls": [output_url],
-                                "prompts": [prompt],
-                                "source_image_index": src_idx,
-                                "prompt_index": prompt_idx,
-                                "from_i2i_step": i2i_step.id,
-                            })
+                            step.set_config(
+                                {
+                                    "model": request.i2v_config.model,
+                                    "videos_per_image": 1,
+                                    "resolution": request.i2v_config.resolution,
+                                    "duration_sec": request.i2v_config.duration_sec,
+                                    "negative_prompt": request.i2v_config.negative_prompt,
+                                    "enable_audio": request.i2v_config.enable_audio,
+                                }
+                            )
+                            step.set_inputs(
+                                {
+                                    "image_urls": [output_url],
+                                    "prompts": [prompt],
+                                    "source_image_index": src_idx,
+                                    "prompt_index": prompt_idx,
+                                    "from_i2i_step": i2i_step.id,
+                                }
+                            )
 
-                            cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
+                            cost_info = cost_calculator.calculate_i2v_cost(
+                                step.get_config(), 1
+                            )
                             step.cost_estimate = cost_info["total"]
 
                             db.add(step)
@@ -1100,7 +1254,9 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
         logger.info("Bulk pipeline completed", pipeline_id=pipeline_id)
 
     except Exception as e:
-        logger.error("Bulk pipeline execution failed", pipeline_id=pipeline_id, error=str(e))
+        logger.error(
+            "Bulk pipeline execution failed", pipeline_id=pipeline_id, error=str(e)
+        )
         pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
         if pipeline:
             pipeline.status = PipelineStatus.FAILED.value
@@ -1121,7 +1277,7 @@ async def get_bulk_pipeline(
 
     # Group outputs by source image
     groups: dict = {}
-    total_cost = Decimal('0')
+    total_cost = Decimal("0")
 
     for step in pipeline.steps:
         inputs = step.get_inputs()
@@ -1169,6 +1325,7 @@ async def get_bulk_pipeline(
 
 # ============== Animate Selected Images ==============
 
+
 @router.post("/animate", response_model=BulkPipelineResponse)
 async def animate_selected_images(
     request: AnimateSelectedRequest,
@@ -1184,9 +1341,13 @@ async def animate_selected_images(
     import asyncio
 
     if not request.image_urls:
-        raise HTTPException(status_code=400, detail="At least one image URL is required")
+        raise HTTPException(
+            status_code=400, detail="At least one image URL is required"
+        )
     if not request.prompts:
-        raise HTTPException(status_code=400, detail="At least one motion prompt is required")
+        raise HTTPException(
+            status_code=400, detail="At least one motion prompt is required"
+        )
 
     # Create pipeline
     pipeline = Pipeline(
@@ -1208,19 +1369,23 @@ async def animate_selected_images(
                 step_order=step_order,
                 status=StepStatus.PENDING.value,
             )
-            step.set_config({
-                "model": request.model,
-                "resolution": request.resolution,
-                "duration_sec": request.duration_sec,
-                "negative_prompt": request.negative_prompt,
-                "enable_audio": request.enable_audio,
-            })
-            step.set_inputs({
-                "image_urls": [image_url],
-                "prompts": [prompt],
-                "source_image_index": img_idx,
-                "prompt_index": prompt_idx,
-            })
+            step.set_config(
+                {
+                    "model": request.model,
+                    "resolution": request.resolution,
+                    "duration_sec": request.duration_sec,
+                    "negative_prompt": request.negative_prompt,
+                    "enable_audio": request.enable_audio,
+                }
+            )
+            step.set_inputs(
+                {
+                    "image_urls": [image_url],
+                    "prompts": [prompt],
+                    "source_image_index": img_idx,
+                    "prompt_index": prompt_idx,
+                }
+            )
 
             cost_info = cost_calculator.calculate_i2v_cost(step.get_config(), 1)
             step.cost_estimate = cost_info["total"]
@@ -1240,7 +1405,9 @@ async def animate_selected_images(
         """Execute all i2v steps concurrently."""
         session = next(get_db())
         try:
-            pipeline = session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            pipeline = (
+                session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            )
             if not pipeline:
                 return
 
@@ -1278,7 +1445,9 @@ async def animate_selected_images(
                     except Exception as e:
                         step.status = StepStatus.FAILED.value
                         step.error_message = str(e)
-                        logger.error("Animate step failed", step_id=step.id, error=str(e))
+                        logger.error(
+                            "Animate step failed", step_id=step.id, error=str(e)
+                        )
                     finally:
                         session.commit()
 
@@ -1293,8 +1462,12 @@ async def animate_selected_images(
             session.commit()
 
         except Exception as e:
-            logger.error("Animate pipeline failed", pipeline_id=pipeline_id, error=str(e))
-            pipeline = session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            logger.error(
+                "Animate pipeline failed", pipeline_id=pipeline_id, error=str(e)
+            )
+            pipeline = (
+                session.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+            )
             if pipeline:
                 pipeline.status = PipelineStatus.FAILED.value
                 session.commit()
@@ -1330,6 +1503,7 @@ async def animate_selected_images(
 
 
 # ============== Image Library ==============
+
 
 @router.get("/images/library")
 async def get_image_library(
@@ -1367,16 +1541,28 @@ async def get_image_library(
                 # Get corresponding thumbnail if available
                 thumbnail_url = thumbnail_urls[i] if i < len(thumbnail_urls) else None
 
-                images.append({
-                    "url": url,
-                    "thumbnail_url": thumbnail_url,
-                    "step_id": step.id,
-                    "pipeline_id": step.pipeline_id,
-                    "source_image": inputs.get("image_urls", [""])[0] if inputs.get("image_urls") else None,
-                    "prompt": inputs.get("prompts", [""])[0] if inputs.get("prompts") else None,
-                    "model": config.get("model", "unknown"),
-                    "created_at": step.updated_at.isoformat() if step.updated_at else None,
-                })
+                images.append(
+                    {
+                        "url": url,
+                        "thumbnail_url": thumbnail_url,
+                        "step_id": step.id,
+                        "pipeline_id": step.pipeline_id,
+                        "source_image": (
+                            inputs.get("image_urls", [""])[0]
+                            if inputs.get("image_urls")
+                            else None
+                        ),
+                        "prompt": (
+                            inputs.get("prompts", [""])[0]
+                            if inputs.get("prompts")
+                            else None
+                        ),
+                        "model": config.get("model", "unknown"),
+                        "created_at": (
+                            step.updated_at.isoformat() if step.updated_at else None
+                        ),
+                    }
+                )
 
     # Get total count
     total = (

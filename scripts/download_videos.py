@@ -16,20 +16,25 @@ def get_completed_jobs(db_path: str, job_ids: list[int] | None = None) -> list[d
 
     if job_ids:
         placeholders = ",".join("?" * len(job_ids))
-        c.execute(f"""
+        c.execute(
+            f"""
             SELECT id, model, motion_prompt, wan_video_url, created_at
             FROM jobs
             WHERE wan_status = 'completed' AND wan_video_url IS NOT NULL
             AND id IN ({placeholders})
             ORDER BY id
-        """, job_ids)
+        """,
+            job_ids,
+        )
     else:
-        c.execute("""
+        c.execute(
+            """
             SELECT id, model, motion_prompt, wan_video_url, created_at
             FROM jobs
             WHERE wan_status = 'completed' AND wan_video_url IS NOT NULL
             ORDER BY id
-        """)
+        """
+        )
 
     jobs = [dict(row) for row in c.fetchall()]
     conn.close()
@@ -52,18 +57,38 @@ def download_video(url: str, output_path: Path) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Download completed videos")
-    parser.add_argument("--output-dir", "-o", type=Path, default=Path("downloads"),
-                       help="Output directory for videos")
-    parser.add_argument("--job-ids", "-j", type=str, default=None,
-                       help="Comma-separated job IDs to download (default: all)")
-    parser.add_argument("--zip", "-z", action="store_true",
-                       help="Create a zip file instead of individual files")
-    parser.add_argument("--db", type=str, default="wan_jobs.db",
-                       help="Path to database file")
-    parser.add_argument("--list", "-l", action="store_true",
-                       help="List completed jobs without downloading")
-    parser.add_argument("--force", "-f", action="store_true",
-                       help="Re-download even if file exists")
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=Path,
+        default=Path("downloads"),
+        help="Output directory for videos",
+    )
+    parser.add_argument(
+        "--job-ids",
+        "-j",
+        type=str,
+        default=None,
+        help="Comma-separated job IDs to download (default: all)",
+    )
+    parser.add_argument(
+        "--zip",
+        "-z",
+        action="store_true",
+        help="Create a zip file instead of individual files",
+    )
+    parser.add_argument(
+        "--db", type=str, default="wan_jobs.db", help="Path to database file"
+    )
+    parser.add_argument(
+        "--list",
+        "-l",
+        action="store_true",
+        help="List completed jobs without downloading",
+    )
+    parser.add_argument(
+        "--force", "-f", action="store_true", help="Re-download even if file exists"
+    )
 
     args = parser.parse_args()
 
@@ -82,7 +107,11 @@ def main():
     if args.list:
         print(f"Found {len(jobs)} completed videos:\n")
         for job in jobs:
-            prompt_preview = job["motion_prompt"][:50] + "..." if len(job["motion_prompt"]) > 50 else job["motion_prompt"]
+            prompt_preview = (
+                job["motion_prompt"][:50] + "..."
+                if len(job["motion_prompt"]) > 50
+                else job["motion_prompt"]
+            )
             print(f"  Job {job['id']} ({job['model']}): {prompt_preview}")
         return
 
@@ -102,7 +131,7 @@ def main():
 
         # Check for existing file with same job ID (any timestamp)
         existing = list(args.output_dir.glob(f"job_{job['id']}_{job['model']}_*.mp4"))
-        if existing and not getattr(args, 'force', False):
+        if existing and not getattr(args, "force", False):
             print(f"[{job['id']}] Skipping (already exists: {existing[0].name})")
             skipped.append(existing[0])
             continue
@@ -113,7 +142,7 @@ def main():
             downloaded.append(output_path)
             print(f"    -> Saved to {output_path}")
         else:
-            print(f"    -> Failed")
+            print("    -> Failed")
 
     print(f"\nDownloaded {len(downloaded)}/{len(jobs)} videos to {args.output_dir}")
     if skipped:
@@ -129,7 +158,9 @@ def main():
             for video_path in downloaded:
                 zf.write(video_path, video_path.name)
 
-        print(f"Zip created: {zip_path} ({zip_path.stat().st_size / 1024 / 1024:.1f} MB)")
+        print(
+            f"Zip created: {zip_path} ({zip_path.stat().st_size / 1024 / 1024:.1f} MB)"
+        )
 
 
 if __name__ == "__main__":

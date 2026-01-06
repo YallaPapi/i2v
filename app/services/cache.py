@@ -1,9 +1,7 @@
 """Redis caching service for API responses."""
 
 import os
-import json
-from typing import Optional, Any
-from contextlib import asynccontextmanager
+from typing import Optional
 import structlog
 
 logger = structlog.get_logger()
@@ -21,10 +19,9 @@ async def get_redis():
     if _redis_client is None:
         try:
             import aioredis
+
             _redis_client = await aioredis.from_url(
-                REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True
+                REDIS_URL, encoding="utf-8", decode_responses=True
             )
             await _redis_client.ping()
             logger.info("Redis connected", url=REDIS_URL)

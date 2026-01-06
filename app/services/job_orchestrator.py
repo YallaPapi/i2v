@@ -35,18 +35,16 @@ Usage:
 """
 
 import asyncio
-from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 import structlog
 
-from app.services.error_classifier import ErrorClassifier, ErrorType, ClassifiedError, error_classifier
+from app.services.error_classifier import ErrorType, error_classifier
 from app.services.checkpoint_manager import CheckpointManager
-from app.services.retry_manager import RetryManager, RetryConfig, RetryResult
-from app.services.flow_logger import FlowLogger, JobFlowLogger
-from app.services.cooldown_manager import CooldownManager, JobCooldownManager
+from app.services.retry_manager import RetryManager, RetryConfig
+from app.services.flow_logger import JobFlowLogger
+from app.services.cooldown_manager import JobCooldownManager
 from app.services.rate_limiter import SlidingWindowRateLimiter
-from app.services.file_lock import FileLock, JobLock
 from app.services.input_validator import InputValidator, ValidationError
 
 logger = structlog.get_logger()
@@ -55,6 +53,7 @@ logger = structlog.get_logger()
 @dataclass
 class JobSubmission:
     """A job submission request."""
+
     model: str
     image_url: str
     motion_prompt: str
@@ -67,6 +66,7 @@ class JobSubmission:
 @dataclass
 class JobResult:
     """Result of job processing."""
+
     job_id: str
     success: bool
     request_id: Optional[str] = None
@@ -118,7 +118,9 @@ class JobOrchestrator:
         self.retry_manager = RetryManager()
         self.classifier = error_classifier
         self.cooldown = JobCooldownManager()
-        self.rate_limiter = SlidingWindowRateLimiter(max_per_minute=rate_limit_per_minute)
+        self.rate_limiter = SlidingWindowRateLimiter(
+            max_per_minute=rate_limit_per_minute
+        )
         self.validator = InputValidator() if enable_validation else None
 
         # Configuration
@@ -236,6 +238,7 @@ class JobOrchestrator:
 
             async def submit_operation():
                 from app.fal_client import submit_job
+
                 return await submit_job(
                     model=model,
                     image_url=image_url,
@@ -249,7 +252,11 @@ class JobOrchestrator:
             retry_config = RetryConfig(
                 max_attempts=3,
                 base_delay_seconds=2.0,
-                retryable_errors={ErrorType.NETWORK, ErrorType.TRANSIENT, ErrorType.RATE_LIMIT},
+                retryable_errors={
+                    ErrorType.NETWORK,
+                    ErrorType.TRANSIENT,
+                    ErrorType.RATE_LIMIT,
+                },
             )
 
             submit_result = await self.retry_manager.execute_with_retry(
@@ -259,12 +266,23 @@ class JobOrchestrator:
             )
 
             if not submit_result.success:
-                flow.log_error(submit_result.error, error_type=submit_result.classified_error.error_type.name if submit_result.classified_error else "UNKNOWN")
+                flow.log_error(
+                    submit_result.error,
+                    error_type=(
+                        submit_result.classified_error.error_type.name
+                        if submit_result.classified_error
+                        else "UNKNOWN"
+                    ),
+                )
                 self.cooldown.job_failed(job_id, str(submit_result.error))
                 self.checkpoint.mark_failed(job_id, str(submit_result.error))
 
                 result.error_message = str(submit_result.error)
-                result.error_type = submit_result.classified_error.error_type if submit_result.classified_error else ErrorType.UNKNOWN
+                result.error_type = (
+                    submit_result.classified_error.error_type
+                    if submit_result.classified_error
+                    else ErrorType.UNKNOWN
+                )
                 result.attempts = submit_result.attempts
                 self._stats["jobs_failed"] += 1
                 self._stats["total_errors"] += 1

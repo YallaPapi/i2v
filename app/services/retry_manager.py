@@ -26,30 +26,38 @@ import asyncio
 import random
 import functools
 from dataclasses import dataclass, field
-from typing import Callable, TypeVar, Optional, List, Set, Any, Awaitable, Union
+from typing import Callable, TypeVar, Optional, List, Set, Any, Awaitable
 import structlog
 
-from app.services.error_classifier import ErrorClassifier, ErrorType, ClassifiedError, error_classifier
+from app.services.error_classifier import (
+    ErrorClassifier,
+    ErrorType,
+    ClassifiedError,
+    error_classifier,
+)
 
 logger = structlog.get_logger()
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
 class RetryConfig:
     """Configuration for retry behavior."""
+
     max_attempts: int = 3
     base_delay_seconds: float = 1.0
     max_delay_seconds: float = 300.0  # 5 minutes max
     exponential_base: float = 2.0
     jitter: bool = True
     jitter_factor: float = 0.1  # 10% jitter
-    retryable_errors: Set[ErrorType] = field(default_factory=lambda: {
-        ErrorType.NETWORK,
-        ErrorType.RATE_LIMIT,
-        ErrorType.TRANSIENT,
-    })
+    retryable_errors: Set[ErrorType] = field(
+        default_factory=lambda: {
+            ErrorType.NETWORK,
+            ErrorType.RATE_LIMIT,
+            ErrorType.TRANSIENT,
+        }
+    )
 
     def should_retry(self, error_type: ErrorType) -> bool:
         """Check if an error type should be retried."""
@@ -59,6 +67,7 @@ class RetryConfig:
 @dataclass
 class RetryResult:
     """Result of a retry operation."""
+
     success: bool
     value: Any = None
     error: Optional[Exception] = None
@@ -313,11 +322,15 @@ def retry(
     Returns:
         Decorated function
     """
-    retryable = set(on) if on else {
-        ErrorType.NETWORK,
-        ErrorType.RATE_LIMIT,
-        ErrorType.TRANSIENT,
-    }
+    retryable = (
+        set(on)
+        if on
+        else {
+            ErrorType.NETWORK,
+            ErrorType.RATE_LIMIT,
+            ErrorType.TRANSIENT,
+        }
+    )
 
     config = RetryConfig(
         max_attempts=max_attempts,
@@ -363,11 +376,15 @@ def retry_sync(
         def fetch_data():
             return requests.get("/data")
     """
-    retryable = set(on) if on else {
-        ErrorType.NETWORK,
-        ErrorType.RATE_LIMIT,
-        ErrorType.TRANSIENT,
-    }
+    retryable = (
+        set(on)
+        if on
+        else {
+            ErrorType.NETWORK,
+            ErrorType.RATE_LIMIT,
+            ErrorType.TRANSIENT,
+        }
+    )
 
     config = RetryConfig(
         max_attempts=max_attempts,

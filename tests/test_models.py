@@ -1,5 +1,4 @@
 import pytest
-from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -95,7 +94,6 @@ class TestJobModel:
         db_session.add(job)
         db_session.commit()
 
-        original_updated_at = job.updated_at
 
         # Update status
         job.wan_status = "submitted"

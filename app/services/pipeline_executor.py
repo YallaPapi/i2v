@@ -1,6 +1,5 @@
 """Pipeline execution engine."""
 
-import asyncio
 from typing import Optional, Callable, Awaitable
 import structlog
 from sqlalchemy.orm import Session
@@ -59,17 +58,23 @@ class PipelineExecutor:
         if not pipeline:
             raise ValueError(f"Pipeline {pipeline_id} not found")
 
-        logger.info("Starting pipeline execution", pipeline_id=pipeline_id, mode=pipeline.mode)
+        logger.info(
+            "Starting pipeline execution", pipeline_id=pipeline_id, mode=pipeline.mode
+        )
 
         # Update status to running
         pipeline.status = PipelineStatus.RUNNING.value
         db.commit()
 
-        await self._broadcast(pipeline_id, "pipeline_status", {
-            "id": pipeline_id,
-            "status": "running",
-            "current_step": None,
-        })
+        await self._broadcast(
+            pipeline_id,
+            "pipeline_status",
+            {
+                "id": pipeline_id,
+                "status": "running",
+                "current_step": None,
+            },
+        )
 
         try:
             # Get ordered steps
@@ -87,34 +92,50 @@ class PipelineExecutor:
                         step.status = StepStatus.REVIEW.value
                         db.commit()
 
-                        await self._broadcast(pipeline_id, "step_progress", {
-                            "step_id": step.id,
-                            "status": "review",
-                            "message": f"Waiting for approval on {step.step_type}",
-                        })
+                        await self._broadcast(
+                            pipeline_id,
+                            "step_progress",
+                            {
+                                "step_id": step.id,
+                                "status": "review",
+                                "message": f"Waiting for approval on {step.step_type}",
+                            },
+                        )
 
                         # Pause pipeline
                         pipeline.status = PipelineStatus.PAUSED.value
                         db.commit()
 
-                        await self._broadcast(pipeline_id, "pipeline_status", {
-                            "id": pipeline_id,
-                            "status": "paused",
-                            "current_step": step.id,
-                        })
+                        await self._broadcast(
+                            pipeline_id,
+                            "pipeline_status",
+                            {
+                                "id": pipeline_id,
+                                "status": "paused",
+                                "current_step": step.id,
+                            },
+                        )
 
-                        logger.info("Pipeline paused for review", pipeline_id=pipeline_id, step_id=step.id)
+                        logger.info(
+                            "Pipeline paused for review",
+                            pipeline_id=pipeline_id,
+                            step_id=step.id,
+                        )
                         return pipeline
 
                 # Execute step
                 step.status = StepStatus.RUNNING.value
                 db.commit()
 
-                await self._broadcast(pipeline_id, "step_progress", {
-                    "step_id": step.id,
-                    "status": "running",
-                    "progress_pct": 0,
-                })
+                await self._broadcast(
+                    pipeline_id,
+                    "step_progress",
+                    {
+                        "step_id": step.id,
+                        "status": "running",
+                        "progress_pct": 0,
+                    },
+                )
 
                 try:
                     outputs = await self._execute_step(
@@ -132,18 +153,30 @@ class PipelineExecutor:
 
                     db.commit()
 
-                    await self._broadcast(pipeline_id, "step_progress", {
-                        "step_id": step.id,
-                        "status": "completed",
-                        "progress_pct": 100,
-                        "outputs_count": len(outputs.get("items", [])) if isinstance(outputs, dict) else 0,
-                    })
+                    await self._broadcast(
+                        pipeline_id,
+                        "step_progress",
+                        {
+                            "step_id": step.id,
+                            "status": "completed",
+                            "progress_pct": 100,
+                            "outputs_count": (
+                                len(outputs.get("items", []))
+                                if isinstance(outputs, dict)
+                                else 0
+                            ),
+                        },
+                    )
 
-                    await self._broadcast(pipeline_id, "output_ready", {
-                        "step_id": step.id,
-                        "output_type": step.step_type,
-                        "outputs": outputs,
-                    })
+                    await self._broadcast(
+                        pipeline_id,
+                        "output_ready",
+                        {
+                            "step_id": step.id,
+                            "output_type": step.step_type,
+                            "outputs": outputs,
+                        },
+                    )
 
                     # Chain outputs to next step's inputs
                     next_step = self._get_next_step(steps, step)
@@ -156,11 +189,15 @@ class PipelineExecutor:
                     step.error_message = str(e)
                     db.commit()
 
-                    await self._broadcast(pipeline_id, "error", {
-                        "step_id": step.id,
-                        "error_message": str(e),
-                        "retryable": True,
-                    })
+                    await self._broadcast(
+                        pipeline_id,
+                        "error",
+                        {
+                            "step_id": step.id,
+                            "error_message": str(e),
+                            "retryable": True,
+                        },
+                    )
 
                     raise
 
@@ -168,11 +205,15 @@ class PipelineExecutor:
             pipeline.status = PipelineStatus.COMPLETED.value
             db.commit()
 
-            await self._broadcast(pipeline_id, "pipeline_status", {
-                "id": pipeline_id,
-                "status": "completed",
-                "current_step": None,
-            })
+            await self._broadcast(
+                pipeline_id,
+                "pipeline_status",
+                {
+                    "id": pipeline_id,
+                    "status": "completed",
+                    "current_step": None,
+                },
+            )
 
             logger.info("Pipeline completed", pipeline_id=pipeline_id)
             return pipeline
@@ -181,11 +222,15 @@ class PipelineExecutor:
             pipeline.status = PipelineStatus.FAILED.value
             db.commit()
 
-            await self._broadcast(pipeline_id, "pipeline_status", {
-                "id": pipeline_id,
-                "status": "failed",
-                "error": str(e),
-            })
+            await self._broadcast(
+                pipeline_id,
+                "pipeline_status",
+                {
+                    "id": pipeline_id,
+                    "status": "failed",
+                    "error": str(e),
+                },
+            )
 
             logger.error("Pipeline failed", pipeline_id=pipeline_id, error=str(e))
             raise
@@ -226,7 +271,11 @@ class PipelineExecutor:
 
         variations_per = config.get("variations_per_prompt", 5)
         target = config.get("target_type", "i2i")
-        style = config.get("style_hints", ["photorealistic"])[0] if config.get("style_hints") else "photorealistic"
+        style = (
+            config.get("style_hints", ["photorealistic"])[0]
+            if config.get("style_hints")
+            else "photorealistic"
+        )
         theme = config.get("theme_focus")
 
         enhanced = await prompt_enhancer.enhance_bulk(
@@ -292,7 +341,9 @@ class PipelineExecutor:
 
         # Cache full-res images to R2 for fast loading
         cached_image_urls = await cache_images_batch(results, prefix="images")
-        final_image_urls = [cached or orig for cached, orig in zip(cached_image_urls, results)]
+        final_image_urls = [
+            cached or orig for cached, orig in zip(cached_image_urls, results)
+        ]
 
         # Generate thumbnails for grid preview (also goes to R2)
         thumbnail_urls = await generate_thumbnails_batch(results)
@@ -356,10 +407,25 @@ class PipelineExecutor:
 
         variation_suffixes = {
             "angles": ["front view", "side view", "three-quarter view", "back view"],
-            "expressions": ["smiling", "serious expression", "laughing", "contemplative"],
+            "expressions": [
+                "smiling",
+                "serious expression",
+                "laughing",
+                "contemplative",
+            ],
             "poses": ["standing pose", "sitting pose", "walking", "action pose"],
-            "outfits": ["casual outfit", "formal attire", "sporty look", "elegant dress"],
-            "lighting": ["studio lighting", "natural light", "dramatic shadows", "soft glow"],
+            "outfits": [
+                "casual outfit",
+                "formal attire",
+                "sporty look",
+                "elegant dress",
+            ],
+            "lighting": [
+                "studio lighting",
+                "natural light",
+                "dramatic shadows",
+                "soft glow",
+            ],
         }
 
         expanded = []
@@ -371,7 +437,9 @@ class PipelineExecutor:
 
         return expanded if expanded else prompts
 
-    def _get_next_step(self, steps: list, current: PipelineStep) -> Optional[PipelineStep]:
+    def _get_next_step(
+        self, steps: list, current: PipelineStep
+    ) -> Optional[PipelineStep]:
         """Get the next step in the pipeline."""
         for i, step in enumerate(steps):
             if step.id == current.id and i + 1 < len(steps):
@@ -384,17 +452,21 @@ class PipelineExecutor:
 
         if from_step.step_type == StepType.PROMPT_ENHANCE.value:
             # Pass prompts to next step
-            to_step.set_inputs({
-                **to_step.get_inputs(),
-                "prompts": outputs.get("prompts", []),
-            })
+            to_step.set_inputs(
+                {
+                    **to_step.get_inputs(),
+                    "prompts": outputs.get("prompts", []),
+                }
+            )
 
         elif from_step.step_type == StepType.I2I.value:
             # Pass image URLs to next step
-            to_step.set_inputs({
-                **to_step.get_inputs(),
-                "image_urls": outputs.get("image_urls", []),
-            })
+            to_step.set_inputs(
+                {
+                    **to_step.get_inputs(),
+                    "image_urls": outputs.get("image_urls", []),
+                }
+            )
 
         elif from_step.step_type == StepType.I2V.value:
             # Video outputs typically don't chain further
@@ -431,10 +503,14 @@ class PipelineExecutor:
         pipeline.status = PipelineStatus.PAUSED.value
         db.commit()
 
-        await self._broadcast(pipeline_id, "pipeline_status", {
-            "id": pipeline_id,
-            "status": "paused",
-        })
+        await self._broadcast(
+            pipeline_id,
+            "pipeline_status",
+            {
+                "id": pipeline_id,
+                "status": "paused",
+            },
+        )
 
         return pipeline
 
@@ -450,7 +526,10 @@ class PipelineExecutor:
         if not pipeline:
             raise ValueError(f"Pipeline {pipeline_id} not found")
 
-        if pipeline.status not in [PipelineStatus.PAUSED.value, PipelineStatus.PENDING.value]:
+        if pipeline.status not in [
+            PipelineStatus.PAUSED.value,
+            PipelineStatus.PENDING.value,
+        ]:
             raise ValueError(f"Pipeline cannot be resumed (status: {pipeline.status})")
 
         return await self.execute_pipeline(
@@ -466,10 +545,14 @@ class PipelineExecutor:
         pipeline.status = PipelineStatus.FAILED.value
         db.commit()
 
-        await self._broadcast(pipeline_id, "pipeline_status", {
-            "id": pipeline_id,
-            "status": "cancelled",
-        })
+        await self._broadcast(
+            pipeline_id,
+            "pipeline_status",
+            {
+                "id": pipeline_id,
+                "status": "cancelled",
+            },
+        )
 
         return pipeline
 

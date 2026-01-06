@@ -1,6 +1,6 @@
 """Cost calculation service for pipeline steps."""
 
-from typing import List, Optional
+from typing import List
 from decimal import Decimal
 import structlog
 
@@ -8,7 +8,11 @@ logger = structlog.get_logger()
 
 
 class CostCalculator:
-    """Service for calculating pipeline costs based on model pricing."""
+    """Service for calculating pipeline costs based on model pricing.
+
+    All I2V prices are stored as PER-SECOND rates for accurate duration scaling.
+    Prices verified from fal.ai January 2026.
+    """
 
     # I2I Model pricing (per image)
     I2I_PRICING = {
@@ -22,33 +26,47 @@ class CostCalculator:
         "nano-banana-pro": Decimal("0.15"),
     }
 
-    # I2V Model pricing - from fal_client.py per-second rates
-    # wan: 480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s → per 5s
-    # wan21/wan22: 480p=$0.04/s, 580p=$0.06/s, 720p=$0.08/s → per 5s
-    # wan-pro: 1080p=$0.16/s → ~$0.80/5s
-    # veo2: $0.50/s → $2.50/5s
-    # veo31-fast: $0.10/s → $0.60/6s (veo uses 6s not 5s)
-    # veo31: $0.20/s → $1.20/6s
-    # sora-2: $0.10/s → $0.40/4s (sora uses 4s)
-    I2V_PRICING = {
-        "wan": {"480p": Decimal("0.25"), "720p": Decimal("0.50"), "1080p": Decimal("0.75")},
-        "wan21": {"480p": Decimal("0.20"), "720p": Decimal("0.40")},
-        "wan22": {"480p": Decimal("0.20"), "720p": Decimal("0.40")},
-        "wan-pro": {"1080p": Decimal("0.80")},
-        "kling": Decimal("0.35"),
-        "kling-standard": Decimal("0.25"),
-        "kling-master": Decimal("1.40"),
-        "veo2": Decimal("2.50"),  # $0.50/s * 5s
-        "veo31-fast": Decimal("0.60"),  # $0.10/s * 6s
-        "veo31": Decimal("1.20"),  # $0.20/s * 6s
-        "veo31-flf": Decimal("1.20"),  # $0.20/s * 6s
-        "veo31-fast-flf": Decimal("0.60"),  # $0.10/s * 6s
-        "sora-2": Decimal("0.40"),  # $0.10/s * 4s
-        "sora-2-pro": Decimal("2.00"),  # $0.50/s * 4s @ 1080p
+    # I2V Model pricing - PER-SECOND rates from fal.ai (January 2026)
+    # All values are $/second - multiply by duration to get total cost
+    I2V_PRICING_PER_SEC = {
+        # Wan models - resolution-based per-second pricing
+        "wan": {
+            "480p": Decimal("0.05"),
+            "720p": Decimal("0.10"),
+            "1080p": Decimal("0.15"),
+        },
+        # Wan 2.2 - slightly cheaper per-second
+        "wan22": {
+            "480p": Decimal("0.04"),
+            "720p": Decimal("0.08"),
+        },
+        # Wan Pro - premium 1080p only
+        "wan-pro": {"1080p": Decimal("0.16")},
+        # Kling models - flat per-second rate
+        "kling": Decimal("0.07"),  # Kling 2.5 Turbo Pro
+        "kling-standard": Decimal("0.05"),  # Kling 2.1 Standard (budget)
+        "kling-master": Decimal("0.28"),  # Kling 2.1 Master (premium)
+        # Veo models - per-second (audio doubles the price)
+        "veo2": Decimal("0.50"),  # Veo 2 (720p only)
+        "veo31-fast": Decimal("0.10"),  # Veo 3.1 Fast (no audio)
+        "veo31": Decimal("0.20"),  # Veo 3.1 (no audio)
+        "veo31-flf": Decimal("0.20"),  # Veo 3.1 First-Last Frame
+        "veo31-fast-flf": Decimal("0.10"),  # Veo 3.1 Fast First-Last Frame
+        # Sora models - per-second
+        "sora-2": Decimal("0.10"),  # Sora 2 (720p only)
+        "sora-2-pro": Decimal("0.50"),  # Sora 2 Pro (1080p rate, 720p is $0.30/s)
     }
 
-    # Base duration for I2V pricing (seconds)
-    I2V_BASE_DURATION = 5
+    # Wan 2.1 uses FLAT per-video pricing (not per-second)
+    WAN21_FLAT_PRICING = {
+        "480p": Decimal("0.20"),
+        "720p": Decimal("0.40"),
+    }
+
+    # Face swap pricing (per swap)
+    FACE_SWAP_PRICING = {
+        "easel-advanced": Decimal("0.05"),
+    }
 
     # Prompt enhancement pricing (negligible, using Claude Haiku)
     PROMPT_ENHANCE_PRICE = Decimal("0.001")
@@ -64,22 +82,37 @@ class CostCalculator:
             return pricing.get(quality, pricing.get("high", Decimal("0.10")))
         return pricing
 
-    def get_i2v_price(self, model: str, resolution: str = "1080p", duration_sec: int = 5) -> Decimal:
-        """Get price per video for I2V model."""
-        pricing = self.I2V_PRICING.get(model)
+    def get_face_swap_price(self, model: str = "easel-advanced") -> Decimal:
+        """Get price per face swap."""
+        return self.FACE_SWAP_PRICING.get(model, Decimal("0.05"))
+
+    def get_i2v_price(
+        self, model: str, resolution: str = "1080p", duration_sec: int = 5
+    ) -> Decimal:
+        """Get price per video for I2V model.
+
+        Uses per-second pricing and multiplies by actual duration.
+        Wan 2.1 is special - it uses flat per-video pricing.
+        """
+        # Special case: Wan 2.1 uses flat per-video pricing
+        if model == "wan21":
+            flat_price = self.WAN21_FLAT_PRICING.get(resolution, Decimal("0.40"))
+            return flat_price
+
+        # Get per-second rate
+        pricing = self.I2V_PRICING_PER_SEC.get(model)
         if pricing is None:
-            logger.warning(f"Unknown I2V model: {model}, using default")
-            pricing = Decimal("0.50")
+            logger.warning(f"Unknown I2V model: {model}, using default $0.10/s")
+            pricing = Decimal("0.10")
 
-        # Get base price
+        # Get rate (may be resolution-dependent)
         if isinstance(pricing, dict):
-            base_price = pricing.get(resolution, pricing.get("1080p", Decimal("0.50")))
+            per_sec_rate = pricing.get(resolution, pricing.get("1080p", Decimal("0.10")))
         else:
-            base_price = pricing
+            per_sec_rate = pricing
 
-        # Scale by duration
-        duration_multiplier = Decimal(duration_sec) / Decimal(self.I2V_BASE_DURATION)
-        return base_price * duration_multiplier
+        # Calculate total: rate × duration
+        return per_sec_rate * Decimal(duration_sec)
 
     def calculate_prompt_enhance_cost(self, config: dict) -> dict:
         """Calculate cost for prompt enhancement step."""
@@ -120,6 +153,22 @@ class CostCalculator:
             "step_type": "i2i",
             "model": model,
             "unit_count": total_images,
+            "unit_price": float(unit_price),
+            "total": float(total_cost),
+        }
+
+    def calculate_face_swap_cost(self, config: dict, num_inputs: int = 1) -> dict:
+        """Calculate cost for face swap step."""
+        model = config.get("model", "easel-advanced")
+
+        total_swaps = num_inputs
+        unit_price = self.get_face_swap_price(model)
+        total_cost = Decimal(total_swaps) * unit_price
+
+        return {
+            "step_type": "face_swap",
+            "model": model,
+            "unit_count": total_swaps,
             "unit_price": float(unit_price),
             "total": float(total_cost),
         }
@@ -165,7 +214,11 @@ class CostCalculator:
                 # Prompt enhance multiplies outputs
                 input_prompts = config.get("input_prompts", [])
                 variations = config.get("variations_per_prompt", 5)
-                running_output_count = len(input_prompts) * variations if input_prompts else running_output_count * variations
+                running_output_count = (
+                    len(input_prompts) * variations
+                    if input_prompts
+                    else running_output_count * variations
+                )
 
             elif step_type == "i2i":
                 cost_info = self.calculate_i2i_cost(config, running_output_count)
@@ -185,6 +238,10 @@ class CostCalculator:
                 # I2V multiplies by videos_per_image
                 videos_per = config.get("videos_per_image", 1)
                 running_output_count = running_output_count * videos_per
+
+            elif step_type == "face_swap":
+                cost_info = self.calculate_face_swap_cost(config, running_output_count)
+                # Face swap produces 1 output per input (1:1)
 
             else:
                 logger.warning(f"Unknown step type: {step_type}")

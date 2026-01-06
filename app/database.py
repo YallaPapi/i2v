@@ -7,7 +7,7 @@ SQLALCHEMY_DATABASE_URL = f"sqlite:///{settings.db_path}"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Needed for SQLite
+    connect_args={"check_same_thread": False},  # Needed for SQLite
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -26,5 +26,12 @@ def get_db():
 
 def init_db():
     """Create all database tables."""
-    from app.models import Job, ImageJob, Pipeline, PipelineStep, UploadCache  # noqa: F401
+    from app.models import (  # noqa: F401 - imports needed for SQLAlchemy table creation
+        Job,
+        ImageJob,
+        Pipeline,
+        PipelineStep,
+        UploadCache,
+    )
+
     Base.metadata.create_all(bind=engine)

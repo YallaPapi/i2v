@@ -39,7 +39,9 @@ class PromptEnhancer:
     def __init__(self):
         self.api_key = settings.anthropic_api_key
         if not self.api_key:
-            logger.warning("No Anthropic API key configured - prompt enhancement will use fallback")
+            logger.warning(
+                "No Anthropic API key configured - prompt enhancement will use fallback"
+            )
 
     def _get_cache_key(
         self,
@@ -49,12 +51,14 @@ class PromptEnhancer:
         style: str,
         theme_focus: Optional[str],
         mode: str = "quick_improve",
-        categories: Optional[List[str]] = None
+        categories: Optional[List[str]] = None,
     ) -> str:
         """Generate cache key for prompt enhancement request."""
         cat_str = ",".join(sorted(categories)) if categories else ""
-        key_data = f"{prompt}:{target}:{count}:{style}:{theme_focus or ''}:{mode}:{cat_str}"
-        return hashlib.md5(key_data.encode()).hexdigest()
+        key_data = (
+            f"{prompt}:{target}:{count}:{style}:{theme_focus or ''}:{mode}:{cat_str}"
+        )
+        return hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()
 
     def _get_system_prompt(
         self,
@@ -63,7 +67,7 @@ class PromptEnhancer:
         style: str,
         theme_focus: Optional[str],
         mode: str = "quick_improve",
-        categories: Optional[List[str]] = None
+        categories: Optional[List[str]] = None,
     ) -> str:
         """Generate system prompt for Claude."""
 
@@ -100,7 +104,11 @@ Example: ["prompt 1", "prompt 2", "prompt 3"]"""
                         if cat in available_cats:
                             cat_instructions.append(f"- {available_cats[cat]}")
 
-                cat_text = "\n".join(cat_instructions) if cat_instructions else "- Add motion details"
+                cat_text = (
+                    "\n".join(cat_instructions)
+                    if cat_instructions
+                    else "- Add motion details"
+                )
 
                 system = f"""You are a motion description expert for image-to-video AI.
 Enhance the user's prompt with specific focus areas. Generate {count} variations.
@@ -137,7 +145,11 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
                         if cat in available_cats:
                             cat_instructions.append(f"- {available_cats[cat]}")
 
-                cat_text = "\n".join(cat_instructions) if cat_instructions else "- Add visual details"
+                cat_text = (
+                    "\n".join(cat_instructions)
+                    if cat_instructions
+                    else "- Add visual details"
+                )
 
                 system = f"""You are a visual description expert for image-to-image AI.
 Enhance the user's prompt with specific focus areas. Generate {count} variations.
@@ -162,7 +174,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         style: str = "photorealistic",
         theme_focus: Optional[str] = None,
         mode: str = "quick_improve",
-        categories: Optional[List[str]] = None
+        categories: Optional[List[str]] = None,
     ) -> List[str]:
         """
         Enhance a simple prompt into multiple detailed variations.
@@ -180,7 +192,9 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
             List of enhanced prompt variations
         """
         # Check cache
-        cache_key = self._get_cache_key(simple_prompt, target, count, style, theme_focus, mode, categories)
+        cache_key = self._get_cache_key(
+            simple_prompt, target, count, style, theme_focus, mode, categories
+        )
         if cache_key in _prompt_cache:
             logger.info("Prompt cache hit", cache_key=cache_key[:8])
             return _prompt_cache[cache_key]
@@ -188,10 +202,14 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         # If no API key, return fallback variations
         if not self.api_key:
             logger.warning("Using fallback prompt enhancement (no API key)")
-            return self._fallback_enhance(simple_prompt, target, count, style, theme_focus, mode, categories)
+            return self._fallback_enhance(
+                simple_prompt, target, count, style, theme_focus, mode, categories
+            )
 
         try:
-            system_prompt = self._get_system_prompt(target, count, style, theme_focus, mode, categories)
+            system_prompt = self._get_system_prompt(
+                target, count, style, theme_focus, mode, categories
+            )
 
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
@@ -206,14 +224,29 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
                         "max_tokens": 1024,  # Reduced for concise outputs
                         "system": system_prompt,
                         "messages": [
-                            {"role": "user", "content": f"Enhance this prompt: {simple_prompt}"}
+                            {
+                                "role": "user",
+                                "content": f"Enhance this prompt: {simple_prompt}",
+                            }
                         ],
                     },
                 )
 
                 if response.status_code != 200:
-                    logger.error("Claude API error", status=response.status_code, body=response.text)
-                    return self._fallback_enhance(simple_prompt, target, count, style, theme_focus, mode, categories)
+                    logger.error(
+                        "Claude API error",
+                        status=response.status_code,
+                        body=response.text,
+                    )
+                    return self._fallback_enhance(
+                        simple_prompt,
+                        target,
+                        count,
+                        style,
+                        theme_focus,
+                        mode,
+                        categories,
+                    )
 
                 data = response.json()
                 content = data["content"][0]["text"]
@@ -230,10 +263,14 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
 
         except json.JSONDecodeError as e:
             logger.error("Failed to parse Claude response as JSON", error=str(e))
-            return self._fallback_enhance(simple_prompt, target, count, style, theme_focus, mode, categories)
+            return self._fallback_enhance(
+                simple_prompt, target, count, style, theme_focus, mode, categories
+            )
         except Exception as e:
             logger.error("Prompt enhancement failed", error=str(e))
-            return self._fallback_enhance(simple_prompt, target, count, style, theme_focus, mode, categories)
+            return self._fallback_enhance(
+                simple_prompt, target, count, style, theme_focus, mode, categories
+            )
 
     def _fallback_enhance(
         self,
@@ -243,10 +280,9 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         style: str,
         theme_focus: Optional[str],
         mode: str = "quick_improve",
-        categories: Optional[List[str]] = None
+        categories: Optional[List[str]] = None,
     ) -> List[str]:
         """Generate fallback enhanced prompts without API."""
-        variations = []
 
         # Motion-focused templates for i2v (no extra context)
         if target == "i2v":
@@ -261,11 +297,17 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
             # Add category-specific enhancements
             if categories:
                 if "camera_movement" in categories:
-                    templates = [f"{prompt}, slow camera pan following the motion"] + templates
+                    templates = [
+                        f"{prompt}, slow camera pan following the motion"
+                    ] + templates
                 if "motion_intensity" in categories:
-                    templates = [f"{prompt}, with gentle unhurried movement"] + templates
+                    templates = [
+                        f"{prompt}, with gentle unhurried movement"
+                    ] + templates
                 if "facial_expression" in categories:
-                    templates = [f"{prompt}, expression transitioning naturally"] + templates
+                    templates = [
+                        f"{prompt}, expression transitioning naturally"
+                    ] + templates
                 if "body_language" in categories:
                     templates = [f"{prompt}, gestures flowing and relaxed"] + templates
         else:  # i2i
@@ -310,7 +352,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         style: str = "photorealistic",
         theme_focus: Optional[str] = None,
         mode: str = "quick_improve",
-        categories: Optional[List[str]] = None
+        categories: Optional[List[str]] = None,
     ) -> List[List[str]]:
         """
         Enhance multiple prompts.
@@ -329,7 +371,9 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         """
         results = []
         for prompt in prompts:
-            enhanced = await self.enhance_prompt(prompt, target, count, style, theme_focus, mode, categories)
+            enhanced = await self.enhance_prompt(
+                prompt, target, count, style, theme_focus, mode, categories
+            )
             results.append(enhanced)
         return results
 

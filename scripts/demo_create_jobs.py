@@ -9,7 +9,6 @@ Usage:
 import argparse
 import json
 import csv
-import sys
 import httpx
 
 
@@ -78,9 +77,13 @@ def main():
             try:
                 result = create_job(client, args.url, job_data)
                 created_ids.append(result["id"])
-                print(f"[{i+1}/{len(jobs)}] Created job {result['id']}: {job_data['image_url'][:50]}...")
+                print(
+                    f"[{i+1}/{len(jobs)}] Created job {result['id']}: {job_data['image_url'][:50]}..."
+                )
             except httpx.HTTPStatusError as e:
-                print(f"[{i+1}/{len(jobs)}] Failed: {e.response.status_code} - {e.response.text}")
+                print(
+                    f"[{i+1}/{len(jobs)}] Failed: {e.response.status_code} - {e.response.text}"
+                )
             except Exception as e:
                 print(f"[{i+1}/{len(jobs)}] Error: {e}")
 

@@ -33,7 +33,7 @@ from typing import Optional, List, Any, Dict
 from dataclasses import dataclass
 import structlog
 
-from app.services.file_lock import FileLock, JobLock, LockAcquisitionError
+from app.services.file_lock import JobLock, LockAcquisitionError
 from app.services.checkpoint_manager import job_checkpoint
 from app.services.flow_logger import FlowLogger
 from app.services.cooldown_manager import job_cooldown
@@ -45,6 +45,7 @@ logger = structlog.get_logger()
 @dataclass
 class WorkerStats:
     """Statistics for a worker."""
+
     worker_id: str
     jobs_claimed: int = 0
     jobs_completed: int = 0
@@ -218,7 +219,9 @@ class JobWorker:
                 job.error_message = None
                 self.stats.jobs_completed += 1
 
-                flow.log_step("submit_success", "submitted", request_id=result.request_id)
+                flow.log_step(
+                    "submit_success", "submitted", request_id=result.request_id
+                )
                 logger.info(
                     "Job submitted",
                     worker_id=self.worker_id,

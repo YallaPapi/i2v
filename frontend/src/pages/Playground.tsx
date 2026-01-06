@@ -111,6 +111,7 @@ export function Playground() {
   const [enhanceCount, setEnhanceCount] = useState(3)
   const [bulkCostEstimate, setBulkCostEstimate] = useState<BulkCostEstimate | null>(null)
   const [bulkPipelineId, setBulkPipelineId] = useState<number | null>(null)
+  const [runName, setRunName] = useState('')
   const [bulkSteps, setBulkSteps] = useState<BulkStep[]>([])
   const [bulkGroups, setBulkGroups] = useState<SourceGroup[]>([])
   const [bulkTotals, setBulkTotals] = useState({ source_images: 0, i2i_generated: 0, i2v_generated: 0, total_cost: 0 })
@@ -338,7 +339,7 @@ export function Playground() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `Bulk ${bulkMode === 'photos' ? 'Photos' : bulkMode === 'videos' ? 'Videos' : 'Photos + Videos'} - ${new Date().toLocaleString()}`,
+          name: runName.trim() || `Bulk ${bulkMode === 'photos' ? 'Photos' : bulkMode === 'videos' ? 'Videos' : 'Photos + Videos'} - ${new Date().toLocaleString()}`,
           source_images: effectiveSourceImages,
           i2i_config: includePhotos && bulkI2iPrompts.length > 0 ? {
             enabled: true,
@@ -429,7 +430,7 @@ export function Playground() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `Carousel - ${new Date().toLocaleString()}`,
+          name: runName.trim() || `Carousel - ${new Date().toLocaleString()}`,
           source_images: effectiveSourceImages,
           i2i_config: {
             enabled: true,
@@ -490,7 +491,7 @@ export function Playground() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `Animate Selected - ${new Date().toLocaleString()}`,
+          name: runName.trim() || `Animate Selected - ${new Date().toLocaleString()}`,
           image_urls: selectedImageUrls,
           prompts: bulkI2vPrompts,
           model: i2vModel,
@@ -595,7 +596,7 @@ export function Playground() {
                   images={images}
                   onImagesChange={setImages}
                   multiple={true}
-                  maxFiles={10}
+                  maxFiles={200}
                   disabled={isGenerating}
                 />
               }
@@ -1234,6 +1235,24 @@ export function Playground() {
                 costEstimate={bulkCostEstimate}
               />
             )}
+
+            {/* Run Name Input */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Run Name</CardTitle>
+                <CardDescription>Name your run for easier identification in downloads</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <input
+                  type="text"
+                  value={runName}
+                  onChange={(e) => setRunName(e.target.value)}
+                  placeholder="e.g., Beach photoshoot v2"
+                  className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  disabled={isGenerating}
+                />
+              </CardContent>
+            </Card>
 
             {/* Generate Button */}
             <Button

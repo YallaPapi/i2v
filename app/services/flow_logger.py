@@ -26,7 +26,6 @@ Usage:
     flow.end()
 """
 
-import os
 import json
 from pathlib import Path
 from datetime import datetime, timezone
@@ -36,6 +35,7 @@ import structlog
 
 try:
     import orjson
+
     ORJSON_AVAILABLE = True
 except ImportError:
     ORJSON_AVAILABLE = False
@@ -107,7 +107,7 @@ class FlowLogger:
             self.end()
         return False  # Don't suppress exceptions
 
-    def start(self) -> 'FlowLogger':
+    def start(self) -> "FlowLogger":
         """Log flow start."""
         self._open_file()
         self.log_step("start", "pending")
@@ -129,7 +129,7 @@ class FlowLogger:
             if size > self.MAX_FILE_SIZE_BYTES:
                 self._rotate_file()
 
-        self._file = open(self.log_file, 'a', encoding='utf-8')
+        self._file = open(self.log_file, "a", encoding="utf-8")
 
     def _close_file(self):
         """Close log file."""
@@ -150,7 +150,7 @@ class FlowLogger:
     def _serialize(self, entry: dict) -> str:
         """Serialize entry to JSON string."""
         if ORJSON_AVAILABLE:
-            return orjson.dumps(entry).decode('utf-8')
+            return orjson.dumps(entry).decode("utf-8")
         return json.dumps(entry, default=str)
 
     def log_step(
@@ -320,7 +320,7 @@ class FlowLogger:
         self._open_file()
 
         try:
-            line = self._serialize(entry) + '\n'
+            line = self._serialize(entry) + "\n"
             self._file.write(line)
             self._file.flush()
         except Exception as e:
@@ -459,7 +459,7 @@ def read_flow_log(
         return []
 
     entries = []
-    with open(log_file, 'r') as f:
+    with open(log_file, "r") as f:
         for line in f:
             line = line.strip()
             if line:

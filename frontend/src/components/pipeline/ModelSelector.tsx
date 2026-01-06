@@ -61,14 +61,14 @@ const I2I_MODELS: ModelOption[] = [
   },
 ]
 
-// Pricing from fal_client.py - exact values from Fal API
+// Pricing from fal.ai - January 2026 verified rates (per-second)
 const I2V_MODELS: ModelOption[] = [
   // Kling models
   {
     value: 'kling',
     label: 'Kling v2.5 Turbo Pro',
-    price: '$0.35/5s + $0.07/extra s',
-    priceValue: 0.35,
+    price: '$0.07/s',
+    priceValue: 0.07,
     provider: 'Kling',
     description: 'Fast turbo generation',
     recommended: true,
@@ -76,16 +76,16 @@ const I2V_MODELS: ModelOption[] = [
   {
     value: 'kling-standard',
     label: 'Kling v2.1 Standard',
-    price: '$0.25/5s + $0.05/extra s',
-    priceValue: 0.25,
+    price: '$0.05/s',
+    priceValue: 0.05,
     provider: 'Kling',
     description: 'Budget option',
   },
   {
     value: 'kling-master',
     label: 'Kling v2.1 Master',
-    price: '$1.40/5s + $0.28/extra s',
-    priceValue: 1.40,
+    price: '$0.28/s',
+    priceValue: 0.28,
     provider: 'Kling',
     description: 'Highest quality',
   },
@@ -93,73 +93,73 @@ const I2V_MODELS: ModelOption[] = [
   {
     value: 'wan',
     label: 'Wan 2.5 Preview',
-    price: '480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s',
-    priceValue: 0.50,  // 1080p @ 5s
+    price: '$0.05-0.15/s',
+    priceValue: 0.10,
     provider: 'Wan',
-    description: 'Resolution-based pricing',
+    description: '480p=$0.05/s, 720p=$0.10/s, 1080p=$0.15/s',
   },
   {
     value: 'wan21',
     label: 'Wan 2.1 I2V',
-    price: '480p=$0.20/vid, 720p=$0.40/vid',
+    price: '$0.20-0.40/vid',
     priceValue: 0.30,
     provider: 'Wan',
-    description: 'Per-video pricing',
+    description: 'Flat rate: 480p=$0.20, 720p=$0.40',
   },
   {
     value: 'wan22',
     label: 'Wan 2.2',
-    price: '480p=$0.04/s, 580p=$0.06/s, 720p=$0.08/s',
-    priceValue: 0.40,  // 720p @ 5s
+    price: '$0.04-0.08/s',
+    priceValue: 0.06,
     provider: 'Wan',
-    description: 'Latest Wan version',
+    description: '480p=$0.04/s, 720p=$0.08/s',
   },
   {
     value: 'wan-pro',
     label: 'Wan Pro',
-    price: '1080p=$0.16/s (~$0.80/5s)',
-    priceValue: 0.80,
+    price: '$0.16/s',
+    priceValue: 0.16,
     provider: 'Wan',
-    description: 'Premium 1080p quality',
+    description: 'Premium 1080p only',
   },
   // Google Veo models
   {
     value: 'veo2',
     label: 'Veo 2',
-    price: '$0.50/s (720p only)',
-    priceValue: 2.50,  // 5s
+    price: '$0.50/s',
+    priceValue: 0.50,
     provider: 'Google',
-    description: '720p, 5-8s videos',
+    description: '720p only',
   },
   {
     value: 'veo31-fast',
     label: 'Veo 3.1 Fast',
-    price: '$0.10/s (no audio), $0.15/s (audio)',
-    priceValue: 0.60,  // 6s no audio
+    price: '$0.10/s',
+    priceValue: 0.10,
     provider: 'Google',
-    description: 'Fast generation, 4/6/8s',
+    description: 'Fast, 4/6/8s durations',
   },
   {
     value: 'veo31',
     label: 'Veo 3.1',
-    price: '$0.20/s (no audio), $0.40/s (audio)',
-    priceValue: 1.20,  // 6s no audio
+    price: '$0.20/s',
+    priceValue: 0.20,
     provider: 'Google',
     description: 'High quality, 4/6/8s',
   },
   {
     value: 'veo31-flf',
     label: 'Veo 3.1 First-Last Frame',
-    price: '$0.20/s (no audio), $0.40/s (audio)',
-    priceValue: 1.20,
+    price: '$0.20/s',
+    priceValue: 0.20,
     provider: 'Google',
     description: 'Control start and end frames',
   },
   {
     value: 'veo31-fast-flf',
     label: 'Veo 3.1 Fast First-Last',
-    price: '$0.10/s (no audio), $0.15/s (audio)',
-    priceValue: 0.60,
+    price: '$0.10/s',
+    priceValue: 0.10,
     provider: 'Google',
     description: 'Fast first-last frame control',
   },
@@ -167,18 +167,18 @@ const I2V_MODELS: ModelOption[] = [
   {
     value: 'sora-2',
     label: 'Sora 2',
-    price: '$0.10/s (720p only, 4/8/12s)',
-    priceValue: 0.40,  // 4s
+    price: '$0.10/s',
+    priceValue: 0.10,
     provider: 'OpenAI',
-    description: 'OpenAI video model',
+    description: '720p, 4/8/12s durations',
   },
   {
     value: 'sora-2-pro',
     label: 'Sora 2 Pro',
-    price: '720p=$0.30/s, 1080p=$0.50/s (4/8/12s)',
-    priceValue: 2.00,  // 4s @ 1080p
+    price: '$0.30-0.50/s',
+    priceValue: 0.50,
     provider: 'OpenAI',
-    description: 'Premium OpenAI, up to 1080p',
+    description: '720p=$0.30/s, 1080p=$0.50/s',
   },
 ]
 

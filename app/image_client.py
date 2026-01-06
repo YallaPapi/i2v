@@ -1,8 +1,14 @@
 """Image generation client for multiple AI models."""
+
 import httpx
 from typing import Literal
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 from app.config import settings
 
@@ -41,11 +47,14 @@ IMAGE_MODELS = {
     },
 }
 
-ImageModelType = Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"]
+ImageModelType = Literal[
+    "gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"
+]
 
 
 class ImageAPIError(Exception):
     """Exception raised for image API errors."""
+
     pass
 
 
@@ -57,11 +66,15 @@ def _get_headers() -> dict:
     }
 
 
-def _build_image_payload(model: ImageModelType, image_url: str, prompt: str,
-                         negative_prompt: str | None = None,
-                         num_images: int = 1,
-                         aspect_ratio: str = "9:16",
-                         quality: str = "high") -> dict:
+def _build_image_payload(
+    model: ImageModelType,
+    image_url: str,
+    prompt: str,
+    negative_prompt: str | None = None,
+    num_images: int = 1,
+    aspect_ratio: str = "9:16",
+    quality: str = "high",
+) -> dict:
     """Build request payload based on image model type."""
 
     # GPT Image 1.5 Edit
@@ -233,10 +246,17 @@ async def get_image_result(model: ImageModelType, request_id: str) -> dict:
         result_url = f"{config['status_url']}/requests/{request_id}"
         async with httpx.AsyncClient(timeout=60.0) as client:
             result_response = await client.get(result_url, headers=_get_headers())
-            logger.debug("Image result response", status_code=result_response.status_code)
+            logger.debug(
+                "Image result response", status_code=result_response.status_code
+            )
             if result_response.status_code == 200:
                 result_data = result_response.json()
-                logger.debug("Image result data", model=model, keys=list(result_data.keys()), data=str(result_data)[:500])
+                logger.debug(
+                    "Image result data",
+                    model=model,
+                    keys=list(result_data.keys()),
+                    data=str(result_data)[:500],
+                )
 
                 image_urls = []
 
@@ -280,9 +300,17 @@ async def get_image_result(model: ImageModelType, request_id: str) -> dict:
                             break
 
                 result["image_urls"] = image_urls if image_urls else None
-                logger.debug("Parsed image URLs", count=len(image_urls) if image_urls else 0, urls=image_urls[:2] if image_urls else None)
+                logger.debug(
+                    "Parsed image URLs",
+                    count=len(image_urls) if image_urls else 0,
+                    urls=image_urls[:2] if image_urls else None,
+                )
             else:
-                logger.error("Failed to fetch image result", status_code=result_response.status_code, text=result_response.text[:200])
+                logger.error(
+                    "Failed to fetch image result",
+                    status_code=result_response.status_code,
+                    text=result_response.text[:200],
+                )
 
     elif status == "failed":
         result["error_message"] = data.get("error", "Unknown error from Fal")

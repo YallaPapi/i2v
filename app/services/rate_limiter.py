@@ -37,12 +37,13 @@ import structlog
 
 logger = structlog.get_logger()
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
 class RateLimitStats:
     """Statistics for rate limiter."""
+
     current_usage: int
     max_allowed: int
     window_seconds: float
@@ -94,7 +95,9 @@ class SlidingWindowRateLimiter:
             self.max_requests = max_requests
             self.window_seconds = window_seconds
         else:
-            raise ValueError("Must specify max_per_minute, max_per_second, or max_requests")
+            raise ValueError(
+                "Must specify max_per_minute, max_per_second, or max_requests"
+            )
 
         self._timestamps: Deque[float] = deque()
         self._lock = Lock()
@@ -458,10 +461,7 @@ class MultiRateLimiter:
 
     def current_usage(self) -> Dict[int, int]:
         """Get usage from all limiters."""
-        return {
-            i: limiter.current_usage()
-            for i, limiter in enumerate(self.limiters)
-        }
+        return {i: limiter.current_usage() for i, limiter in enumerate(self.limiters)}
 
 
 class RateLimitExceeded(Exception):

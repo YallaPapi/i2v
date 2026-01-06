@@ -30,7 +30,6 @@ Usage:
 
 import json
 import os
-import time
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Iterator
@@ -40,12 +39,14 @@ import structlog
 
 try:
     import orjson
+
     ORJSON_AVAILABLE = True
 except ImportError:
     ORJSON_AVAILABLE = False
 
 try:
     from atomicwrites import atomic_write
+
     ATOMICWRITES_AVAILABLE = True
 except ImportError:
     ATOMICWRITES_AVAILABLE = False
@@ -58,6 +59,7 @@ logger = structlog.get_logger()
 @dataclass
 class CheckpointEntry:
     """A single checkpoint entry."""
+
     id: str
     status: str
     timestamp: str
@@ -71,16 +73,16 @@ class CheckpointEntry:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'CheckpointEntry':
+    def from_dict(cls, data: dict) -> "CheckpointEntry":
         """Create from dictionary."""
         return cls(
-            id=data['id'],
-            status=data['status'],
-            timestamp=data['timestamp'],
-            step=data.get('step', 0),
-            result=data.get('result'),
-            error=data.get('error'),
-            context=data.get('context', {}),
+            id=data["id"],
+            status=data["status"],
+            timestamp=data["timestamp"],
+            step=data.get("step", 0),
+            result=data.get("result"),
+            error=data.get("error"),
+            context=data.get("context", {}),
         )
 
 
@@ -138,11 +140,13 @@ class CheckpointManager:
         # Try loading cached index first
         if self.index_file.exists():
             try:
-                with open(self.index_file, 'r') as f:
+                with open(self.index_file, "r") as f:
                     data = json.load(f)
                     for id, entry_data in data.items():
                         self._index[id] = CheckpointEntry.from_dict(entry_data)
-                logger.debug("Loaded checkpoint index", name=self.name, count=len(self._index))
+                logger.debug(
+                    "Loaded checkpoint index", name=self.name, count=len(self._index)
+                )
                 return
             except Exception as e:
                 logger.warning("Failed to load index, rebuilding", error=str(e))
@@ -158,7 +162,7 @@ class CheckpointManager:
             return
 
         try:
-            with open(self.checkpoint_file, 'r') as f:
+            with open(self.checkpoint_file, "r") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -172,7 +176,9 @@ class CheckpointManager:
 
             # Save rebuilt index
             self._save_index()
-            logger.info("Rebuilt checkpoint index", name=self.name, count=len(self._index))
+            logger.info(
+                "Rebuilt checkpoint index", name=self.name, count=len(self._index)
+            )
 
         except Exception as e:
             logger.error("Failed to rebuild index", error=str(e))
@@ -181,7 +187,7 @@ class CheckpointManager:
         """Save index to file for fast loading."""
         try:
             data = {id: entry.to_dict() for id, entry in self._index.items()}
-            with open(self.index_file, 'w') as f:
+            with open(self.index_file, "w") as f:
                 json.dump(data, f)
         except Exception as e:
             logger.warning("Failed to save index", error=str(e))
@@ -189,7 +195,7 @@ class CheckpointManager:
     def _serialize(self, entry: CheckpointEntry) -> str:
         """Serialize entry to JSON string."""
         if ORJSON_AVAILABLE:
-            return orjson.dumps(entry.to_dict()).decode('utf-8')
+            return orjson.dumps(entry.to_dict()).decode("utf-8")
         return json.dumps(entry.to_dict())
 
     def write(
@@ -225,7 +231,7 @@ class CheckpointManager:
             context=context,
         )
 
-        line = self._serialize(entry) + '\n'
+        line = self._serialize(entry) + "\n"
 
         with self._lock:
             try:
@@ -255,13 +261,13 @@ class CheckpointManager:
 
     def _append_line(self, line: str):
         """Append a line to the checkpoint file."""
-        if ATOMICWRITES_AVAILABLE and os.name != 'nt':
+        if ATOMICWRITES_AVAILABLE and os.name != "nt":
             # Use atomic append on Unix
-            with atomic_write(self.checkpoint_file, mode='a', overwrite=False) as f:
+            with atomic_write(self.checkpoint_file, mode="a", overwrite=False) as f:
                 f.write(line)
         else:
             # Standard append (still safe for single process)
-            with open(self.checkpoint_file, 'a') as f:
+            with open(self.checkpoint_file, "a") as f:
                 f.write(line)
                 f.flush()
                 os.fsync(f.fileno())  # Ensure written to disk
@@ -299,7 +305,7 @@ class CheckpointManager:
         """
         incomplete = []
         for entry in self._index.values():
-            if entry.status in ('started', 'running', 'in_progress'):
+            if entry.status in ("started", "running", "in_progress"):
                 incomplete.append(entry)
 
         logger.info(
@@ -421,7 +427,7 @@ class CheckpointManager:
 
         # Read all entries
         all_entries = []
-        with open(self.checkpoint_file, 'r') as f:
+        with open(self.checkpoint_file, "r") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -433,16 +439,16 @@ class CheckpointManager:
         # Keep only latest per ID
         latest = {}
         for entry in all_entries:
-            latest[entry['id']] = entry
+            latest[entry["id"]] = entry
 
         removed = len(all_entries) - len(latest)
 
         if removed > 0:
             # Rewrite checkpoint file
             with FileLock(f"checkpoint_{self.name}", timeout=30):
-                with open(self.checkpoint_file, 'w') as f:
+                with open(self.checkpoint_file, "w") as f:
                     for entry in latest.values():
-                        line = json.dumps(entry) + '\n'
+                        line = json.dumps(entry) + "\n"
                         f.write(line)
 
                 # Update index
@@ -481,14 +487,14 @@ class CheckpointManager:
         if not self.checkpoint_file.exists():
             return
 
-        with open(self.checkpoint_file, 'r') as f:
+        with open(self.checkpoint_file, "r") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
-                    if data.get('id') == id:
+                    if data.get("id") == id:
                         yield CheckpointEntry.from_dict(data)
                 except Exception:
                     continue

@@ -73,22 +73,22 @@ export interface HealthResponse {
   status: string
 }
 
-// Video model info for display
+// Video model info for display - fal.ai January 2026 pricing (per-second)
 export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string }[] = [
-  { value: 'wan', label: 'Wan 2.5', pricing: '$0.05-0.15/sec' },
-  { value: 'wan21', label: 'Wan 2.1', pricing: '$0.20-0.40 flat' },
-  { value: 'wan22', label: 'Wan 2.2', pricing: '$0.04-0.08/sec' },
-  { value: 'wan-pro', label: 'Wan Pro', pricing: '$0.16/sec' },
-  { value: 'kling', label: 'Kling v2.5 Turbo', pricing: '$0.35/5s' },
-  { value: 'kling-master', label: 'Kling v2.1 Master', pricing: '$1.40/5s (best quality)' },
-  { value: 'kling-standard', label: 'Kling v2.1 Standard', pricing: '$0.25/5s (budget)' },
-  { value: 'veo2', label: 'Google Veo2', pricing: '$0.50/sec' },
-  { value: 'veo31-fast', label: 'Google Veo3.1 Fast', pricing: '$0.10-0.15/sec' },
-  { value: 'veo31', label: 'Google Veo3.1', pricing: '$0.20-0.40/sec' },
-  { value: 'veo31-flf', label: 'Veo3.1 First-Last Frame', pricing: '$0.20/sec' },
-  { value: 'veo31-fast-flf', label: 'Veo3.1 Fast FLF', pricing: '$0.10/sec' },
-  { value: 'sora-2', label: 'OpenAI Sora 2', pricing: '$0.10/sec' },
-  { value: 'sora-2-pro', label: 'OpenAI Sora 2 Pro', pricing: '$0.30-0.50/sec' },
+  { value: 'wan', label: 'Wan 2.5', pricing: '$0.05-0.15/s' },
+  { value: 'wan21', label: 'Wan 2.1', pricing: '$0.20-0.40/vid' },
+  { value: 'wan22', label: 'Wan 2.2', pricing: '$0.04-0.08/s' },
+  { value: 'wan-pro', label: 'Wan Pro', pricing: '$0.16/s' },
+  { value: 'kling', label: 'Kling v2.5 Turbo', pricing: '$0.07/s' },
+  { value: 'kling-master', label: 'Kling v2.1 Master', pricing: '$0.28/s' },
+  { value: 'kling-standard', label: 'Kling v2.1 Standard', pricing: '$0.05/s' },
+  { value: 'veo2', label: 'Google Veo2', pricing: '$0.50/s' },
+  { value: 'veo31-fast', label: 'Google Veo3.1 Fast', pricing: '$0.10/s' },
+  { value: 'veo31', label: 'Google Veo3.1', pricing: '$0.20/s' },
+  { value: 'veo31-flf', label: 'Veo3.1 First-Last Frame', pricing: '$0.20/s' },
+  { value: 'veo31-fast-flf', label: 'Veo3.1 Fast FLF', pricing: '$0.10/s' },
+  { value: 'sora-2', label: 'OpenAI Sora 2', pricing: '$0.10/s' },
+  { value: 'sora-2-pro', label: 'OpenAI Sora 2 Pro', pricing: '$0.30-0.50/s' },
 ]
 
 export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }[] = [

@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
-import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp } from 'lucide-react'
+import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
 import { PipelineCardSkeleton, OutputGridSkeleton } from '@/components/ui/skeleton'
 import {
   usePipelines,
@@ -122,6 +122,8 @@ function PipelineItem({
   const [newTagInput, setNewTagInput] = useState('')
   const [hoverOutput, setHoverOutput] = useState<{ url: string; thumbnailUrl?: string; prompt?: string } | null>(null)
   const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 })
+  const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'done'>('idle')
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 })
   const hoverTimeoutRef = useRef<number | null>(null)
   const pipelineTags = pipeline.tags || []
   const outputs = getOutputs(details)
@@ -252,9 +254,13 @@ function PipelineItem({
                     <Button variant="outline" size="sm" onClick={() => onSelectAll(outputs.map(o => o.url), !outputs.every(o => selectedOutputs.has(o.url)))}>
                       {outputs.every(o => selectedOutputs.has(o.url)) ? 'Deselect All' : 'Select All'}
                     </Button>
-                    <Button variant="default" size="sm" disabled={pipelineSelected.length === 0} onClick={async () => {
+                    <Button variant="default" size="sm" disabled={pipelineSelected.length === 0 || downloadState === 'downloading'} onClick={async () => {
+                      const safeName = pipeline.name.replace(/[^a-zA-Z0-9-_]/g, '_').substring(0, 50) || `pipeline-${pipeline.id}`
+                      setDownloadState('downloading')
+                      setDownloadProgress({ current: 0, total: pipelineSelected.length })
                       for (let i = 0; i < pipelineSelected.length; i++) {
                         const o = pipelineSelected[i]
+                        setDownloadProgress({ current: i + 1, total: pipelineSelected.length })
                         try {
                           // Use backend proxy to avoid CORS issues
                           const proxyUrl = `/api/pipelines/download?url=${encodeURIComponent(o.url)}`
@@ -263,7 +269,7 @@ function PipelineItem({
                           const blobUrl = URL.createObjectURL(blob)
                           const a = document.createElement('a')
                           a.href = blobUrl
-                          a.download = `output-${i + 1}.${o.type === 'video' ? 'mp4' : 'png'}`
+                          a.download = `${safeName}-${i + 1}.${o.type === 'video' ? 'mp4' : 'png'}`
                           a.click()
                           URL.revokeObjectURL(blobUrl)
                           await new Promise(r => setTimeout(r, 300))
@@ -271,8 +277,16 @@ function PipelineItem({
                           console.error('Download failed:', o.url, e)
                         }
                       }
+                      setDownloadState('done')
+                      setTimeout(() => setDownloadState('idle'), 3000)
                     }}>
-                      <Download className="h-4 w-4 mr-1" /> Download ({pipelineSelected.length})
+                      {downloadState === 'downloading' ? (
+                        <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Downloading {downloadProgress.current}/{downloadProgress.total}</>
+                      ) : downloadState === 'done' ? (
+                        <><CheckCircle className="h-4 w-4 mr-1" /> Downloaded!</>
+                      ) : (
+                        <><Download className="h-4 w-4 mr-1" /> Download ({pipelineSelected.length})</>
+                      )}
                     </Button>
                   </div>
                   <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
@@ -285,8 +299,16 @@ function PipelineItem({
                           onMouseMove={handleMouseMove}
                           onMouseLeave={handleMouseLeave}>
                           {output.type === 'video' ? (
-                            <video src={output.url} className="w-full h-full object-cover" muted playsInline preload="none"
-                              onMouseEnter={(e) => e.currentTarget.play()} onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }} />
+                            <video
+                              src={output.url}
+                              className="w-full h-full object-cover"
+                              muted
+                              playsInline
+                              preload="auto"
+                              poster={output.thumbnailUrl}
+                              onMouseEnter={(e) => e.currentTarget.play()}
+                              onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
+                            />
                           ) : (
                             <img src={output.thumbnailUrl || output.url} alt="" className="w-full h-full object-cover" loading="lazy" />
                           )}
@@ -318,6 +340,7 @@ export function Jobs() {
   const [showHidden, setShowHidden] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE)
+  const [restartState, setRestartState] = useState<'idle' | 'restarting' | 'done'>('idle')
   // Query params - fetch more than displayed to enable smooth "load more"
   const queryParams = useMemo(() => ({
     favorites: demoMode || undefined,
@@ -329,8 +352,9 @@ export function Jobs() {
   const { data, isLoading, isFetching, refetch } = usePipelines(queryParams)
   const pipelines = data?.pipelines || []
   const total = data?.total || 0
-  // Reset display count when filters change
+  // Reset display count when filters change (intentional - resets pagination on filter change)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayCount(PAGE_SIZE)
   }, [demoMode, showHidden, tagFilter])
   // Save demo mode
@@ -379,6 +403,43 @@ export function Jobs() {
           </div>
           <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={restartState === 'restarting'}
+            onClick={async () => {
+              setRestartState('restarting')
+              try {
+                await fetch('/api/pipelines/restart', { method: 'POST' })
+                // Wait for server to restart
+                await new Promise(r => setTimeout(r, 2000))
+                // Check if server is back
+                let retries = 0
+                while (retries < 10) {
+                  try {
+                    const res = await fetch('/api/health')
+                    if (res.ok) break
+                  } catch { /* server still down */ }
+                  await new Promise(r => setTimeout(r, 500))
+                  retries++
+                }
+                setRestartState('done')
+                setTimeout(() => setRestartState('idle'), 2000)
+                refetch()
+              } catch {
+                setRestartState('idle')
+              }
+            }}
+          >
+            {restartState === 'restarting' ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Restarting...</>
+            ) : restartState === 'done' ? (
+              <><CheckCircle className="h-4 w-4" /> Restarted!</>
+            ) : (
+              <><RotateCcw className="h-4 w-4" /> Restart Server</>
+            )}
           </Button>
         </div>
       </div>

@@ -1,7 +1,12 @@
 import httpx
 from typing import Literal
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 from app.config import settings
 
@@ -89,7 +94,22 @@ MODELS = {
     },
 }
 
-ModelType = Literal["wan", "wan21", "wan22", "wan-pro", "kling", "kling-master", "kling-standard", "veo2", "veo31-fast", "veo31", "veo31-flf", "veo31-fast-flf", "sora-2", "sora-2-pro"]
+ModelType = Literal[
+    "wan",
+    "wan21",
+    "wan22",
+    "wan-pro",
+    "kling",
+    "kling-master",
+    "kling-standard",
+    "veo2",
+    "veo31-fast",
+    "veo31",
+    "veo31-flf",
+    "veo31-fast-flf",
+    "sora-2",
+    "sora-2-pro",
+]
 
 # Default negative prompt - used when none specified
 DEFAULT_NEGATIVE_PROMPT = "low resolution, error, worst quality, low quality, artifacts, horizontal video, landscape"
@@ -97,6 +117,7 @@ DEFAULT_NEGATIVE_PROMPT = "low resolution, error, worst quality, low quality, ar
 
 class FalAPIError(Exception):
     """Exception raised for Fal API errors."""
+
     pass
 
 
@@ -108,12 +129,20 @@ def _get_headers() -> dict:
     }
 
 
-def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: str,
-                   duration_sec: int, negative_prompt: str | None = None,
-                   enable_audio: bool = False) -> dict:
+def _build_payload(
+    model: ModelType,
+    image_url: str,
+    prompt: str,
+    resolution: str,
+    duration_sec: int,
+    negative_prompt: str | None = None,
+    enable_audio: bool = False,
+) -> dict:
     """Build request payload based on model type."""
     # Use default negative prompt if none specified
-    neg_prompt = negative_prompt if negative_prompt is not None else DEFAULT_NEGATIVE_PROMPT
+    neg_prompt = (
+        negative_prompt if negative_prompt is not None else DEFAULT_NEGATIVE_PROMPT
+    )
 
     # Wan models (wan, wan21, wan22, wan-pro) - duration: 5 or 10 seconds
     if model in ("wan", "wan21", "wan22", "wan-pro"):
@@ -138,48 +167,44 @@ def _build_payload(model: ModelType, image_url: str, prompt: str, resolution: st
         }
     # Veo2 model - duration: 5-8 seconds (fixed)
     elif model == "veo2":
-        payload = {
+        return {
             "prompt": prompt,
             "image_url": image_url,
             "duration": "5s",
             "aspect_ratio": "9:16",
+            "enable_audio": enable_audio,
         }
-        if enable_audio:
-            payload["enable_audio"] = True
-        return payload
     # Veo 3.1 models (image-to-video) - duration: 4, 6, 8 seconds
     elif model in ("veo31", "veo31-fast"):
         # Map to valid Veo durations: 4s, 6s, 8s
         veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
-        payload = {
+        return {
             "prompt": prompt,
             "image_url": image_url,
             "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
+            "enable_audio": enable_audio,
         }
-        if enable_audio:
-            payload["enable_audio"] = True
-        return payload
     # Veo 3.1 First-Last Frame models - duration: 4, 6, 8 seconds
     elif model in ("veo31-flf", "veo31-fast-flf"):
         veo_duration_map = {4: "4s", 5: "6s", 6: "6s", 8: "8s", 10: "8s"}
-        payload = {
+        return {
             "prompt": prompt,
             "first_frame_image": image_url,
             "last_frame_image": image_url,  # Same image for now - can be extended
             "duration": veo_duration_map.get(duration_sec, "6s"),
             "aspect_ratio": "9:16",
+            "enable_audio": enable_audio,
         }
-        if enable_audio:
-            payload["enable_audio"] = True
-        return payload
     # Sora 2 models (OpenAI) - duration: 4, 8, 12 seconds
     elif model in ("sora-2", "sora-2-pro"):
         # Map to valid Sora durations: 4, 8, 12
         sora_duration_map = {4: 4, 5: 4, 8: 8, 10: 8, 12: 12}
         sora_duration = sora_duration_map.get(duration_sec, 4)
         # Resolution: sora-2 = 720p only, sora-2-pro = 720p or 1080p
-        sora_resolution = "1080p" if model == "sora-2-pro" and resolution == "1080p" else "720p"
+        sora_resolution = (
+            "1080p" if model == "sora-2-pro" and resolution == "1080p" else "720p"
+        )
         return {
             "prompt": prompt,
             "image_url": image_url,
@@ -214,9 +239,22 @@ async def submit_job(
         raise ValueError(f"Unknown model: {model}")
 
     config = MODELS[model]
-    payload = _build_payload(model, image_url, motion_prompt, resolution, duration_sec, negative_prompt, enable_audio)
+    payload = _build_payload(
+        model,
+        image_url,
+        motion_prompt,
+        resolution,
+        duration_sec,
+        negative_prompt,
+        enable_audio,
+    )
 
-    logger.info("Submitting job to Fal", model=model, enable_audio=enable_audio, payload_audio=payload.get("enable_audio"))
+    logger.info(
+        "Submitting job to Fal",
+        model=model,
+        enable_audio=enable_audio,
+        payload_audio=payload.get("enable_audio"),
+    )
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
@@ -295,7 +333,12 @@ async def get_job_result(model: ModelType, request_id: str) -> dict:
             logger.debug("Result response", status_code=result_response.status_code)
             if result_response.status_code == 200:
                 result_data = result_response.json()
-                logger.debug("Fal result data", model=model, keys=list(result_data.keys()), data=str(result_data)[:500])
+                logger.debug(
+                    "Fal result data",
+                    model=model,
+                    keys=list(result_data.keys()),
+                    data=str(result_data)[:500],
+                )
 
                 # Try multiple possible locations for video URL
                 video_url = None
@@ -314,16 +357,27 @@ async def get_job_result(model: ModelType, request_id: str) -> dict:
                     if isinstance(output, dict):
                         video_url = output.get("video_url") or output.get("url")
                         if not video_url and "video" in output:
-                            video_url = output["video"].get("url") if isinstance(output["video"], dict) else output["video"]
+                            video_url = (
+                                output["video"].get("url")
+                                if isinstance(output["video"], dict)
+                                else output["video"]
+                            )
 
                 # Format 3: {"video_url": "..."} (direct)
                 if not video_url:
                     video_url = result_data.get("video_url")
 
                 result["video_url"] = video_url
-                logger.debug("Extracted video URL", video_url=video_url[:50] if video_url else None)
+                logger.debug(
+                    "Extracted video URL",
+                    video_url=video_url[:50] if video_url else None,
+                )
             else:
-                logger.error("Failed to fetch result", status_code=result_response.status_code, text=result_response.text[:200])
+                logger.error(
+                    "Failed to fetch result",
+                    status_code=result_response.status_code,
+                    text=result_response.text[:200],
+                )
 
     elif status == "failed":
         result["error_message"] = data.get("error", "Unknown error from Fal")
@@ -333,7 +387,9 @@ async def get_job_result(model: ModelType, request_id: str) -> dict:
 
 
 # Backwards compatibility aliases
-async def submit_wan_job(image_url: str, motion_prompt: str, resolution: str, duration_sec: int) -> str:
+async def submit_wan_job(
+    image_url: str, motion_prompt: str, resolution: str, duration_sec: int
+) -> str:
     return await submit_job("wan", image_url, motion_prompt, resolution, duration_sec)
 
 

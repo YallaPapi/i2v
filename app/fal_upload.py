@@ -1,4 +1,5 @@
 """Upload local images to Fal CDN with caching."""
+
 import hashlib
 import os
 from pathlib import Path
@@ -51,7 +52,8 @@ def get_cached_url(db: Session, local_path: str, file_hash: str) -> str | None:
     cached = (
         db.query(UploadCache)
         .filter(
-            (UploadCache.local_path == local_path) | (UploadCache.file_hash == file_hash)
+            (UploadCache.local_path == local_path)
+            | (UploadCache.file_hash == file_hash)
         )
         .first()
     )
@@ -79,7 +81,11 @@ async def upload_to_fal(file_path: Path) -> str:
     # The library handles authentication via FAL_KEY env var
     try:
         fal_url = fal_client.upload_file(file_path)
-        logger.info("Uploaded to Fal", file=file_path.name, url=fal_url[:60] if len(fal_url) > 60 else fal_url)
+        logger.info(
+            "Uploaded to Fal",
+            file=file_path.name,
+            url=fal_url[:60] if len(fal_url) > 60 else fal_url,
+        )
         return fal_url
     except Exception as e:
         logger.error("Fal upload failed", file=file_path.name, error=str(e))
@@ -100,7 +106,9 @@ async def upload_image(local_path: str | Path) -> str:
         raise FileNotFoundError(f"Image not found: {path}")
 
     if path.suffix.lower() not in SUPPORTED_FORMATS:
-        raise ValueError(f"Unsupported format: {path.suffix}. Supported: {SUPPORTED_FORMATS}")
+        raise ValueError(
+            f"Unsupported format: {path.suffix}. Supported: {SUPPORTED_FORMATS}"
+        )
 
     # Validate file size
     validate_file_size(path)
