@@ -499,6 +499,13 @@ async def _execute_pipeline_task(pipeline_id: int):
             num_images: int = 1,
             aspect_ratio: str = "9:16",
             quality: str = "high",
+            negative_prompt: str = None,
+            # FLUX-specific parameters
+            flux_strength: float = None,
+            flux_guidance_scale: float = None,
+            flux_num_inference_steps: int = None,
+            flux_seed: int = None,
+            flux_scheduler: str = None,
         ):
             urls = await generate_image(
                 image_url=source_image_url,
@@ -507,6 +514,12 @@ async def _execute_pipeline_task(pipeline_id: int):
                 aspect_ratio=aspect_ratio,
                 quality=quality,
                 num_images=num_images,
+                negative_prompt=negative_prompt,
+                flux_strength=flux_strength,
+                flux_guidance_scale=flux_guidance_scale,
+                flux_num_inference_steps=flux_num_inference_steps,
+                flux_seed=flux_seed,
+                flux_scheduler=flux_scheduler,
             )
             return urls
 
@@ -939,6 +952,17 @@ async def create_bulk_pipeline(
     db: Session = Depends(get_db),
 ):
     """Create and start a bulk pipeline."""
+    # Log incoming FLUX params for debugging
+    if request.i2i_config:
+        logger.info("Bulk pipeline FLUX params received",
+                    model=request.i2i_config.model,
+                    flux_strength=request.i2i_config.flux_strength,
+                    flux_guidance_scale=request.i2i_config.flux_guidance_scale,
+                    flux_num_inference_steps=request.i2i_config.flux_num_inference_steps,
+                    flux_seed=request.i2i_config.flux_seed,
+                    flux_scheduler=request.i2i_config.flux_scheduler,
+                    prompts_count=len(request.i2i_config.prompts) if request.i2i_config.prompts else 0)
+
     # Validate inputs
     if not request.source_images:
         raise HTTPException(
@@ -992,6 +1016,12 @@ async def create_bulk_pipeline(
                         "aspect_ratio": request.i2i_config.aspect_ratio,
                         "quality": request.i2i_config.quality,
                         "negative_prompt": request.i2i_config.negative_prompt,
+                        # FLUX-specific parameters
+                        "flux_strength": request.i2i_config.flux_strength,
+                        "flux_guidance_scale": request.i2i_config.flux_guidance_scale,
+                        "flux_num_inference_steps": request.i2i_config.flux_num_inference_steps,
+                        "flux_seed": request.i2i_config.flux_seed,
+                        "flux_scheduler": request.i2i_config.flux_scheduler,
                     }
                 )
                 step.set_inputs(
@@ -1132,6 +1162,12 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             quality=config.get("quality", "high"),
                             num_images=config.get("images_per_prompt", 1),
                             negative_prompt=config.get("negative_prompt"),
+                            # FLUX-specific parameters
+                            flux_strength=config.get("flux_strength"),
+                            flux_guidance_scale=config.get("flux_guidance_scale"),
+                            flux_num_inference_steps=config.get("flux_num_inference_steps"),
+                            flux_seed=config.get("flux_seed"),
+                            flux_scheduler=config.get("flux_scheduler"),
                         )
                         image_urls = result if isinstance(result, list) else [result]
                         # Generate thumbnails for fast library loading
