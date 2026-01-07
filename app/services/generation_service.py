@@ -104,13 +104,26 @@ async def generate_image(
     quality: str = "high",
     num_images: int = 1,
     negative_prompt: Optional[str] = None,
+    # FLUX-specific parameters
+    flux_strength: Optional[float] = None,
+    flux_guidance_scale: Optional[float] = None,
+    flux_num_inference_steps: Optional[int] = None,
+    flux_seed: Optional[int] = None,
+    flux_scheduler: Optional[str] = None,
 ) -> List[str]:
     """
     Generate image(s) from a source image.
 
     Returns list of image URLs.
     """
-    logger.info("Generating image", model=model, image_url=image_url[:50])
+    logger.info("Generating image",
+                model=model,
+                image_url=image_url[:50],
+                prompt=prompt[:80] if prompt else "NO PROMPT",
+                flux_strength=flux_strength,
+                flux_guidance=flux_guidance_scale,
+                flux_steps=flux_num_inference_steps,
+                flux_scheduler=flux_scheduler)
 
     # Validate model
     if model not in IMAGE_MODELS:
@@ -127,6 +140,12 @@ async def generate_image(
         num_images=num_images,
         aspect_ratio=aspect_ratio,
         quality=quality,
+        # Pass FLUX params
+        flux_strength=flux_strength,
+        flux_guidance_scale=flux_guidance_scale,
+        flux_num_inference_steps=flux_num_inference_steps,
+        flux_seed=flux_seed,
+        flux_scheduler=flux_scheduler,
     )
 
     # Wait for completion

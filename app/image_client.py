@@ -45,10 +45,17 @@ IMAGE_MODELS = {
         "identity_preservation": False,
         "description": "Budget Google model for general editing",
     },
+    "flux-general": {
+        "submit_url": "https://queue.fal.run/fal-ai/flux-general/image-to-image",
+        "status_url": "https://queue.fal.run/fal-ai/flux-general",
+        "pricing": "$0.025/image",
+        "identity_preservation": True,
+        "description": "FLUX i2i - strength controls transformation amount",
+    },
 }
 
 ImageModelType = Literal[
-    "gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"
+    "gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana", "flux-general"
 ]
 
 
@@ -144,6 +151,58 @@ def _build_image_payload(
         raise ValueError(f"Unknown image model: {model}")
 
 
+def _build_flux_payload(
+    image_url: str,
+    prompt: str,
+    aspect_ratio: str = "9:16",
+    num_images: int = 1,
+    strength: float = 0.75,
+    guidance_scale: float = 3.5,  # fal.ai real_cfg_scale max is 5
+    num_inference_steps: int = 28,
+    seed: int | None = None,
+    negative_prompt: str | None = None,
+    scheduler: str = "euler",
+) -> dict:
+    """Build FLUX-specific payload with all configurable parameters.
+
+    API docs: https://fal.ai/models/fal-ai/flux-general/image-to-image/api
+    """
+    # Map aspect ratio to preset image size strings (more reliable than custom dimensions)
+    size_map = {
+        "1:1": "square_hd",
+        "9:16": "portrait_16_9",
+        "16:9": "landscape_16_9",
+        "4:3": "landscape_4_3",
+        "3:4": "portrait_4_3",
+    }
+    image_size = size_map.get(aspect_ratio, "portrait_16_9")
+
+    # Clamp guidance_scale to fal.ai's real_cfg_scale limit (0-5)
+    clamped_guidance = min(max(guidance_scale, 0.0), 5.0)
+
+    payload = {
+        "prompt": prompt,
+        "image_url": image_url,
+        "image_size": image_size,
+        "strength": strength,
+        "num_inference_steps": num_inference_steps,
+        "num_images": num_images,
+        "output_format": "png",
+        "enable_safety_checker": False,
+        "guidance_scale": clamped_guidance,
+        # Scheduler: "euler" (default) or "dpmpp_2m"
+        "scheduler": scheduler,
+    }
+
+    if seed is not None:
+        payload["seed"] = seed
+
+    if negative_prompt and negative_prompt.strip():
+        payload["negative_prompt"] = negative_prompt
+
+    return payload
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
@@ -157,6 +216,12 @@ async def submit_image_job(
     num_images: int = 1,
     aspect_ratio: str = "9:16",
     quality: str = "high",
+    # FLUX-specific parameters
+    flux_strength: float | None = None,
+    flux_guidance_scale: float | None = None,
+    flux_num_inference_steps: int | None = None,
+    flux_seed: int | None = None,
+    flux_scheduler: str | None = None,
 ) -> str:
     """
     Submit an image generation job to Fal's queue.
@@ -167,11 +232,41 @@ async def submit_image_job(
         raise ValueError(f"Unknown image model: {model}")
 
     config = IMAGE_MODELS[model]
-    payload = _build_image_payload(
-        model, image_url, prompt, negative_prompt, num_images, aspect_ratio, quality
-    )
 
-    logger.debug("Submitting image job to Fal", model=model, image_url=image_url)
+    # Use FLUX-specific payload builder for flux-general
+    if model == "flux-general":
+        payload = _build_flux_payload(
+            image_url=image_url,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            num_images=num_images,
+            strength=flux_strength if flux_strength is not None else 0.75,
+            guidance_scale=flux_guidance_scale if flux_guidance_scale is not None else 3.5,
+            num_inference_steps=flux_num_inference_steps if flux_num_inference_steps is not None else 28,
+            seed=flux_seed,
+            negative_prompt=negative_prompt,
+            scheduler=flux_scheduler if flux_scheduler else "euler",
+        )
+        logger.info("FLUX payload built",
+                    prompt=prompt[:100] if prompt else "NO PROMPT",
+                    strength=payload["strength"],
+                    guidance=payload["guidance_scale"],
+                    steps=payload["num_inference_steps"],
+                    scheduler=payload["scheduler"],
+                    image_size=payload["image_size"])
+    else:
+        payload = _build_image_payload(
+            model, image_url, prompt, negative_prompt, num_images, aspect_ratio, quality
+        )
+
+    # Log the FULL payload for debugging
+    logger.info("Submitting image job to Fal",
+                model=model,
+                image_url=image_url[:80],
+                prompt_in_payload=payload.get("prompt", "MISSING")[:100],
+                strength=payload.get("strength"),
+                guidance=payload.get("guidance_scale"),
+                all_keys=list(payload.keys()))
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(

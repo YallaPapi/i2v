@@ -1153,6 +1153,17 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                     config = step.get_config()
                     inputs = step.get_inputs()
 
+                    # Log extracted config for debugging
+                    if step.step_type == "i2i":
+                        logger.info("I2I step config extracted",
+                                    step_id=step.id,
+                                    model=config.get("model"),
+                                    flux_strength=config.get("flux_strength"),
+                                    flux_guidance=config.get("flux_guidance_scale"),
+                                    flux_steps=config.get("flux_num_inference_steps"),
+                                    flux_scheduler=config.get("flux_scheduler"),
+                                    prompt=inputs.get("prompts", [""])[0][:50] if inputs.get("prompts") else "NO PROMPT")
+
                     if step.step_type == "i2i":
                         result = await generate_image(
                             image_url=inputs["image_urls"][0],
