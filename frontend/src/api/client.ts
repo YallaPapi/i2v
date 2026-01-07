@@ -113,6 +113,8 @@ export async function listPipelines(params?: {
   favorites?: boolean
   hidden?: boolean
   tag?: string
+  status?: string
+  search?: string
   limit?: number
   offset?: number
 }): Promise<PipelineSummaryListResponse> {
@@ -135,6 +137,10 @@ export async function togglePipelineHidden(id: number): Promise<void> {
 
 export async function updatePipelineTags(id: number, tags: string[]): Promise<void> {
   await api.put(`/pipelines/${id}/tags`, tags)
+}
+
+export async function cancelPipeline(id: number): Promise<void> {
+  await api.post(`/pipelines/${id}/cancel`)
 }
 
 export { api }

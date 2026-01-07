@@ -59,7 +59,133 @@ export interface CreateImageJobRequest {
   num_images: 1 | 2 | 3 | 4
 }
 
-export type ImageModel = 'gpt-image-1.5' | 'kling-image' | 'nano-banana-pro' | 'nano-banana'
+export type ImageModel =
+  | 'gpt-image-1.5'
+  | 'kling-image'
+  | 'nano-banana-pro'
+  | 'nano-banana'
+  | 'flux-general'
+  // FLUX.2 variants
+  | 'flux-2-dev'
+  | 'flux-2-pro'
+  | 'flux-2-flex'
+  | 'flux-2-max'
+  // FLUX.1 Kontext (in-context editing)
+  | 'flux-kontext-dev'
+  | 'flux-kontext-pro'
+
+// Helper to check if model is FLUX.2 or Kontext
+export const isFlux2Model = (model: string): boolean => {
+  return model.startsWith('flux-2') || model.startsWith('flux-kontext')
+}
+
+// Per-model feature support (based on fal.ai API docs Jan 2026)
+export const FLUX_MODEL_FEATURES = {
+  'flux-2-dev': {
+    supportsGuidanceScale: true,
+    defaultGuidanceScale: 2.5,
+    maxGuidanceScale: 20,
+    supportsNumSteps: true,
+    supportsPromptExpansion: true,
+    defaultPromptExpansion: false,
+    supportsSafetyTolerance: false,
+    supportsAcceleration: true,
+    supportsMultiRef: true,
+    maxReferences: 4,
+  },
+  'flux-2-pro': {
+    supportsGuidanceScale: false,  // Zero-config
+    supportsNumSteps: false,
+    supportsPromptExpansion: false,
+    supportsSafetyTolerance: true,
+    supportsAcceleration: false,
+    supportsMultiRef: true,
+    maxReferences: 9,
+  },
+  'flux-2-flex': {
+    supportsGuidanceScale: true,
+    defaultGuidanceScale: 3.5,
+    maxGuidanceScale: 10,
+    supportsNumSteps: true,
+    supportsPromptExpansion: true,
+    defaultPromptExpansion: true,
+    supportsSafetyTolerance: true,
+    supportsAcceleration: false,
+    supportsMultiRef: true,
+    maxReferences: 10,
+  },
+  'flux-2-max': {
+    supportsGuidanceScale: false,  // Zero-config
+    supportsNumSteps: false,
+    supportsPromptExpansion: false,
+    supportsSafetyTolerance: true,
+    supportsAcceleration: false,
+    supportsMultiRef: true,
+    maxReferences: 10,
+  },
+  'flux-kontext-dev': {
+    supportsGuidanceScale: true,
+    defaultGuidanceScale: 3.5,
+    maxGuidanceScale: 20,
+    supportsNumSteps: true,
+    supportsPromptExpansion: false,
+    supportsSafetyTolerance: false,
+    supportsAcceleration: false,
+    supportsMultiRef: false,  // Single image_url
+    maxReferences: 1,
+  },
+  'flux-kontext-pro': {
+    supportsGuidanceScale: true,
+    defaultGuidanceScale: 3.5,
+    maxGuidanceScale: 20,
+    supportsNumSteps: true,
+    supportsPromptExpansion: false,
+    supportsSafetyTolerance: false,
+    supportsAcceleration: false,
+    supportsMultiRef: false,
+    maxReferences: 1,
+  },
+} as const
+
+// Helper to get features for a model
+export const getFluxFeatures = (model: string) => {
+  return FLUX_MODEL_FEATURES[model as keyof typeof FLUX_MODEL_FEATURES] || null
+}
+
+// Helper to check if model supports multi-reference
+export const supportsMultiRef = (model: string): boolean => {
+  const features = getFluxFeatures(model)
+  return features?.supportsMultiRef ?? false
+}
+
+// Helper to check if model supports guidance scale
+export const supportsGuidanceScale = (model: string): boolean => {
+  const features = getFluxFeatures(model)
+  return features?.supportsGuidanceScale ?? false
+}
+
+// Helper to check if model supports safety tolerance
+export const supportsSafetyTolerance = (model: string): boolean => {
+  const features = getFluxFeatures(model)
+  return features?.supportsSafetyTolerance ?? false
+}
+
+// FLUX.2 specific parameter types
+export interface Flux2Config {
+  // FLUX.1 only
+  flux_strength?: number  // 0.0-1.0, default 0.75
+  flux_scheduler?: 'euler' | 'dpmpp_2m'  // FLUX.1 only
+  // FLUX.2 & Kontext (per-model support)
+  flux_guidance_scale?: number  // dev/flex/kontext only
+  flux_num_inference_steps?: number  // dev/flex/kontext only
+  flux_seed?: number
+  flux_image_urls?: string[]  // Multi-ref: dev(4), pro(9), flex/max(10)
+  flux_output_format?: 'png' | 'jpeg' | 'webp'
+  flux_enable_safety_checker?: boolean  // false for NSFW
+  flux_enable_prompt_expansion?: boolean  // dev/flex only
+  flux_safety_tolerance?: '1' | '2' | '3' | '4' | '5'  // pro/flex/max only ("5" = permissive)
+  flux_acceleration?: 'none' | 'regular' | 'high'  // dev only
+}
 
 // Model info
 export interface ImageModelInfo {
@@ -96,6 +222,16 @@ export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }
   { value: 'kling-image', label: 'Kling Image', pricing: '$0.028/image' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', pricing: '$0.15/image' },
   { value: 'nano-banana', label: 'Nano Banana', pricing: '$0.039/image' },
+  // FLUX.1 (Legacy)
+  { value: 'flux-general', label: 'FLUX 1.0 General', pricing: '$0.025/image' },
+  // FLUX.2 Models (Nov 2025)
+  { value: 'flux-2-dev', label: 'FLUX.2 Dev', pricing: '$0.025/image' },
+  { value: 'flux-2-pro', label: 'FLUX.2 Pro', pricing: '$0.05/image' },
+  { value: 'flux-2-flex', label: 'FLUX.2 Flex', pricing: '$0.04/image' },
+  { value: 'flux-2-max', label: 'FLUX.2 Max', pricing: '$0.08/image' },
+  // FLUX.1 Kontext
+  { value: 'flux-kontext-dev', label: 'FLUX Kontext Dev', pricing: '$0.025/image' },
+  { value: 'flux-kontext-pro', label: 'FLUX Kontext Pro', pricing: '$0.04/image' },
 ]
 
 export const RESOLUTIONS = [

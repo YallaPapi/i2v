@@ -10,8 +10,8 @@ from app.config import settings
 
 logger = structlog.get_logger()
 
-# Simple in-memory cache for prompt enhancement results
-_prompt_cache: dict[str, List[str]] = {}
+# DISABLED: In-memory cache was causing stale prompt issues
+# _prompt_cache: dict[str, List[str]] = {}
 
 # Category definitions for enhancement
 I2V_CATEGORIES = {
@@ -191,13 +191,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         Returns:
             List of enhanced prompt variations
         """
-        # Check cache
-        cache_key = self._get_cache_key(
-            simple_prompt, target, count, style, theme_focus, mode, categories
-        )
-        if cache_key in _prompt_cache:
-            logger.info("Prompt cache hit", cache_key=cache_key[:8])
-            return _prompt_cache[cache_key]
+        # Cache disabled - was causing stale prompt issues
 
         # If no API key, return fallback variations
         if not self.api_key:
@@ -256,8 +250,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
                 if not isinstance(enhanced, list):
                     raise ValueError("Response is not a list")
 
-                # Cache result
-                _prompt_cache[cache_key] = enhanced
+                # Cache disabled
                 logger.info("Prompt enhanced successfully", count=len(enhanced))
                 return enhanced
 

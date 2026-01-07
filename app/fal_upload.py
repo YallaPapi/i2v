@@ -75,12 +75,18 @@ def insert_cache(db: Session, local_path: str, file_hash: str, fal_url: str) -> 
     logger.debug("Cached upload", local_path=local_path, fal_url=fal_url)
 
 
+def _sync_upload_to_fal(file_path: Path) -> str:
+    """Synchronous upload to Fal CDN - runs in thread pool."""
+    return fal_client.upload_file(file_path)
+
+
 async def upload_to_fal(file_path: Path) -> str:
     """Upload file to Fal CDN using fal_client library."""
-    # fal_client.upload_file is synchronous, use it directly
-    # The library handles authentication via FAL_KEY env var
+    import asyncio
+
+    # Run synchronous fal_client.upload_file in thread pool for true concurrency
     try:
-        fal_url = fal_client.upload_file(file_path)
+        fal_url = await asyncio.to_thread(_sync_upload_to_fal, file_path)
         logger.info(
             "Uploaded to Fal",
             file=file_path.name,

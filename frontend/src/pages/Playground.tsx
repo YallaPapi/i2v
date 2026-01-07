@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -11,10 +11,13 @@ import {
   BulkProgress,
   BulkResults,
   ImageSourceSelector,
+  ConfirmGenerationModal,
+  shouldShowConfirmation,
 } from '@/components/pipeline'
 import type { BulkCostEstimate, BulkStep, SourceGroup } from '@/components/pipeline'
 import { Textarea } from '@/components/ui/textarea'
 import { Layers, Image, Video, Wand2, Play, Loader2, GalleryHorizontal, History, ChevronDown, ChevronUp, Plus, Copy, Check, Sparkles } from 'lucide-react'
+import { cancelPipeline } from '@/api/client'
 
 type GenerationMode = 'bulk' | 'carousel'
 
@@ -42,6 +45,32 @@ export function Playground() {
   const [i2iModel, setI2iModel] = useState('gpt-image-1.5')
   const [i2iAspectRatio, setI2iAspectRatio] = useState('9:16')
   const [i2iQuality, setI2iQuality] = useState<'low' | 'medium' | 'high'>('low')
+
+  // FLUX-specific settings (persisted to localStorage)
+  const [fluxStrength, setFluxStrength] = useState(() =>
+    parseFloat(localStorage.getItem('i2v_fluxStrength') || '0.75')
+  )
+  const [fluxGuidanceScale, setFluxGuidanceScale] = useState(() =>
+    parseFloat(localStorage.getItem('i2v_fluxGuidanceScale') || '1.0')
+  )
+  const [fluxNumInferenceSteps, setFluxNumInferenceSteps] = useState(() =>
+    parseInt(localStorage.getItem('i2v_fluxNumInferenceSteps') || '28')
+  )
+  const [fluxSeed, setFluxSeed] = useState<number | null>(() => {
+    const saved = localStorage.getItem('i2v_fluxSeed')
+    return saved ? parseInt(saved) : null
+  })
+  const [fluxScheduler, setFluxScheduler] = useState<'euler' | 'dpmpp_2m'>(() =>
+    (localStorage.getItem('i2v_fluxScheduler') as 'euler' | 'dpmpp_2m') || 'euler'
+  )
+
+  // FLUX.2 specific settings
+  const [fluxEnablePromptExpansion, setFluxEnablePromptExpansion] = useState(() =>
+    localStorage.getItem('i2v_fluxEnablePromptExpansion') === 'true'
+  )
+  const [fluxAcceleration, setFluxAcceleration] = useState<'none' | 'regular' | 'high'>(() =>
+    (localStorage.getItem('i2v_fluxAcceleration') as 'none' | 'regular' | 'high') || 'regular'
+  )
 
   // I2V Settings
   const [i2vModel, setI2vModel] = useState('kling')
@@ -102,8 +131,18 @@ export function Playground() {
   })
   const [bulkI2iPrompts, setBulkI2iPrompts] = useState<string[]>([])
   const [bulkI2vPrompts, setBulkI2vPrompts] = useState<string[]>([])
-  const [bulkI2iNegativePrompt, setBulkI2iNegativePrompt] = useState('')
-  const [bulkI2vNegativePrompt, setBulkI2vNegativePrompt] = useState('')
+  const [bulkI2iNegativePrompt, setBulkI2iNegativePrompt] = useState(() => {
+    const saved = localStorage.getItem('i2v_bulkI2iNegativePrompt')
+    // Clear old default negative prompt that was causing issues
+    if (saved?.includes('skinny, slim, thin, petite')) {
+      localStorage.removeItem('i2v_bulkI2iNegativePrompt')
+      return ''
+    }
+    return saved || ''
+  })
+  const [bulkI2vNegativePrompt, setBulkI2vNegativePrompt] = useState(() =>
+    localStorage.getItem('i2v_bulkI2vNegativePrompt') || ''
+  )
   const [isExpandingI2i, setIsExpandingI2i] = useState(false)
   const [isExpandingI2v, setIsExpandingI2v] = useState(false)
   // Prompt enhancement settings
@@ -118,7 +157,9 @@ export function Playground() {
 
   // Carousel Mode State - each prompt = one slide in the story
   const [carouselPrompts, setCarouselPrompts] = useState<string[]>([])
-  const [carouselNegativePrompt, setCarouselNegativePrompt] = useState('')
+  const [carouselNegativePrompt, setCarouselNegativePrompt] = useState(() =>
+    localStorage.getItem('i2v_carouselNegativePrompt') || ''
+  )
 
   // Recent prompts state
   interface RecentPrompt {
@@ -141,6 +182,66 @@ export function Playground() {
   const [promptBuilderLoading, setPromptBuilderLoading] = useState(false)
   const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([])
   const [promptBuilderCopied, setPromptBuilderCopied] = useState(false)
+
+  // Confirmation modal state
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+
+  // Ref for results section (auto-scroll)
+  const resultsRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to results when generation completes
+  useEffect(() => {
+    if (pipelineStatus === 'completed' && bulkGroups.length > 0) {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [pipelineStatus, bulkGroups.length])
+
+  // Persist negative prompts to localStorage
+  useEffect(() => {
+    localStorage.setItem('i2v_bulkI2iNegativePrompt', bulkI2iNegativePrompt)
+  }, [bulkI2iNegativePrompt])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_bulkI2vNegativePrompt', bulkI2vNegativePrompt)
+  }, [bulkI2vNegativePrompt])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_carouselNegativePrompt', carouselNegativePrompt)
+  }, [carouselNegativePrompt])
+
+  // Persist FLUX settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxStrength', fluxStrength.toString())
+  }, [fluxStrength])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxGuidanceScale', fluxGuidanceScale.toString())
+  }, [fluxGuidanceScale])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxNumInferenceSteps', fluxNumInferenceSteps.toString())
+  }, [fluxNumInferenceSteps])
+
+  useEffect(() => {
+    if (fluxSeed !== null) {
+      localStorage.setItem('i2v_fluxSeed', fluxSeed.toString())
+    } else {
+      localStorage.removeItem('i2v_fluxSeed')
+    }
+  }, [fluxSeed])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxScheduler', fluxScheduler)
+  }, [fluxScheduler])
+
+  // FLUX.2 specific settings persistence
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxEnablePromptExpansion', String(fluxEnablePromptExpansion))
+  }, [fluxEnablePromptExpansion])
+
+  useEffect(() => {
+    localStorage.setItem('i2v_fluxAcceleration', fluxAcceleration)
+  }, [fluxAcceleration])
 
   // Fetch recent prompts on mount
   useEffect(() => {
@@ -197,27 +298,54 @@ export function Playground() {
 
   // Prompt Builder handlers
   const handleGeneratePrompts = async () => {
+    console.log('[PromptBuilder] Starting generation...', {
+      count: promptBuilderCount,
+      style: promptBuilderStyle,
+      location: promptBuilderLocation,
+    })
     setPromptBuilderLoading(true)
     try {
+      const requestBody = {
+        count: promptBuilderCount,
+        style: promptBuilderStyle,
+        location: promptBuilderLocation,
+      }
+      console.log('[PromptBuilder] Request body:', requestBody)
+
       const response = await fetch('/api/generate-prompts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          count: promptBuilderCount,
-          style: promptBuilderStyle,
-          location: promptBuilderLocation,
-        }),
+        body: JSON.stringify(requestBody),
       })
+
+      console.log('[PromptBuilder] Response status:', response.status)
 
       if (response.ok) {
         const data = await response.json()
+        console.log('[PromptBuilder] Success! Received prompts:', data.prompts?.length)
         setGeneratedPrompts(data.prompts)
       } else {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        alert(`Failed to generate prompts: ${error.detail}`)
+        const errorText = await response.text()
+        console.error('[PromptBuilder] Error response:', response.status, errorText)
+        let errorMessage = 'Unknown error'
+        try {
+          const errorData = JSON.parse(errorText)
+          if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail
+          } else if (Array.isArray(errorData.detail)) {
+            errorMessage = errorData.detail.map((e: {msg?: string}) => e.msg || JSON.stringify(e)).join('; ')
+          } else if (errorData.detail) {
+            errorMessage = JSON.stringify(errorData.detail)
+          } else if (errorData.message) {
+            errorMessage = errorData.message
+          }
+        } catch {
+          errorMessage = errorText || 'Unknown error'
+        }
+        alert(`Failed to generate prompts (${response.status}): ${errorMessage}`)
       }
     } catch (error) {
-      console.error('Failed to generate prompts:', error)
+      console.error('[PromptBuilder] Fetch error:', error)
       alert('Failed to generate prompts. Check console for details.')
     } finally {
       setPromptBuilderLoading(false)
@@ -236,7 +364,10 @@ export function Playground() {
 
   const handleAddGeneratedToI2i = () => {
     // Add generated prompts to I2I prompts (deduplicated)
+    console.log('[AddToI2I] Current bulkI2iPrompts:', bulkI2iPrompts.length, bulkI2iPrompts.slice(0, 2))
+    console.log('[AddToI2I] Generated prompts:', generatedPrompts.length, generatedPrompts.slice(0, 2))
     const combined = [...new Set([...bulkI2iPrompts, ...generatedPrompts])]
+    console.log('[AddToI2I] Combined prompts:', combined.length, combined.slice(0, 2))
     setBulkI2iPrompts(combined)
   }
 
@@ -330,6 +461,17 @@ export function Playground() {
             aspect_ratio: i2iAspectRatio,
             quality: i2iQuality,
             negative_prompt: bulkI2iNegativePrompt || undefined,
+            // FLUX params (all FLUX models: flux-general, flux-2-*, flux-kontext-*)
+            ...((i2iModel === 'flux-general' || i2iModel.startsWith('flux-2') || i2iModel.startsWith('flux-kontext')) ? {
+              flux_strength: i2iModel === 'flux-general' ? fluxStrength : undefined,
+              flux_guidance_scale: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxGuidanceScale : undefined,
+              flux_num_inference_steps: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxNumInferenceSteps : undefined,
+              flux_seed: fluxSeed,
+              flux_scheduler: i2iModel === 'flux-general' ? fluxScheduler : undefined,
+              // FLUX.2 specific params (per-model support)
+              flux_enable_prompt_expansion: ['flux-2-dev', 'flux-2-flex'].includes(i2iModel) ? fluxEnablePromptExpansion : undefined,
+              flux_acceleration: i2iModel === 'flux-2-dev' ? fluxAcceleration : undefined,
+            } : {}),
           } : null,
           i2v_config: {
             prompts: bulkMode === 'photos' ? ['placeholder'] : bulkI2vPrompts,
@@ -389,38 +531,74 @@ export function Playground() {
     const includeVideos = bulkMode === 'videos' || bulkMode === 'both'
 
     try {
+      // Debug log to see what's being sent
+      const requestBody = {
+        name: runName.trim() || `Bulk ${bulkMode === 'photos' ? 'Photos' : bulkMode === 'videos' ? 'Videos' : 'Photos + Videos'} - ${new Date().toLocaleString()}`,
+        source_images: effectiveSourceImages,
+        i2i_config: includePhotos && bulkI2iPrompts.length > 0 ? {
+          enabled: true,
+          prompts: bulkI2iPrompts,
+          model: i2iModel,
+          images_per_prompt: 1,
+          aspect_ratio: i2iAspectRatio,
+          quality: i2iQuality,
+          negative_prompt: bulkI2iNegativePrompt || undefined,
+          // FLUX params (all FLUX models)
+          ...((i2iModel === 'flux-general' || i2iModel.startsWith('flux-2') || i2iModel.startsWith('flux-kontext')) ? {
+            flux_strength: i2iModel === 'flux-general' ? fluxStrength : undefined,
+            flux_guidance_scale: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxGuidanceScale : undefined,
+            flux_num_inference_steps: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxNumInferenceSteps : undefined,
+            flux_seed: fluxSeed,
+            flux_scheduler: i2iModel === 'flux-general' ? fluxScheduler : undefined,
+            // FLUX.2 specific params (per-model support)
+            flux_enable_prompt_expansion: ['flux-2-dev', 'flux-2-flex'].includes(i2iModel) ? fluxEnablePromptExpansion : undefined,
+            flux_acceleration: i2iModel === 'flux-2-dev' ? fluxAcceleration : undefined,
+          } : {}),
+        } : null,
+        i2v_config: includeVideos ? {
+          prompts: bulkI2vPrompts,
+          model: i2vModel,
+          resolution,
+          duration_sec: parseInt(duration),
+          negative_prompt: bulkI2vNegativePrompt || undefined,
+          enable_audio: supportsAudio(i2vModel) ? enableAudio : false,
+        } : { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration), enable_audio: false },
+      }
+
+      console.log('[Bulk Generate] Sending request:', JSON.stringify(requestBody, null, 2))
+      console.log('[Bulk Generate] FLUX params:', { fluxStrength, fluxGuidanceScale, fluxNumInferenceSteps, fluxSeed, fluxScheduler })
+      console.log('[Bulk Generate] I2I Prompts:', bulkI2iPrompts)
+
       const response = await fetch('/api/pipelines/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: runName.trim() || `Bulk ${bulkMode === 'photos' ? 'Photos' : bulkMode === 'videos' ? 'Videos' : 'Photos + Videos'} - ${new Date().toLocaleString()}`,
-          source_images: effectiveSourceImages,
-          i2i_config: includePhotos && bulkI2iPrompts.length > 0 ? {
-            enabled: true,
-            prompts: bulkI2iPrompts,
-            model: i2iModel,
-            images_per_prompt: 1,
-            aspect_ratio: i2iAspectRatio,
-            quality: i2iQuality,
-            negative_prompt: bulkI2iNegativePrompt || undefined,
-          } : null,
-          i2v_config: includeVideos ? {
-            prompts: bulkI2vPrompts,
-            model: i2vModel,
-            resolution,
-            duration_sec: parseInt(duration),
-            negative_prompt: bulkI2vNegativePrompt || undefined,
-            enable_audio: supportsAudio(i2vModel) ? enableAudio : false,
-          } : { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration), enable_audio: false },
-        }),
+        body: JSON.stringify(requestBody),
       })
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        console.error('Bulk pipeline creation failed:', errorData)
+        console.error('Bulk pipeline creation failed:', response.status, errorData)
         setPipelineStatus('failed')
         setIsGenerating(false)
-        alert(`Failed to create pipeline: ${errorData.detail || 'Unknown error'}`)
+
+        // Extract error message from various FastAPI error formats
+        let errorMessage = 'Unknown error'
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail
+        } else if (Array.isArray(errorData.detail)) {
+          // FastAPI validation errors return array of {loc, msg, type}
+          errorMessage = errorData.detail.map((e: {msg?: string; loc?: string[]}) =>
+            e.msg || JSON.stringify(e)
+          ).join('; ')
+        } else if (errorData.detail && typeof errorData.detail === 'object') {
+          errorMessage = JSON.stringify(errorData.detail)
+        } else if (errorData.message) {
+          errorMessage = errorData.message
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData
+        }
+
+        alert(`Failed to create pipeline (${response.status}): ${errorMessage}`)
         return
       }
 
@@ -494,6 +672,17 @@ export function Playground() {
             aspect_ratio: i2iAspectRatio,
             quality: i2iQuality,
             negative_prompt: carouselNegativePrompt || undefined,
+            // FLUX params (all FLUX models)
+            ...((i2iModel === 'flux-general' || i2iModel.startsWith('flux-2') || i2iModel.startsWith('flux-kontext')) ? {
+              flux_strength: i2iModel === 'flux-general' ? fluxStrength : undefined,
+              flux_guidance_scale: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxGuidanceScale : undefined,
+              flux_num_inference_steps: ['flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) ? fluxNumInferenceSteps : undefined,
+              flux_seed: fluxSeed,
+              flux_scheduler: i2iModel === 'flux-general' ? fluxScheduler : undefined,
+              // FLUX.2 specific params (per-model support)
+              flux_enable_prompt_expansion: ['flux-2-dev', 'flux-2-flex'].includes(i2iModel) ? fluxEnablePromptExpansion : undefined,
+              flux_acceleration: i2iModel === 'flux-2-dev' ? fluxAcceleration : undefined,
+            } : {}),
           },
           i2v_config: { prompts: [], model: i2vModel, resolution, duration_sec: parseInt(duration), enable_audio: false },
         }),
@@ -558,10 +747,27 @@ export function Playground() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        console.error('Animate pipeline creation failed:', errorData)
+        console.error('Animate pipeline creation failed:', response.status, errorData)
         setPipelineStatus('failed')
         setIsGenerating(false)
-        alert(`Failed to create pipeline: ${errorData.detail || 'Unknown error'}`)
+
+        // Extract error message from various FastAPI error formats
+        let errorMessage = 'Unknown error'
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail
+        } else if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((e: {msg?: string; loc?: string[]}) =>
+            e.msg || JSON.stringify(e)
+          ).join('; ')
+        } else if (errorData.detail && typeof errorData.detail === 'object') {
+          errorMessage = JSON.stringify(errorData.detail)
+        } else if (errorData.message) {
+          errorMessage = errorData.message
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData
+        }
+
+        alert(`Failed to create pipeline (${response.status}): ${errorMessage}`)
         return
       }
 
@@ -603,6 +809,33 @@ export function Playground() {
     : mode === 'carousel'
       ? effectiveSourceImages.length > 0 && carouselPrompts.length > 0 && !isGenerating
       : false
+
+  // Handler to check if confirmation modal should be shown
+  const handleGenerateClick = () => {
+    if (mode === 'bulk' && shouldShowConfirmation(bulkCostEstimate)) {
+      setShowConfirmModal(true)
+    } else {
+      mode === 'bulk' ? handleBulkGenerate() : handleCarouselGenerate()
+    }
+  }
+
+  // Confirm and start generation
+  const handleConfirmGenerate = () => {
+    setShowConfirmModal(false)
+    mode === 'bulk' ? handleBulkGenerate() : handleCarouselGenerate()
+  }
+
+  // Cancel running pipeline
+  const handleCancelPipeline = async () => {
+    if (!bulkPipelineId) return
+    try {
+      await cancelPipeline(bulkPipelineId)
+      setPipelineStatus('cancelled')
+      setIsGenerating(false)
+    } catch (error) {
+      console.error('Failed to cancel pipeline:', error)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -1212,6 +1445,7 @@ export function Playground() {
                   pipelineId={bulkPipelineId}
                   status={pipelineStatus}
                   steps={bulkSteps}
+                  onCancel={handleCancelPipeline}
                 />
               ) : (
                 <Card>
@@ -1227,11 +1461,13 @@ export function Playground() {
 
             {/* Results */}
             {bulkGroups.length > 0 && (
-              <BulkResults
-                groups={bulkGroups}
-                totals={bulkTotals}
-                onAnimateSelected={handleAnimateSelectedImages}
-              />
+              <div ref={resultsRef}>
+                <BulkResults
+                  groups={bulkGroups}
+                  totals={bulkTotals}
+                  onAnimateSelected={handleAnimateSelectedImages}
+                />
+              </div>
             )}
           </div>
 
@@ -1285,6 +1521,157 @@ export function Playground() {
                               <option value="medium">Medium - $0.07/image</option>
                               <option value="high">High - $0.19/image</option>
                             </select>
+                          </div>
+                        )}
+
+                        {/* FLUX settings - shown for all FLUX models (FLUX.1, FLUX.2, Kontext) */}
+                        {(i2iModel === 'flux-general' || i2iModel.startsWith('flux-2') || i2iModel.startsWith('flux-kontext')) && (
+                          <div className="space-y-4 p-3 bg-muted/50 rounded-lg border">
+                            <div className="text-sm font-medium flex items-center gap-2">
+                              <Sparkles className="h-4 w-4" />
+                              {i2iModel.startsWith('flux-2') ? 'FLUX.2 Settings' : i2iModel.startsWith('flux-kontext') ? 'FLUX Kontext Settings' : 'FLUX Settings'}
+                              {['flux-2-pro', 'flux-2-max'].includes(i2iModel) && (
+                                <span className="text-xs text-muted-foreground ml-2">(Zero-config model)</span>
+                              )}
+                            </div>
+
+                            {/* Strength slider - FLUX.1 only */}
+                            {i2iModel === 'flux-general' && (
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-sm">
+                                  <Label>Strength (transformation)</Label>
+                                  <span className="text-muted-foreground">{fluxStrength.toFixed(2)}</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="1"
+                                  step="0.05"
+                                  value={fluxStrength}
+                                  onChange={(e) => setFluxStrength(parseFloat(e.target.value))}
+                                  className="w-full accent-primary"
+                                />
+                                <p className="text-xs text-muted-foreground">Lower = more original preserved, Higher = more transformation</p>
+                              </div>
+                            )}
+
+                            {/* Guidance Scale slider - dev, flex, kontext only */}
+                            {['flux-general', 'flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) && (
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-sm">
+                                  <Label>Guidance Scale</Label>
+                                  <span className="text-muted-foreground">{fluxGuidanceScale.toFixed(1)}</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max={i2iModel === 'flux-general' ? 5 : i2iModel === 'flux-2-flex' ? 10 : 20}
+                                  step="0.1"
+                                  value={fluxGuidanceScale}
+                                  onChange={(e) => setFluxGuidanceScale(parseFloat(e.target.value))}
+                                  className="w-full accent-primary"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  {i2iModel === 'flux-general' && 'How strictly to follow prompt (3-4 recommended)'}
+                                  {i2iModel === 'flux-2-dev' && 'Default 2.5, range 0-20'}
+                                  {i2iModel === 'flux-2-flex' && 'Default 3.5, range 1.5-10'}
+                                  {i2iModel.startsWith('flux-kontext') && 'Default 3.5, range 0-20'}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Inference Steps slider - dev, flex, kontext only */}
+                            {['flux-general', 'flux-2-dev', 'flux-2-flex', 'flux-kontext-dev', 'flux-kontext-pro'].includes(i2iModel) && (
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-sm">
+                                  <Label>Inference Steps</Label>
+                                  <span className="text-muted-foreground">{fluxNumInferenceSteps}</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={i2iModel === 'flux-2-dev' ? 4 : 2}
+                                  max="50"
+                                  step="1"
+                                  value={fluxNumInferenceSteps}
+                                  onChange={(e) => setFluxNumInferenceSteps(parseInt(e.target.value))}
+                                  className="w-full accent-primary"
+                                />
+                                <p className="text-xs text-muted-foreground">More steps = higher quality but slower (28 default)</p>
+                              </div>
+                            )}
+
+                            {/* Seed input - all models */}
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <Label>Seed (optional)</Label>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setFluxSeed(null)}
+                                  className="h-6 text-xs"
+                                >
+                                  Random
+                                </Button>
+                              </div>
+                              <input
+                                type="number"
+                                placeholder="Leave empty for random"
+                                value={fluxSeed ?? ''}
+                                onChange={(e) => setFluxSeed(e.target.value ? parseInt(e.target.value) : null)}
+                                className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                              />
+                              <p className="text-xs text-muted-foreground">Same seed = reproducible results</p>
+                            </div>
+
+                            {/* Scheduler dropdown - FLUX.1 only */}
+                            {i2iModel === 'flux-general' && (
+                              <div className="space-y-2">
+                                <Label className="text-sm">Scheduler / Sampler</Label>
+                                <select
+                                  value={fluxScheduler}
+                                  onChange={(e) => setFluxScheduler(e.target.value as 'euler' | 'dpmpp_2m')}
+                                  className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                >
+                                  <option value="euler">Euler (default, faster)</option>
+                                  <option value="dpmpp_2m">DPM++ 2M (higher quality)</option>
+                                </select>
+                                <p className="text-xs text-muted-foreground">Sampling algorithm for generation</p>
+                              </div>
+                            )}
+
+                            {/* Acceleration - flux-2-dev only */}
+                            {i2iModel === 'flux-2-dev' && (
+                              <div className="space-y-2">
+                                <Label className="text-sm">Acceleration</Label>
+                                <select
+                                  value={fluxAcceleration}
+                                  onChange={(e) => setFluxAcceleration(e.target.value as 'none' | 'regular' | 'high')}
+                                  className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                >
+                                  <option value="none">None (highest quality)</option>
+                                  <option value="regular">Regular (balanced)</option>
+                                  <option value="high">High (fastest)</option>
+                                </select>
+                                <p className="text-xs text-muted-foreground">Speed vs quality tradeoff</p>
+                              </div>
+                            )}
+
+                            {/* Prompt Expansion - dev, flex only */}
+                            {['flux-2-dev', 'flux-2-flex'].includes(i2iModel) && (
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <Label className="text-sm">Prompt Expansion</Label>
+                                  <p className="text-xs text-muted-foreground">Auto-enhance prompt for better results</p>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={fluxEnablePromptExpansion}
+                                  onChange={(e) => setFluxEnablePromptExpansion(e.target.checked)}
+                                  className="h-4 w-4 accent-primary"
+                                />
+                              </div>
+                            )}
+
                           </div>
                         )}
                       </>
@@ -1430,12 +1817,29 @@ export function Playground() {
               </CardContent>
             </Card>
 
+            {/* Warning: Generated prompts not added */}
+            {generatedPrompts.length > 0 && (bulkMode === 'photos' || bulkMode === 'both') && !generatedPrompts.every(p => bulkI2iPrompts.includes(p)) && (
+              <div className="p-3 bg-amber-100 dark:bg-amber-900/30 border border-amber-400 dark:border-amber-600 rounded-lg">
+                <p className="text-sm text-amber-800 dark:text-amber-200 font-medium mb-2">
+                  You have {generatedPrompts.filter(p => !bulkI2iPrompts.includes(p)).length} generated prompts not added yet
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full border-amber-500 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800"
+                  onClick={handleAddGeneratedToI2i}
+                >
+                  Add to Photo Prompts Now
+                </Button>
+              </div>
+            )}
+
             {/* Generate Button */}
             <Button
               size="lg"
               className="w-full"
               disabled={!canGenerate}
-              onClick={mode === 'bulk' ? handleBulkGenerate : handleCarouselGenerate}
+              onClick={handleGenerateClick}
             >
               {isGenerating ? (
                 <Loader2 className="h-5 w-5 mr-2 animate-spin" />
@@ -1462,6 +1866,15 @@ export function Playground() {
         </div>
       </div>
 
+      {/* Confirmation Modal */}
+      <ConfirmGenerationModal
+        isOpen={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        onConfirm={handleConfirmGenerate}
+        costEstimate={bulkCostEstimate}
+        sourceImageCount={effectiveSourceImages.length}
+        bulkMode={bulkMode}
+      />
     </div>
   )
 }

@@ -103,6 +103,7 @@ async def create_pipeline(
 async def list_pipelines(
     status: Optional[str] = Query(None, description="Filter by status"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
+    search: Optional[str] = Query(None, description="Search by name or prompt"),
     favorites: bool = Query(False, description="Show only favorites"),
     hidden: bool = Query(False, description="Include hidden pipelines"),
     limit: int = Query(50, ge=1, le=100),
@@ -112,11 +113,12 @@ async def list_pipelines(
     """List all pipelines with lightweight summaries (no steps/outputs loaded)."""
     import json
 
-    # Check Redis cache first
+    # Check Redis cache first (skip cache if searching)
     cache_key = make_cache_key(
         "pipelines",
         status=status,
         tag=tag,
+        search=search,
         favorites=favorites,
         hidden=hidden,
         limit=limit,
@@ -153,6 +155,11 @@ async def list_pipelines(
     # Filter by tag (search in JSON array)
     if tag:
         query = query.filter(Pipeline.tags.like(f'%"{tag}"%'))
+
+    # Search by name
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(Pipeline.name.ilike(search_term))
 
     # Filter favorites
     if favorites:
@@ -1016,12 +1023,19 @@ async def create_bulk_pipeline(
                         "aspect_ratio": request.i2i_config.aspect_ratio,
                         "quality": request.i2i_config.quality,
                         "negative_prompt": request.i2i_config.negative_prompt,
-                        # FLUX-specific parameters
+                        # FLUX parameters (FLUX.1 + FLUX.2 common)
                         "flux_strength": request.i2i_config.flux_strength,
                         "flux_guidance_scale": request.i2i_config.flux_guidance_scale,
                         "flux_num_inference_steps": request.i2i_config.flux_num_inference_steps,
                         "flux_seed": request.i2i_config.flux_seed,
                         "flux_scheduler": request.i2i_config.flux_scheduler,
+                        # FLUX.2 specific parameters
+                        "flux_image_urls": request.i2i_config.flux_image_urls,
+                        "flux_output_format": request.i2i_config.flux_output_format,
+                        "flux_enable_safety_checker": request.i2i_config.flux_enable_safety_checker,
+                        "flux_enable_prompt_expansion": request.i2i_config.flux_enable_prompt_expansion,
+                        "flux_safety_tolerance": request.i2i_config.flux_safety_tolerance,
+                        "flux_acceleration": request.i2i_config.flux_acceleration,
                     }
                 )
                 step.set_inputs(
@@ -1155,13 +1169,18 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
 
                     # Log extracted config for debugging
                     if step.step_type == "i2i":
+                        is_flux2 = config.get("model", "").startswith("flux-2") or config.get("model", "").startswith("flux-kontext")
                         logger.info("I2I step config extracted",
                                     step_id=step.id,
                                     model=config.get("model"),
+                                    is_flux2=is_flux2,
                                     flux_strength=config.get("flux_strength"),
                                     flux_guidance=config.get("flux_guidance_scale"),
                                     flux_steps=config.get("flux_num_inference_steps"),
                                     flux_scheduler=config.get("flux_scheduler"),
+                                    flux_multi_refs=len(config.get("flux_image_urls", [])) if config.get("flux_image_urls") else 0,
+                                    flux_prompt_expansion=config.get("flux_enable_prompt_expansion"),
+                                    flux_acceleration=config.get("flux_acceleration"),
                                     prompt=inputs.get("prompts", [""])[0][:50] if inputs.get("prompts") else "NO PROMPT")
 
                     if step.step_type == "i2i":
@@ -1173,12 +1192,19 @@ async def _execute_bulk_pipeline_task(pipeline_id: int, request: BulkPipelineCre
                             quality=config.get("quality", "high"),
                             num_images=config.get("images_per_prompt", 1),
                             negative_prompt=config.get("negative_prompt"),
-                            # FLUX-specific parameters
+                            # FLUX.1 + FLUX.2 common parameters
                             flux_strength=config.get("flux_strength"),
                             flux_guidance_scale=config.get("flux_guidance_scale"),
                             flux_num_inference_steps=config.get("flux_num_inference_steps"),
                             flux_seed=config.get("flux_seed"),
                             flux_scheduler=config.get("flux_scheduler"),
+                            # FLUX.2 specific parameters
+                            flux_image_urls=config.get("flux_image_urls"),
+                            flux_output_format=config.get("flux_output_format", "png"),
+                            flux_enable_safety_checker=config.get("flux_enable_safety_checker", False),
+                            flux_enable_prompt_expansion=config.get("flux_enable_prompt_expansion"),
+                            flux_safety_tolerance=config.get("flux_safety_tolerance"),
+                            flux_acceleration=config.get("flux_acceleration"),
                         )
                         image_urls = result if isinstance(result, list) else [result]
                         # Generate thumbnails for fast library loading

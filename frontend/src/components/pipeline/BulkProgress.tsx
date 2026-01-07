@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { CheckCircle2, XCircle, Loader2, Clock, Image, Video } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { CheckCircle2, XCircle, Loader2, Clock, Image, Video, StopCircle } from 'lucide-react'
 
 interface BulkStep {
   id: number
@@ -13,15 +15,28 @@ interface BulkStep {
 
 interface BulkProgressProps {
   pipelineId: number
-  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
   steps: BulkStep[]
+  onCancel?: () => Promise<void>
 }
 
 export function BulkProgress({
   pipelineId,
   status,
   steps,
+  onCancel,
 }: BulkProgressProps) {
+  const [isCancelling, setIsCancelling] = useState(false)
+
+  const handleCancel = async () => {
+    if (!onCancel || isCancelling) return
+    setIsCancelling(true)
+    try {
+      await onCancel()
+    } finally {
+      setIsCancelling(false)
+    }
+  }
   const completedSteps = steps.filter(s => s.status === 'completed').length
   const failedSteps = steps.filter(s => s.status === 'failed').length
   const runningSteps = steps.filter(s => s.status === 'running').length
@@ -69,9 +84,27 @@ export function BulkProgress({
             Pipeline #{pipelineId}
             {status === 'running' && <Loader2 className="h-4 w-4 animate-spin" />}
           </CardTitle>
-          <Badge variant={status === 'completed' ? 'default' : status === 'failed' ? 'destructive' : 'secondary'}>
-            {status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {(status === 'running' || status === 'pending') && onCancel && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleCancel}
+                disabled={isCancelling}
+                className="h-7 px-2"
+              >
+                {isCancelling ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <StopCircle className="h-3 w-3 mr-1" />
+                )}
+                {isCancelling ? 'Cancelling...' : 'Cancel'}
+              </Button>
+            )}
+            <Badge variant={status === 'completed' ? 'default' : status === 'failed' || status === 'cancelled' ? 'destructive' : 'secondary'}>
+              {status}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

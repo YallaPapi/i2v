@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,25 @@ export function MultiPromptInput({
   isEnhancing = false,
 }: MultiPromptInputProps) {
   const [text, setText] = useState(prompts.join('\n'))
+
+  // Sync text when prompts change externally (e.g., from AI Prompt Builder)
+  useEffect(() => {
+    const newText = prompts.join('\n')
+    // Only update if prompts were changed externally (not by typing)
+    const currentPrompts = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+    const propsPromptsStr = prompts.join('|')
+    const currentPromptsStr = currentPrompts.join('|')
+    console.log('[MultiPromptInput] Syncing prompts:', {
+      propsCount: prompts.length,
+      currentCount: currentPrompts.length,
+      willUpdate: propsPromptsStr !== currentPromptsStr,
+      firstPropPrompt: prompts[0]?.slice(0, 80),
+      firstCurrentPrompt: currentPrompts[0]?.slice(0, 80),
+    })
+    if (propsPromptsStr !== currentPromptsStr) {
+      setText(newText)
+    }
+  }, [prompts])
 
   const handleTextChange = (value: string) => {
     setText(value)

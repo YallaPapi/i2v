@@ -14,7 +14,7 @@ class CostCalculator:
     Prices verified from fal.ai January 2026.
     """
 
-    # I2I Model pricing (per image)
+    # I2I Model pricing (per image) - fal.ai January 2026
     I2I_PRICING = {
         "gpt-image-1.5": {
             "low": Decimal("0.009"),
@@ -24,6 +24,16 @@ class CostCalculator:
         "kling-image": Decimal("0.028"),
         "nano-banana": Decimal("0.039"),
         "nano-banana-pro": Decimal("0.15"),
+        # FLUX.1
+        "flux-general": Decimal("0.025"),
+        # FLUX.2 models (Nov 2025)
+        "flux-2-dev": Decimal("0.025"),  # ~$0.012/MP, estimated per image
+        "flux-2-pro": Decimal("0.05"),   # ~$0.03/MP, estimated per image
+        "flux-2-flex": Decimal("0.04"),  # Per image pricing
+        "flux-2-max": Decimal("0.08"),   # Per image pricing
+        # FLUX.1 Kontext
+        "flux-kontext-dev": Decimal("0.025"),
+        "flux-kontext-pro": Decimal("0.04"),
     }
 
     # I2V Model pricing - PER-SECOND rates from fal.ai (January 2026)

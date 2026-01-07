@@ -85,6 +85,8 @@ export function usePipelines(params?: {
   favorites?: boolean
   hidden?: boolean
   tag?: string
+  status?: string
+  search?: string
   limit?: number
   offset?: number
 }) {

@@ -104,26 +104,45 @@ async def generate_image(
     quality: str = "high",
     num_images: int = 1,
     negative_prompt: Optional[str] = None,
-    # FLUX-specific parameters
+    # FLUX.1 parameters (flux-general only)
     flux_strength: Optional[float] = None,
-    flux_guidance_scale: Optional[float] = None,
-    flux_num_inference_steps: Optional[int] = None,
-    flux_seed: Optional[int] = None,
     flux_scheduler: Optional[str] = None,
+    # FLUX.2 & Kontext parameters (only used if model supports them)
+    flux_guidance_scale: Optional[float] = None,  # dev/flex/kontext only
+    flux_num_inference_steps: Optional[int] = None,  # dev/flex/kontext only
+    flux_seed: Optional[int] = None,
+    flux_image_urls: Optional[List[str]] = None,  # Multi-ref for dev/pro/flex/max
+    flux_output_format: str = "png",
+    flux_enable_safety_checker: bool = False,
+    flux_enable_prompt_expansion: Optional[bool] = None,  # dev/flex only
+    flux_safety_tolerance: Optional[str] = None,  # pro/flex/max: "1"-"5"
+    flux_acceleration: Optional[str] = None,  # dev only: "none"/"regular"/"high"
 ) -> List[str]:
     """
     Generate image(s) from a source image.
 
+    Supports all image models including FLUX.2 variants:
+    - flux-2-dev: configurable (guidance_scale, steps, prompt_expansion, acceleration)
+    - flux-2-pro: zero-config (only safety_tolerance)
+    - flux-2-flex: fully configurable (all params)
+    - flux-2-max: zero-config (only safety_tolerance)
+    - flux-kontext-dev/pro: configurable (guidance_scale, steps)
+
     Returns list of image URLs.
     """
+    # Check if FLUX.2 model for enhanced logging
+    is_flux2 = model.startswith("flux-2") or model.startswith("flux-kontext")
+
     logger.info("Generating image",
                 model=model,
-                image_url=image_url[:50],
+                is_flux2=is_flux2,
+                image_url=image_url[:50] if image_url else "NO IMAGE",
                 prompt=prompt[:80] if prompt else "NO PROMPT",
-                flux_strength=flux_strength,
                 flux_guidance=flux_guidance_scale,
                 flux_steps=flux_num_inference_steps,
-                flux_scheduler=flux_scheduler)
+                multi_ref=len(flux_image_urls) if flux_image_urls else 0,
+                safety_tolerance=flux_safety_tolerance,
+                acceleration=flux_acceleration)
 
     # Validate model
     if model not in IMAGE_MODELS:
@@ -131,7 +150,7 @@ async def generate_image(
             f"Unknown image model: {model}. Available: {list(IMAGE_MODELS.keys())}"
         )
 
-    # Submit job
+    # Submit job with all parameters - payload builder handles per-model support
     request_id = await submit_image_job(
         model=model,
         image_url=image_url,
@@ -140,12 +159,19 @@ async def generate_image(
         num_images=num_images,
         aspect_ratio=aspect_ratio,
         quality=quality,
-        # Pass FLUX params
+        # FLUX.1 params
         flux_strength=flux_strength,
+        flux_scheduler=flux_scheduler,
+        # FLUX.2 & Kontext params (payload builder filters per model)
         flux_guidance_scale=flux_guidance_scale,
         flux_num_inference_steps=flux_num_inference_steps,
         flux_seed=flux_seed,
-        flux_scheduler=flux_scheduler,
+        flux_image_urls=flux_image_urls,
+        flux_output_format=flux_output_format,
+        flux_enable_safety_checker=flux_enable_safety_checker,
+        flux_enable_prompt_expansion=flux_enable_prompt_expansion,
+        flux_safety_tolerance=flux_safety_tolerance,
+        flux_acceleration=flux_acceleration,
     )
 
     # Wait for completion
@@ -154,7 +180,10 @@ async def generate_image(
     if not result.get("image_urls"):
         raise Exception("No image URLs in completed result")
 
-    logger.info("Images generated", model=model, count=len(result["image_urls"]))
+    logger.info("Images generated",
+                model=model,
+                count=len(result["image_urls"]),
+                is_flux2=is_flux2)
     return result["image_urls"]
 
 

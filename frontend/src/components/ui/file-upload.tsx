@@ -36,8 +36,18 @@ export function FileUpload({ onUpload, accept = "image/*", className, disabled }
       })
 
       if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.detail || 'Upload failed')
+        const data = await response.json().catch(() => ({}))
+        let errorMessage = 'Upload failed'
+        if (typeof data.detail === 'string') {
+          errorMessage = data.detail
+        } else if (Array.isArray(data.detail)) {
+          errorMessage = data.detail.map((e: {msg?: string}) => e.msg || JSON.stringify(e)).join('; ')
+        } else if (data.detail) {
+          errorMessage = JSON.stringify(data.detail)
+        } else if (data.message) {
+          errorMessage = data.message
+        }
+        throw new Error(errorMessage)
       }
 
       const data = await response.json()

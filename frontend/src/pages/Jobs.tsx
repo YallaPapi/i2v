@@ -3,7 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
-import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
+import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Loader2, RotateCcw, Search } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import { PipelineCardSkeleton, OutputGridSkeleton } from '@/components/ui/skeleton'
 import {
   usePipelines,
@@ -293,8 +294,9 @@ function PipelineItem({
                     {outputs.map((output, idx) => {
                       const isSelected = selectedOutputs.has(output.url)
                       return (
-                        <div key={idx} className={`relative aspect-[9/16] bg-muted rounded-lg overflow-hidden cursor-pointer ${isSelected ? 'ring-2 ring-primary' : ''}`}
+                        <div key={idx} className={`relative aspect-[9/16] bg-muted rounded-lg overflow-hidden cursor-pointer group ${isSelected ? 'ring-2 ring-primary' : ''}`}
                           onClick={() => onToggleSelect(output.url)}
+                          onDoubleClick={(e) => { e.stopPropagation(); window.open(output.url, '_blank') }}
                           onMouseEnter={(e) => output.type === 'image' && handleMouseEnter(output, e)}
                           onMouseMove={handleMouseMove}
                           onMouseLeave={handleMouseLeave}>
@@ -318,6 +320,18 @@ function PipelineItem({
                           <div className="absolute top-2 right-2">
                             {output.type === 'video' ? <Play className="h-4 w-4 text-white drop-shadow" /> : <ImageIcon className="h-4 w-4 text-white drop-shadow" />}
                           </div>
+                          {/* Open in new tab button - appears on hover */}
+                          <button
+                            className="absolute bottom-2 right-2 p-1.5 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+                            onClick={(e) => { e.stopPropagation(); window.open(output.url, '_blank') }}
+                            title="Open in new tab (or double-click)"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-white">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                              <polyline points="15 3 21 3 21 9"></polyline>
+                              <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                          </button>
                         </div>
                       )
                     })}
@@ -339,16 +353,29 @@ export function Jobs() {
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem('demoMode') === 'true')
   const [showHidden, setShowHidden] = useState(false)
   const [tagFilter, setTagFilter] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE)
   const [restartState, setRestartState] = useState<'idle' | 'restarting' | 'done'>('idle')
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
   // Query params - fetch more than displayed to enable smooth "load more"
   const queryParams = useMemo(() => ({
     favorites: demoMode || undefined,
     hidden: showHidden || undefined,
     tag: tagFilter || undefined,
+    status: statusFilter || undefined,
+    search: debouncedSearch || undefined,
     limit: displayCount,
     offset: 0,
-  }), [demoMode, showHidden, tagFilter, displayCount])
+  }), [demoMode, showHidden, tagFilter, statusFilter, debouncedSearch, displayCount])
   const { data, isLoading, isFetching, refetch } = usePipelines(queryParams)
   const pipelines = data?.pipelines || []
   const total = data?.total || 0
@@ -356,7 +383,7 @@ export function Jobs() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayCount(PAGE_SIZE)
-  }, [demoMode, showHidden, tagFilter])
+  }, [demoMode, showHidden, tagFilter, statusFilter, debouncedSearch])
   // Save demo mode
   if (typeof window !== 'undefined') localStorage.setItem('demoMode', demoMode.toString())
   const toggleExpand = useCallback((id: number) => {
@@ -390,8 +417,25 @@ export function Jobs() {
           <p className="text-muted-foreground">View and manage all your generation jobs</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant={demoMode ? 'default' : 'outline'} size="sm" onClick={() => setDemoMode(!demoMode)} className="gap-1">
-            <Star className={`h-4 w-4 ${demoMode ? 'fill-current' : ''}`} /> Demo Mode
+          <div className="relative w-48">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search jobs..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-8 h-9"
+            />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <Button variant={demoMode ? 'default' : 'outline'} size="sm" onClick={() => setDemoMode(!demoMode)} className="gap-1" title="Show only favorited jobs">
+            <Star className={`h-4 w-4 ${demoMode ? 'fill-current' : ''}`} /> {demoMode ? 'Favorites Only' : 'Favorites'}
           </Button>
           <Button variant={showHidden ? 'secondary' : 'outline'} size="sm" onClick={() => setShowHidden(!showHidden)} className="gap-1">
             {showHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}

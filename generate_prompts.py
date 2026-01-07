@@ -445,8 +445,15 @@ PROMPT_GENERATION_TEMPLATE = """You are generating {count} detailed i2i (image-t
 ## Core Requirements (EVERY prompt must include these EXACTLY)
 - "realistic vertical iPhone photo in 9:16 aspect ratio"
 - "the woman in the photo" (preserve identity, don't describe age/appearance)
-- The on-screen caption MUST use this EXACT structure:
-  "There is an off-center TikTok-style on-screen caption near the bottom of the image that is only an overlaid text and is not related to her pose or movement, which reads: "[CAPTION]" in white text with a thin black outline, using the classic Proxima Nova Semibold font, no other text, logos, or UI elements."
+- The on-screen caption MUST use this EXACT structure (copy this VERBATIM, only change the [CAPTION] text):
+  "there is an off-center tiktok-style on-screen caption that is only an overlaid text and is not related to her pose or movement, which reads: '[CAPTION]' in proxima nova semibold font, white text with thin black outline, all lowercase, no periods, no other text, logos, or ui elements"
+
+## CRITICAL FONT STYLING (DO NOT DEVIATE):
+- Font: Proxima Nova Semibold
+- Color: White text with thin black outline (TikTok style)
+- Case: ALL LOWERCASE - no capital letters anywhere in the caption
+- No periods at the end of captions
+- The caption text itself must follow all the rules in the caption instructions below
 
 ## Location Instructions
 {location_instructions}

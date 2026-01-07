@@ -11,8 +11,13 @@ from app.config import settings
 if settings.fal_api_key:
     os.environ["FAL_KEY"] = settings.fal_api_key
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+import traceback
+import time
+import uuid
 from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 from app.models import Job, ImageJob
@@ -39,6 +44,64 @@ from app.fal_upload import upload_image, SUPPORTED_FORMATS
 from app.routers.pipelines import router as pipelines_router
 
 logger = structlog.get_logger()
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log all requests and responses for debugging."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Generate unique request ID for tracing
+        request_id = str(uuid.uuid4())[:8]
+        start_time = time.time()
+
+        # Get request body for POST/PUT/PATCH (cache it for reuse)
+        body = None
+        if request.method in ["POST", "PUT", "PATCH"]:
+            try:
+                body = await request.body()
+                # Truncate large bodies for logging
+                body_str = body.decode("utf-8")[:2000] if body else ""
+            except Exception:
+                body_str = "<failed to read body>"
+
+        logger.info(
+            "API Request",
+            request_id=request_id,
+            method=request.method,
+            path=str(request.url.path),
+            query=str(request.url.query) if request.url.query else None,
+            body_preview=body_str[:500] if body else None,
+        )
+
+        # Process the request
+        try:
+            response = await call_next(request)
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Log response
+            log_level = "info" if response.status_code < 400 else "error"
+            getattr(logger, log_level)(
+                "API Response",
+                request_id=request_id,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                path=str(request.url.path),
+            )
+
+            return response
+
+        except Exception as exc:
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.error(
+                "API Exception (unhandled)",
+                request_id=request_id,
+                path=str(request.url.path),
+                error=str(exc),
+                error_type=type(exc).__name__,
+                duration_ms=duration_ms,
+                traceback=traceback.format_exc(),
+            )
+            raise
 
 
 @asynccontextmanager
@@ -162,6 +225,55 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+
+# Add request logging middleware (logs all requests/responses)
+app.add_middleware(RequestLoggingMiddleware)
+
+
+# Global exception handler - catches all unhandled exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all exception handler that logs full context."""
+    error_id = str(uuid.uuid4())[:8]
+
+    # Log the full exception with traceback
+    logger.error(
+        "Unhandled Exception",
+        error_id=error_id,
+        path=str(request.url.path),
+        method=request.method,
+        error=str(exc),
+        error_type=type(exc).__name__,
+        traceback=traceback.format_exc(),
+    )
+
+    # Return a detailed error response
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Internal server error: {str(exc)}",
+            "error_id": error_id,
+            "error_type": type(exc).__name__,
+        },
+    )
+
+
+# Validation error handler - provides better error messages for Pydantic errors
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Log HTTP exceptions with context."""
+    logger.warning(
+        "HTTP Exception",
+        path=str(request.url.path),
+        method=request.method,
+        status_code=exc.status_code,
+        detail=exc.detail,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
 
 # Include routers
 app.include_router(pipelines_router, prefix="/api")

@@ -303,7 +303,12 @@ class PipelineExecutor:
         inputs: dict,
         generate_fn: Callable,
     ) -> dict:
-        """Execute I2I generation step."""
+        """Execute I2I generation step with full FLUX.2 parameter support."""
+        logger.info("_execute_i2i called",
+                    config_keys=list(config.keys()),
+                    inputs_keys=list(inputs.keys()),
+                    raw_inputs=str(inputs)[:500])
+
         image_urls = inputs.get("image_urls", [])
         prompts = inputs.get("prompts", [])
 
@@ -316,6 +321,37 @@ class PipelineExecutor:
         images_per = config.get("images_per_prompt", 1)
         aspect_ratio = config.get("aspect_ratio", "9:16")
         quality = config.get("quality", "high")
+        negative_prompt = config.get("negative_prompt")
+
+        # FLUX.1 parameters (flux-general only)
+        flux_strength = config.get("flux_strength")
+        flux_scheduler = config.get("flux_scheduler")
+
+        # FLUX.2 & Kontext parameters (payload builder filters per model)
+        flux_guidance_scale = config.get("flux_guidance_scale")  # dev/flex/kontext only
+        flux_num_inference_steps = config.get("flux_num_inference_steps")  # dev/flex/kontext only
+        flux_seed = config.get("flux_seed")
+        flux_image_urls = config.get("flux_image_urls")  # Multi-ref for dev/pro/flex/max
+        flux_output_format = config.get("flux_output_format", "png")
+        flux_enable_safety_checker = config.get("flux_enable_safety_checker", False)
+        flux_enable_prompt_expansion = config.get("flux_enable_prompt_expansion")  # dev/flex only
+        flux_safety_tolerance = config.get("flux_safety_tolerance")  # pro/flex/max only
+        flux_acceleration = config.get("flux_acceleration")  # dev only
+
+        # Check if FLUX.2 model
+        is_flux2 = model.startswith("flux-2") or model.startswith("flux-kontext")
+
+        # Log config for debugging
+        logger.info("I2I config extracted",
+                    model=model,
+                    is_flux2=is_flux2,
+                    flux_guidance_scale=flux_guidance_scale,
+                    flux_steps=flux_num_inference_steps,
+                    flux_multi_refs=len(flux_image_urls) if flux_image_urls else 0,
+                    flux_safety_tolerance=flux_safety_tolerance,
+                    flux_acceleration=flux_acceleration,
+                    prompts_count=len(prompts),
+                    first_prompt=prompts[0][:80] if prompts else "NO PROMPTS")
 
         # Handle set mode
         set_mode = config.get("set_mode", {})
@@ -328,7 +364,7 @@ class PipelineExecutor:
         results = []
         for image_url in image_urls:
             for prompt in effective_prompts:
-                # Call the generation function
+                # Call the generation function - payload builder filters params per model
                 result = await generate_fn(
                     source_image_url=image_url,
                     prompt=prompt,
@@ -336,6 +372,20 @@ class PipelineExecutor:
                     num_images=images_per,
                     aspect_ratio=aspect_ratio,
                     quality=quality,
+                    negative_prompt=negative_prompt,
+                    # FLUX.1 params
+                    flux_strength=flux_strength,
+                    flux_scheduler=flux_scheduler,
+                    # FLUX.2 & Kontext params
+                    flux_guidance_scale=flux_guidance_scale,
+                    flux_num_inference_steps=flux_num_inference_steps,
+                    flux_seed=flux_seed,
+                    flux_image_urls=flux_image_urls,
+                    flux_output_format=flux_output_format,
+                    flux_enable_safety_checker=flux_enable_safety_checker,
+                    flux_enable_prompt_expansion=flux_enable_prompt_expansion,
+                    flux_safety_tolerance=flux_safety_tolerance,
+                    flux_acceleration=flux_acceleration,
                 )
                 results.extend(result if isinstance(result, list) else [result])
 

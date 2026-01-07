@@ -87,6 +87,24 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+# Image model type - includes all FLUX.1, FLUX.2, and Kontext variants
+ImageModelType = Literal[
+    "gpt-image-1.5",
+    "kling-image",
+    "nano-banana-pro",
+    "nano-banana",
+    "flux-general",  # FLUX.1
+    # FLUX.2 variants
+    "flux-2-dev",
+    "flux-2-pro",
+    "flux-2-flex",
+    "flux-2-max",
+    # FLUX.1 Kontext (in-context editing)
+    "flux-kontext-dev",
+    "flux-kontext-pro",
+]
+
+
 # Image generation schemas
 class ImageJobCreate(BaseModel):
     """Schema for creating a new image generation job."""
@@ -94,12 +112,23 @@ class ImageJobCreate(BaseModel):
     source_image_url: str
     prompt: str
     negative_prompt: Optional[str] = None
-    model: Literal["gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana"] = (
-        "gpt-image-1.5"
-    )
+    model: ImageModelType = "gpt-image-1.5"
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
     num_images: Literal[1, 2, 3, 4] = 1
+    # FLUX.1 parameters (flux-general only)
+    flux_strength: Optional[float] = None  # 0.0-1.0, default 0.75
+    flux_scheduler: Optional[Literal["euler", "dpmpp_2m"]] = None  # FLUX.1 only
+    # FLUX.2 & Kontext parameters (only used if model supports them)
+    flux_guidance_scale: Optional[float] = None  # dev: 0-20 (default 2.5), flex: 1.5-10 (default 3.5), kontext: 0-20 (default 3.5)
+    flux_num_inference_steps: Optional[int] = None  # dev/flex/kontext only, default 28
+    flux_seed: Optional[int] = None  # For reproducibility
+    flux_image_urls: Optional[List[str]] = None  # Multi-reference: dev(4), pro(9), flex/max(10)
+    flux_output_format: Literal["png", "jpeg", "webp"] = "png"
+    flux_enable_safety_checker: bool = False  # Set false for NSFW
+    flux_enable_prompt_expansion: Optional[bool] = None  # dev/flex only (flex defaults true)
+    flux_safety_tolerance: Optional[Literal["1", "2", "3", "4", "5"]] = None  # pro/flex/max only ("5" = most permissive)
+    flux_acceleration: Optional[Literal["none", "regular", "high"]] = None  # dev only
 
 
 class ImageJobResponse(BaseModel):
@@ -200,13 +229,24 @@ class I2ISetMode(BaseModel):
 class I2IConfig(BaseModel):
     """Config for I2I step."""
 
-    model: Literal["gpt-image-1.5", "kling-image", "nano-banana", "nano-banana-pro"] = (
-        "gpt-image-1.5"
-    )
+    model: ImageModelType = "gpt-image-1.5"
     images_per_prompt: int = 1
     set_mode: Optional[I2ISetMode] = None
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
+    # FLUX.1 parameters (flux-general only)
+    flux_strength: Optional[float] = None  # 0.0-1.0, default 0.75
+    flux_scheduler: Optional[Literal["euler", "dpmpp_2m"]] = None  # FLUX.1 only
+    # FLUX.2 & Kontext parameters
+    flux_guidance_scale: Optional[float] = None  # dev/flex/kontext only
+    flux_num_inference_steps: Optional[int] = None  # dev/flex/kontext only
+    flux_seed: Optional[int] = None
+    flux_image_urls: Optional[List[str]] = None  # Multi-ref for dev/pro/flex/max
+    flux_output_format: Literal["png", "jpeg", "webp"] = "png"
+    flux_enable_safety_checker: bool = False
+    flux_enable_prompt_expansion: Optional[bool] = None  # dev/flex only
+    flux_safety_tolerance: Optional[Literal["1", "2", "3", "4", "5"]] = None  # pro/flex/max
+    flux_acceleration: Optional[Literal["none", "regular", "high"]] = None  # dev only
 
 
 class I2VConfig(BaseModel):
@@ -457,13 +497,24 @@ class BulkI2IConfig(BaseModel):
 
     enabled: bool = True
     prompts: List[str]  # 1-10 prompts
-    model: Literal["gpt-image-1.5", "kling-image", "nano-banana", "nano-banana-pro"] = (
-        "gpt-image-1.5"
-    )
+    model: ImageModelType = "gpt-image-1.5"
     images_per_prompt: int = 1
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
     negative_prompt: Optional[str] = None
+    # FLUX.1 parameters (flux-general only)
+    flux_strength: Optional[float] = None  # 0.0-1.0, default 0.75
+    flux_scheduler: Optional[Literal["euler", "dpmpp_2m"]] = None  # FLUX.1 only
+    # FLUX.2 & Kontext parameters (only used if model supports them)
+    flux_guidance_scale: Optional[float] = None  # dev/flex/kontext only
+    flux_num_inference_steps: Optional[int] = None  # dev/flex/kontext only
+    flux_seed: Optional[int] = None  # For reproducibility
+    flux_image_urls: Optional[List[str]] = None  # Multi-ref: dev(4), pro(9), flex/max(10)
+    flux_output_format: Literal["png", "jpeg", "webp"] = "png"
+    flux_enable_safety_checker: bool = False  # Set false for NSFW
+    flux_enable_prompt_expansion: Optional[bool] = None  # dev/flex only
+    flux_safety_tolerance: Optional[Literal["1", "2", "3", "4", "5"]] = None  # pro/flex/max ("5" = most permissive)
+    flux_acceleration: Optional[Literal["none", "regular", "high"]] = None  # dev only
 
 
 class BulkI2VConfig(BaseModel):
@@ -498,7 +549,7 @@ class BulkPipelineCreate(BaseModel):
     name: str = "Bulk Generation"
     source_images: List[str]  # 1-10 image URLs
     i2i_config: Optional[BulkI2IConfig] = None  # Optional: skip to go straight to video
-    i2v_config: BulkI2VConfig
+    i2v_config: Optional[BulkI2VConfig] = None  # Optional: skip video generation
     tags: Optional[List[str]] = None
     description: Optional[str] = None
 

@@ -42,7 +42,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           <div className="ml-auto flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
+            <div
+              className="flex items-center space-x-2 cursor-help"
+              title={health?.status === 'ok'
+                ? 'Backend connected and healthy'
+                : isError
+                  ? 'Backend disconnected. Try restarting the server from Jobs page.'
+                  : 'Checking backend connection...'}
+            >
               <div
                 className={cn(
                   'h-2 w-2 rounded-full',

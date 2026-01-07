@@ -59,6 +59,65 @@ const I2I_MODELS: ModelOption[] = [
     provider: 'Google',
     description: "Google's best model - realistic, good typography",
   },
+  // FLUX.1 (Legacy)
+  {
+    value: 'flux-general',
+    label: 'FLUX 1.0 General',
+    price: '$0.025/img',
+    priceValue: 0.025,
+    provider: 'Black Forest Labs',
+    description: 'FLUX 1.0 - Strength control for identity preservation',
+  },
+  // FLUX.2 Models (Nov 2025)
+  {
+    value: 'flux-2-dev',
+    label: 'FLUX.2 Dev',
+    price: '$0.025/img',
+    priceValue: 0.025,
+    provider: 'Black Forest Labs',
+    description: 'FLUX.2 open-source - consumer GPU friendly',
+  },
+  {
+    value: 'flux-2-pro',
+    label: 'FLUX.2 Pro',
+    price: '$0.05/img',
+    priceValue: 0.05,
+    provider: 'Black Forest Labs',
+    description: 'FLUX.2 production - highest photorealism',
+  },
+  {
+    value: 'flux-2-flex',
+    label: 'FLUX.2 Flex',
+    price: '$0.04/img',
+    priceValue: 0.04,
+    provider: 'Black Forest Labs',
+    description: 'FLUX.2 multi-reference (up to 10 images), customizable',
+  },
+  {
+    value: 'flux-2-max',
+    label: 'FLUX.2 Max',
+    price: '$0.08/img',
+    priceValue: 0.08,
+    provider: 'Black Forest Labs',
+    description: 'FLUX.2 highest quality + web-grounded generation',
+  },
+  // FLUX.1 Kontext (In-context editing)
+  {
+    value: 'flux-kontext-dev',
+    label: 'FLUX Kontext Dev',
+    price: '$0.025/img',
+    priceValue: 0.025,
+    provider: 'Black Forest Labs',
+    description: 'Natural language editing, no masks needed',
+  },
+  {
+    value: 'flux-kontext-pro',
+    label: 'FLUX Kontext Pro',
+    price: '$0.04/img',
+    priceValue: 0.04,
+    provider: 'Black Forest Labs',
+    description: 'Production in-context editing',
+  },
 ]
 
 // Pricing from fal.ai - January 2026 verified rates (per-second)

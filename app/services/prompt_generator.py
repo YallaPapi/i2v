@@ -429,10 +429,11 @@ PROMPT_GENERATION_TEMPLATE = """You are generating {count} detailed i2i (image-t
 - No numbering, no bullet points, no meta explanations
 
 ## Core Requirements (EVERY prompt must include these EXACTLY)
-- "realistic vertical iPhone photo in 9:16 aspect ratio"
-- "the woman in the photo" (preserve identity, don't describe age/appearance)
+- Every prompt MUST start with: "realistic vertical iPhone photo in 9:16 aspect ratio of the woman in the photo, preserving her exact facial features and natural skin texture,"
+- This MUST look like a real photo taken on a phone and posted to social media. NO airbrushing, NO CGI look, NO anime-style faces. Real skin texture, real lighting, real person.
+- For cosplay: continue with "dressed in cosplay as [character]" - she is a REAL HUMAN wearing a COSTUME. Include wigs and colored contacts if the character has unusual hair/eye colors - that's what real cosplayers do. But her FACE must still look like a real human face, not an anime face.
 - The on-screen caption MUST use this EXACT structure:
-  "There is an off-center TikTok-style on-screen caption near the bottom of the image that is only an overlaid text and is not related to her pose or movement, which reads: "[CAPTION]" in white text with a thin black outline, using the classic Proxima Nova Semibold font, no other text, logos, or UI elements."
+  "There is an off-center TikTok-style on-screen caption that is only an overlaid text and is not related to her pose or movement, which reads: "[CAPTION]" in Proxima Nova Semibold font in white text with a thin black outline, all lowercase, no other text, logos, or UI elements."
 
 ## Location Instructions
 {location_instructions}
@@ -500,11 +501,24 @@ Pick DIFFERENT cottagecore themes each time - vary the inspirations: gardening, 
 Include ACCURATE outfit details for each theme (prairie dresses, puff sleeves, Peter Pan collars, milkmaid tops, flowy linen dresses, gingham patterns, floral aprons, embroidered blouses, lace details, straw hats, woven baskets, ankle boots, flower crowns, earthy and muted tones).
 Don't repeat the same theme. Be accurate with aesthetic details."""
     else:  # cosplay
-        return """Include cosplay outfits in the prompts.
+        return """THIS IS COSPLAY - A REAL HUMAN WEARING A COSTUME IN A REAL PHOTO.
+
+The prompt must describe a REAL PERSON dressed in a COSPLAY COSTUME. This is what cosplayers actually look like:
+- Real human face with natural skin texture (NOT airbrushed, NOT anime-style, NOT CGI)
+- Wearing a costume (often handmade/amateur quality)
+- Wearing a WIG if the character has unusual hair color
+- Wearing COLORED CONTACTS if the character has unusual eye color
+- Real iPhone photo quality - the kind you'd see posted on Instagram or TikTok
+
+CORRECT: "the woman in the photo is dressed in cosplay as Miku, wearing a grey school uniform with teal tie, teal twintail wig, and teal colored contacts..."
+WRONG: "Hatsune Miku with perfect porcelain skin and large anime eyes..." (this creates an airbrushed anime face, NOT a real person)
+
+The face must look HUMAN. Real pores, real skin, real proportions. Just a normal person who put on a costume and wig.
+
 Pick DIFFERENT anime characters each time - vary the source anime/manga.
-Include ACCURATE outfit details for each character (specific clothing items, accessories, colors).
-Examples of characters to draw from: Attack on Titan, Sailor Moon, Evangelion, Chainsaw Man, Jujutsu Kaisen, One Piece, Demon Slayer, My Hero Academia, Spy x Family, etc.
-Don't repeat the same character. Be accurate with costume details."""
+Include ACCURATE costume details (clothing, accessories, wigs, colored contacts where appropriate).
+Examples: Attack on Titan, Sailor Moon, Evangelion, Chainsaw Man, Jujutsu Kaisen, One Piece, Demon Slayer, My Hero Academia, Spy x Family, etc.
+Don't repeat the same character."""
 
 
 async def generate_prompts(
