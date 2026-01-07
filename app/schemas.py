@@ -646,6 +646,7 @@ class PromptGeneratorRequest(BaseModel):
     count: int = 10  # 1-50 prompts
     style: Literal["cosplay", "cottagecore"] = "cosplay"
     location: Literal["outdoor", "indoor", "mixed"] = "mixed"
+    exaggerated_bust: bool = False  # Add exaggerated bust description to prompts
 
 
 class PromptGeneratorResponse(BaseModel):

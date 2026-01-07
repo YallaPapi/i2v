@@ -589,6 +589,7 @@ async def generate_prompts_endpoint(request: PromptGeneratorRequest):
             count=request.count,
             style=request.style,
             location=request.location,
+            exaggerated_bust=request.exaggerated_bust,
         )
 
         return PromptGeneratorResponse(

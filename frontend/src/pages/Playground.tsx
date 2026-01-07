@@ -179,6 +179,7 @@ export function Playground() {
   const [promptBuilderStyle, setPromptBuilderStyle] = useState<'cosplay' | 'cottagecore'>('cosplay')
   const [promptBuilderLocation, setPromptBuilderLocation] = useState<'outdoor' | 'indoor' | 'mixed'>('mixed')
   const [promptBuilderCount, setPromptBuilderCount] = useState(10)
+  const [promptBuilderExaggeratedBust, setPromptBuilderExaggeratedBust] = useState(false)
   const [promptBuilderLoading, setPromptBuilderLoading] = useState(false)
   const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([])
   const [promptBuilderCopied, setPromptBuilderCopied] = useState(false)
@@ -309,6 +310,7 @@ export function Playground() {
         count: promptBuilderCount,
         style: promptBuilderStyle,
         location: promptBuilderLocation,
+        exaggerated_bust: promptBuilderExaggeratedBust,
       }
       console.log('[PromptBuilder] Request body:', requestBody)
 
@@ -1020,6 +1022,18 @@ export function Playground() {
                             />
                           </div>
                         </div>
+
+                        {/* Exaggerated Bust Toggle */}
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={promptBuilderExaggeratedBust}
+                            onChange={(e) => setPromptBuilderExaggeratedBust(e.target.checked)}
+                            disabled={promptBuilderLoading}
+                            className="rounded"
+                          />
+                          <span className="text-muted-foreground">Exaggerated bust</span>
+                        </label>
 
                         {/* Generate Button */}
                         <Button

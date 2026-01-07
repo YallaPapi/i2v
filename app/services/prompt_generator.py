@@ -526,6 +526,7 @@ async def generate_prompts(
     count: int,
     style: Literal["cosplay", "cottagecore"],
     location: Literal["outdoor", "indoor", "mixed"],
+    exaggerated_bust: bool = False,
 ) -> list[str]:
     """
     Generate i2i prompts using Claude.
@@ -535,6 +536,7 @@ async def generate_prompts(
         count: Number of prompts to generate (1-50)
         style: "cosplay" or "cottagecore"
         location: "outdoor", "indoor", or "mixed"
+        exaggerated_bust: If True, add exaggerated bust description to prompts
 
     Returns:
         List of generated prompts
@@ -581,8 +583,33 @@ async def generate_prompts(
         # Remove line breaks within prompt, collapse to single line
         cleaned = " ".join(p.strip().split())
         if cleaned:
+            # Inject exaggerated bust text if enabled
+            if exaggerated_bust:
+                # Find a good injection point - after describing the woman/subject
+                # Look for common patterns and inject after them
+                bust_text = "with an oversized bust, exaggerated chest size,"
+                # Inject early in the prompt, after "the woman in the photo"
+                if "the woman in the photo," in cleaned:
+                    cleaned = cleaned.replace(
+                        "the woman in the photo,",
+                        f"the woman in the photo, {bust_text}",
+                        1
+                    )
+                elif "the woman in the photo" in cleaned:
+                    cleaned = cleaned.replace(
+                        "the woman in the photo",
+                        f"the woman in the photo {bust_text}",
+                        1
+                    )
+                else:
+                    # Fallback: add near the beginning after first comma
+                    first_comma = cleaned.find(",")
+                    if first_comma > 0:
+                        cleaned = cleaned[:first_comma + 1] + f" {bust_text}" + cleaned[first_comma + 1:]
+                    else:
+                        cleaned = f"{bust_text} {cleaned}"
             clean_prompts.append(cleaned)
 
-    logger.info("Generated prompts", requested=count, actual=len(clean_prompts))
+    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), exaggerated_bust=exaggerated_bust)
 
     return clean_prompts
