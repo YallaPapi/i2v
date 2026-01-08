@@ -10,9 +10,11 @@ MODEL_RESOLUTIONS = {
     "wan21": ["480p", "720p"],
     "wan22": ["480p", "580p", "720p"],
     "wan-pro": ["1080p"],
+    "wan26": ["720p", "1080p"],  # Wan 2.6
     "kling": ["720p", "1080p"],
     "kling-master": ["720p", "1080p"],
     "kling-standard": ["720p", "1080p"],
+    "kling26-pro": ["720p", "1080p"],  # Kling 2.6 Pro
     "veo2": ["720p"],
     "veo31": ["720p", "1080p"],
     "veo31-fast": ["720p", "1080p"],
@@ -22,6 +24,8 @@ MODEL_RESOLUTIONS = {
     "sora-2-pro": ["720p", "1080p"],
     "luma": ["540p", "720p", "1080p"],
     "luma-ray2": ["540p", "720p", "1080p"],
+    "cogvideox": ["480p", "720p"],  # CogVideoX-5B
+    "stable-video": ["576p"],  # SVD fixed resolution
 }
 
 
@@ -31,16 +35,18 @@ class JobCreate(BaseModel):
     image_url: str
     motion_prompt: str
     negative_prompt: Optional[str] = None
-    resolution: Literal["480p", "580p", "720p", "1080p"] = "1080p"
-    duration_sec: Literal[5, 10] = 5
+    resolution: Literal["480p", "576p", "580p", "720p", "1080p"] = "1080p"
+    duration_sec: Literal[5, 10, 15] = 5  # 15s supported by Wan 2.6
     model: Literal[
         "wan",
         "wan21",
         "wan22",
         "wan-pro",
+        "wan26",
         "kling",
         "kling-master",
         "kling-standard",
+        "kling26-pro",
         "veo2",
         "veo31-fast",
         "veo31",
@@ -50,6 +56,8 @@ class JobCreate(BaseModel):
         "sora-2-pro",
         "luma",
         "luma-ray2",
+        "cogvideox",
+        "stable-video",
     ] = "wan"
 
     @field_validator("resolution")
@@ -263,9 +271,11 @@ class I2VConfig(BaseModel):
         "wan21",
         "wan22",
         "wan-pro",
+        "wan26",
         "kling",
         "kling-master",
         "kling-standard",
+        "kling26-pro",
         "veo2",
         "veo31-fast",
         "veo31",
@@ -275,10 +285,12 @@ class I2VConfig(BaseModel):
         "sora-2-pro",
         "luma",
         "luma-ray2",
+        "cogvideox",
+        "stable-video",
     ] = "kling"
     videos_per_image: int = 1
-    resolution: Literal["480p", "580p", "720p", "1080p"] = "1080p"
-    duration_sec: Literal[5, 10] = 5
+    resolution: Literal["480p", "576p", "580p", "720p", "1080p"] = "1080p"
+    duration_sec: Literal[5, 10, 15] = 5  # 15s supported by Wan 2.6
 
     @field_validator("resolution")
     @classmethod
@@ -535,9 +547,11 @@ class BulkI2VConfig(BaseModel):
         "wan21",
         "wan22",
         "wan-pro",
+        "wan26",
         "kling",
         "kling-master",
         "kling-standard",
+        "kling26-pro",
         "veo2",
         "veo31-fast",
         "veo31",
@@ -547,11 +561,13 @@ class BulkI2VConfig(BaseModel):
         "sora-2-pro",
         "luma",
         "luma-ray2",
+        "cogvideox",
+        "stable-video",
     ] = "kling"
-    resolution: Literal["480p", "720p", "1080p"] = "1080p"
-    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
+    resolution: Literal["480p", "576p", "720p", "1080p"] = "1080p"
+    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12, Wan26 5/10/15
     negative_prompt: Optional[str] = None
-    enable_audio: bool = False  # Veo 3.1 models only - adds audio (costs 1.5-2x more)
+    enable_audio: bool = False  # Veo/Kling26 models - adds audio (costs 1.5-2x more)
 
 
 class BulkPipelineCreate(BaseModel):
@@ -630,9 +646,11 @@ class AnimateSelectedRequest(BaseModel):
         "wan21",
         "wan22",
         "wan-pro",
+        "wan26",
         "kling",
         "kling-master",
         "kling-standard",
+        "kling26-pro",
         "veo2",
         "veo31-fast",
         "veo31",
@@ -642,11 +660,13 @@ class AnimateSelectedRequest(BaseModel):
         "sora-2-pro",
         "luma",
         "luma-ray2",
+        "cogvideox",
+        "stable-video",
     ] = "kling"
-    resolution: Literal["480p", "720p", "1080p"] = "1080p"
-    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
+    resolution: Literal["480p", "576p", "720p", "1080p"] = "1080p"
+    duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12, Wan26 5/10/15
     negative_prompt: Optional[str] = None
-    enable_audio: bool = False  # Veo 3.1 models only
+    enable_audio: bool = False  # Veo/Kling26 models
     name: str = "Animate Selected"
 
 

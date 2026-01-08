@@ -139,7 +139,6 @@ const I2V_MODELS: ModelOption[] = [
     priceValue: 0.07,
     provider: 'Kling',
     description: 'Fast turbo generation',
-    recommended: true,
   },
   {
     value: 'kling-standard',
@@ -264,6 +263,43 @@ const I2V_MODELS: ModelOption[] = [
     priceValue: 0.05,
     provider: 'Luma',
     description: 'Ray2 - higher quality, better physics',
+  },
+  // Wan 2.6 (latest)
+  {
+    value: 'wan26',
+    label: 'Wan 2.6',
+    price: '$0.10-0.15/s',
+    priceValue: 0.125,
+    provider: 'Wan',
+    description: '720p/1080p, 5/10/15s durations - latest Wan',
+  },
+  // Kling 2.6 Pro (latest with native audio)
+  {
+    value: 'kling26-pro',
+    label: 'Kling 2.6 Pro',
+    price: '$0.07/s',
+    priceValue: 0.07,
+    provider: 'Kling',
+    description: 'Native audio support, highest quality',
+    recommended: true,
+  },
+  // CogVideoX (flat rate)
+  {
+    value: 'cogvideox',
+    label: 'CogVideoX-5B',
+    price: '$0.20/vid',
+    priceValue: 0.20,
+    provider: 'CogVideo',
+    description: 'Flat rate, good for short clips',
+  },
+  // Stable Video Diffusion
+  {
+    value: 'stable-video',
+    label: 'Stable Video Diffusion',
+    price: '$0.075/vid',
+    priceValue: 0.075,
+    provider: 'Stability AI',
+    description: 'Budget option, image-only (no prompt)',
   },
 ]
 

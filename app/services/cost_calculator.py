@@ -70,6 +70,21 @@ class CostCalculator:
         # Luma Dream Machine models - per-second
         "luma": Decimal("0.032"),  # Luma base (5s=$0.16, 9s=$0.29)
         "luma-ray2": Decimal("0.05"),  # Luma Ray2 (5s=$0.25, 9s=$0.45)
+        # Wan 2.6 - resolution-based per-second (5/10/15s durations)
+        "wan26": {
+            "720p": Decimal("0.10"),
+            "1080p": Decimal("0.15"),
+        },
+        # Kling 2.6 Pro - per-second (supports native audio for 2x price)
+        "kling26-pro": Decimal("0.07"),  # Audio off = $0.07/s, audio on = $0.14/s
+    }
+
+    # Flat rate per-video pricing (not per-second)
+    I2V_FLAT_PRICING = {
+        # CogVideoX-5B
+        "cogvideox": Decimal("0.20"),  # $0.20/video flat
+        # Stable Video Diffusion
+        "stable-video": Decimal("0.075"),  # $0.075/video flat
     }
 
     # Wan 2.1 uses FLAT per-video pricing (not per-second)
@@ -107,12 +122,16 @@ class CostCalculator:
         """Get price per video for I2V model.
 
         Uses per-second pricing and multiplies by actual duration.
-        Wan 2.1 is special - it uses flat per-video pricing.
+        Wan 2.1, CogVideoX, and Stable Video use flat per-video pricing.
         """
         # Special case: Wan 2.1 uses flat per-video pricing
         if model == "wan21":
             flat_price = self.WAN21_FLAT_PRICING.get(resolution, Decimal("0.40"))
             return flat_price
+
+        # Special case: Flat-rate models (CogVideoX, SVD)
+        if model in self.I2V_FLAT_PRICING:
+            return self.I2V_FLAT_PRICING[model]
 
         # Get per-second rate
         pricing = self.I2V_PRICING_PER_SEC.get(model)

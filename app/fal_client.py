@@ -103,6 +103,30 @@ MODELS = {
         "status_url": "https://queue.fal.run/fal-ai/luma-dream-machine",
         "pricing": "$0.05/s (5s=$0.25, 9s=$0.45) - better quality",
     },
+    # Wan 2.6 model (latest Wan version)
+    "wan26": {
+        "submit_url": "https://queue.fal.run/wan/v2.6/image-to-video",
+        "status_url": "https://queue.fal.run/wan/v2.6",
+        "pricing": "720p=$0.10/s, 1080p=$0.15/s (5/10/15s durations)",
+    },
+    # Kling 2.6 Pro model (latest Kling with native audio)
+    "kling26-pro": {
+        "submit_url": "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/kling-video",
+        "pricing": "$0.07/s (audio off), $0.14/s (audio on)",
+    },
+    # CogVideoX-5B (flat rate pricing)
+    "cogvideox": {
+        "submit_url": "https://queue.fal.run/fal-ai/cogvideox-5b/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/cogvideox-5b",
+        "pricing": "$0.20/video (flat rate)",
+    },
+    # Stable Video Diffusion (no prompt, image-only)
+    "stable-video": {
+        "submit_url": "https://queue.fal.run/fal-ai/stable-video",
+        "status_url": "https://queue.fal.run/fal-ai/stable-video",
+        "pricing": "$0.075/video (flat rate)",
+    },
 }
 
 ModelType = Literal[
@@ -110,9 +134,11 @@ ModelType = Literal[
     "wan21",
     "wan22",
     "wan-pro",
+    "wan26",
     "kling",
     "kling-master",
     "kling-standard",
+    "kling26-pro",
     "veo2",
     "veo31-fast",
     "veo31",
@@ -122,6 +148,8 @@ ModelType = Literal[
     "sora-2-pro",
     "luma",
     "luma-ray2",
+    "cogvideox",
+    "stable-video",
 ]
 
 # Default negative prompt - used when none specified
@@ -237,6 +265,55 @@ def _build_payload(
             "duration": luma_duration,
             "aspect_ratio": "9:16",
             "resolution": luma_resolution,
+        }
+    # Wan 2.6 model - duration: 5, 10, or 15 seconds
+    elif model == "wan26":
+        # Wan 2.6 supports 5, 10, 15 second durations
+        wan26_duration = "15" if duration_sec >= 12 else ("10" if duration_sec >= 8 else "5")
+        wan26_resolution = resolution if resolution in ("720p", "1080p") else "720p"
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": wan26_duration,
+            "resolution": wan26_resolution,
+            "aspect_ratio": "9:16",
+            "negative_prompt": neg_prompt,
+        }
+    # Kling 2.6 Pro model - duration: 5 or 10 seconds, supports native audio
+    elif model == "kling26-pro":
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": str(duration_sec),
+            "aspect_ratio": "9:16",
+            "negative_prompt": neg_prompt,
+            "generate_audio": enable_audio,
+        }
+    # CogVideoX-5B - flat rate, configurable settings
+    elif model == "cogvideox":
+        # Map resolution to CogVideoX video_size format
+        cogvideo_size_map = {
+            "480p": "portrait_4_3",  # ~480x640
+            "720p": "portrait_16_9",  # ~720x1280
+            "1080p": "portrait_16_9",  # API caps at 720p for i2v
+        }
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "video_size": cogvideo_size_map.get(resolution, "portrait_16_9"),
+            "negative_prompt": neg_prompt,
+            "num_inference_steps": 50,
+            "guidance_scale": 7,
+            "use_rife": True,
+            "export_fps": 16,
+        }
+    # Stable Video Diffusion - image-only, no prompt support
+    elif model == "stable-video":
+        return {
+            "image_url": image_url,
+            "motion_bucket_id": 127,  # 1-255, controls motion intensity
+            "cond_aug": 0.02,  # Conditioning noise
+            "fps": 25,
         }
     else:
         raise ValueError(f"Unknown model: {model}")
