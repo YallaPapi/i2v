@@ -357,13 +357,55 @@ async def download_file(url: str = Query(..., description="URL of file to downlo
 
 @router.post("/restart")
 async def restart_server():
-    """Restart the server by touching main.py to trigger uvicorn reload."""
+    """Restart the server by spawning a delayed new process and exiting."""
+    import asyncio
+    import subprocess
+    import sys
+    import os
     from pathlib import Path
-    import app.main
-    main_file = Path(app.main.__file__)
-    main_file.touch()
-    logger.info("Server restart triggered via API")
-    return {"status": "restarting", "message": "Server will restart in ~1 second"}
+
+    # Clear pycache to ensure fresh imports
+    app_dir = Path(__file__).parent.parent
+    for pycache in app_dir.rglob("__pycache__"):
+        if pycache.is_dir():
+            import shutil
+            shutil.rmtree(pycache, ignore_errors=True)
+
+    logger.info("Server restart triggered via API - cleared pycache")
+
+    # Get the project root directory
+    project_root = app_dir.parent
+    python_exe = sys.executable
+
+    async def delayed_restart():
+        await asyncio.sleep(0.2)
+        logger.info("Spawning restart script and exiting...")
+
+        # On Windows, spawn a cmd that waits 2 seconds then starts the server
+        # This ensures the port is released before the new server tries to bind
+        if sys.platform == "win32":
+            # Use cmd /c with timeout to delay the start
+            restart_cmd = f'cmd /c "timeout /t 2 /nobreak >nul && cd /d {project_root} && {python_exe} -m uvicorn app.main:app --host 0.0.0.0 --port 8000"'
+            subprocess.Popen(
+                restart_cmd,
+                shell=True,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            )
+        else:
+            # On Unix, use sleep and nohup
+            restart_cmd = f'sleep 2 && cd {project_root} && {python_exe} -m uvicorn app.main:app --host 0.0.0.0 --port 8000'
+            subprocess.Popen(
+                ['nohup', 'sh', '-c', restart_cmd],
+                start_new_session=True,
+            )
+
+        # Exit current process
+        await asyncio.sleep(0.1)
+        os._exit(0)
+
+    asyncio.create_task(delayed_restart())
+
+    return {"status": "restarting", "message": "Server will restart in ~3 seconds"}
 
 
 @router.get("/{pipeline_id}", response_model=PipelineResponse)
@@ -507,12 +549,18 @@ async def _execute_pipeline_task(pipeline_id: int):
             aspect_ratio: str = "9:16",
             quality: str = "high",
             negative_prompt: str = None,
-            # FLUX-specific parameters
+            # FLUX-specific parameters (accepted but only used for FLUX models)
             flux_strength: float = None,
             flux_guidance_scale: float = None,
             flux_num_inference_steps: int = None,
             flux_seed: int = None,
             flux_scheduler: str = None,
+            flux_image_urls: list = None,
+            flux_output_format: str = None,
+            flux_enable_safety_checker: bool = None,
+            flux_enable_prompt_expansion: bool = None,
+            flux_safety_tolerance: str = None,
+            flux_acceleration: str = None,
         ):
             urls = await generate_image(
                 image_url=source_image_url,
@@ -527,6 +575,7 @@ async def _execute_pipeline_task(pipeline_id: int):
                 flux_num_inference_steps=flux_num_inference_steps,
                 flux_seed=flux_seed,
                 flux_scheduler=flux_scheduler,
+                flux_image_urls=flux_image_urls,
             )
             return urls
 
@@ -766,6 +815,7 @@ async def enhance_prompts(
             theme_focus=request.theme_focus,
             mode=request.mode,
             categories=request.categories,
+            intensity=request.intensity,
         )
 
         total_count = sum(len(variations) for variations in enhanced)

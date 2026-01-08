@@ -31,7 +31,7 @@ export function ConfirmGenerationModal({
   bulkMode,
 }: ConfirmGenerationModalProps) {
   const [dontAskAgain, setDontAskAgain] = useState(false)
-  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
+  const [, setThreshold] = useState(DEFAULT_THRESHOLD)
 
   useEffect(() => {
     const saved = localStorage.getItem(THRESHOLD_KEY)

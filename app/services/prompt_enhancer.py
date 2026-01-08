@@ -68,8 +68,28 @@ class PromptEnhancer:
         theme_focus: Optional[str],
         mode: str = "quick_improve",
         categories: Optional[List[str]] = None,
+        intensity: Literal["subtle", "moderate", "wild"] = "moderate",
     ) -> str:
         """Generate system prompt for Claude."""
+
+        # Intensity instructions
+        intensity_instructions = {
+            "subtle": """VARIATION INTENSITY: SUBTLE
+- Make only minor tweaks to the original prompt
+- Keep the same location, outfit, and overall vibe
+- Change small details: lighting angle, slight pose shift, minor expression change
+- Variations should feel like the same photoshoot, different frame""",
+            "moderate": """VARIATION INTENSITY: MODERATE
+- Create variations with the same concept but different execution
+- Keep the same niche/theme but change specific elements
+- Can vary: different location in same category, different outfit in same style, different pose
+- Variations should feel like the same influencer, different day""",
+            "wild": """VARIATION INTENSITY: WILD
+- Remix the prompt significantly while keeping the core niche
+- Can change most elements: location, outfit, pose, mood, time of day
+- Keep only the essential subject and niche consistent
+- Variations should feel like the same person, totally different content"""
+        }
 
         if target == "i2v":
             # Motion-focused prompt for video
@@ -125,16 +145,20 @@ RULES:
 Output format: Return ONLY a valid JSON array of {count} strings, no other text."""
 
         else:  # i2i
+            intensity_text = intensity_instructions.get(intensity, intensity_instructions["moderate"])
+
             if mode == "quick_improve":
                 system = f"""You are a visual description expert for image-to-image AI.
-Enhance the user's prompt to be more descriptive. Generate {count} variations.
+Enhance the user's prompt to create {count} variations.
+
+{intensity_text}
 
 RULES:
 - Add visual details: composition, mood, artistic touches
 - Keep the same subject and core concept
 - Style preference: {style}
 {"- Focus on: " + theme_focus if theme_focus else ""}
-- Keep prompts concise: 1-2 sentences
+- Keep prompts concise but complete - include all essential elements from the original
 
 Output format: Return ONLY a valid JSON array of {count} strings, no other text."""
             else:  # category_based
@@ -154,13 +178,15 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
                 system = f"""You are a visual description expert for image-to-image AI.
 Enhance the user's prompt with specific focus areas. Generate {count} variations.
 
+{intensity_text}
+
 FOCUS AREAS:
 {cat_text}
 
 RULES:
 - Keep the same subject and core concept
 - Only add details related to the selected focus areas
-- Keep prompts concise: 1-2 sentences
+- Keep prompts concise but complete
 
 Output format: Return ONLY a valid JSON array of {count} strings, no other text."""
 
@@ -175,6 +201,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         theme_focus: Optional[str] = None,
         mode: str = "quick_improve",
         categories: Optional[List[str]] = None,
+        intensity: Literal["subtle", "moderate", "wild"] = "moderate",
     ) -> List[str]:
         """
         Enhance a simple prompt into multiple detailed variations.
@@ -187,6 +214,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
             theme_focus: Optional focus area (e.g., "outfits", "poses")
             mode: Enhancement mode ("quick_improve" or "category_based")
             categories: List of categories to focus on
+            intensity: Variation intensity ("subtle", "moderate", "wild")
 
         Returns:
             List of enhanced prompt variations
@@ -202,7 +230,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
 
         try:
             system_prompt = self._get_system_prompt(
-                target, count, style, theme_focus, mode, categories
+                target, count, style, theme_focus, mode, categories, intensity
             )
 
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -346,6 +374,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         theme_focus: Optional[str] = None,
         mode: str = "quick_improve",
         categories: Optional[List[str]] = None,
+        intensity: Literal["subtle", "moderate", "wild"] = "moderate",
     ) -> List[List[str]]:
         """
         Enhance multiple prompts.
@@ -358,6 +387,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
             theme_focus: Optional focus area
             mode: Enhancement mode
             categories: Categories to focus on
+            intensity: Variation intensity (subtle/moderate/wild)
 
         Returns:
             List of enhanced prompt lists (one per input prompt)
@@ -365,7 +395,7 @@ Output format: Return ONLY a valid JSON array of {count} strings, no other text.
         results = []
         for prompt in prompts:
             enhanced = await self.enhance_prompt(
-                prompt, target, count, style, theme_focus, mode, categories
+                prompt, target, count, style, theme_focus, mode, categories, intensity
             )
             results.append(enhanced)
         return results

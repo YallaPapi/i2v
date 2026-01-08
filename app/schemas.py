@@ -451,6 +451,7 @@ class PromptEnhanceRequest(BaseModel):
     categories: Optional[List[str]] = (
         None  # e.g., ["camera_movement", "motion_intensity"]
     )
+    intensity: Literal["subtle", "moderate", "wild"] = "moderate"
 
 
 class PromptEnhanceResponse(BaseModel):
@@ -644,9 +645,12 @@ class PromptGeneratorRequest(BaseModel):
     """Request to generate i2i prompts with on-screen captions."""
 
     count: int = 10  # 1-50 prompts
-    style: Literal["cosplay", "cottagecore"] = "cosplay"
+    style: Literal["cosplay", "cottagecore", "gym", "bookish", "nurse"] = "cosplay"
     location: Literal["outdoor", "indoor", "mixed"] = "mixed"
     exaggerated_bust: bool = False  # Add exaggerated bust description to prompts
+    preserve_identity: bool = True  # Add "preserving her exact facial features" to prompts
+    framing: Literal["close", "medium", "full"] = "medium"  # close=face/shoulders, medium=waist up, full=head to toe
+    realism: bool = True  # Add anti-painted-background modifiers for realistic environments
 
 
 class PromptGeneratorResponse(BaseModel):
@@ -656,3 +660,5 @@ class PromptGeneratorResponse(BaseModel):
     count: int
     style: str
     location: str
+    framing: str = "medium"
+    realism: bool = True

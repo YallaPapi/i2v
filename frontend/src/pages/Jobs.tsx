@@ -1,9 +1,9 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+// Card imports removed - using flat layout now
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
-import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Layers, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Loader2, RotateCcw, Search } from 'lucide-react'
+import { Image as ImageIcon, CheckCircle, XCircle, Clock, RefreshCw, Play, Download, Star, EyeOff, Eye, X, Plus, ChevronDown, ChevronUp, Loader2, RotateCcw, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { PipelineCardSkeleton, OutputGridSkeleton } from '@/components/ui/skeleton'
 import {
@@ -45,6 +45,14 @@ const STATUS_OPTIONS = [
   { value: 'running', label: 'Running' },
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
+]
+
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest First' },
+  { value: 'oldest', label: 'Oldest First' },
+  { value: 'name', label: 'Name A-Z' },
+  { value: 'cost_high', label: 'Cost: High-Low' },
+  { value: 'cost_low', label: 'Cost: Low-High' },
 ]
 // Hover preview component for full-res image on hover
 function HoverPreview({ output, position }: {
@@ -121,6 +129,7 @@ function PipelineItem({
   const updateTags = useUpdatePipelineTags()
   const [editingTags, setEditingTags] = useState(false)
   const [newTagInput, setNewTagInput] = useState('')
+  const [showPrompts, setShowPrompts] = useState(false)
   const [hoverOutput, setHoverOutput] = useState<{ url: string; thumbnailUrl?: string; prompt?: string } | null>(null)
   const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 })
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'done'>('idle')
@@ -129,6 +138,8 @@ function PipelineItem({
   const pipelineTags = pipeline.tags || []
   const outputs = getOutputs(details)
   const pipelineSelected = outputs.filter(o => selectedOutputs.has(o.url))
+  // Get all unique prompts from outputs
+  const allPrompts = [...new Set(outputs.map(o => o.prompt).filter(Boolean))]
   const handleMouseEnter = (output: typeof outputs[0], e: React.MouseEvent) => {
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     hoverTimeoutRef.current = window.setTimeout(() => {
@@ -154,53 +165,105 @@ function PipelineItem({
     updateTags.mutate({ id: pipeline.id, tags: pipelineTags.filter(t => t !== tag) })
   }
   return (
-    <div className={`border rounded-lg p-4 ${pipeline.is_hidden ? 'opacity-60' : ''}`}>
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-3">
+    <div className={`border rounded-lg p-4 hover:border-primary/30 transition-colors ${pipeline.is_hidden ? 'opacity-60' : ''}`}>
+      {/* Main row: Status + Name + Actions */}
+      <div className="flex items-start gap-3 mb-2">
+        {/* Left: Status + Favorite */}
+        <div className="flex items-center gap-2 pt-0.5">
+          {getStatusBadge(pipeline.status)}
           <button
             onClick={() => toggleFavorite.mutate(pipeline.id)}
             className="p-1 hover:bg-muted rounded"
             disabled={toggleFavorite.isPending}
           >
-            <Star className={`h-5 w-5 ${pipeline.is_favorite ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`} />
+            <Star className={`h-4 w-4 ${pipeline.is_favorite ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`} />
           </button>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="font-medium">{pipeline.name}</p>
-              {pipeline.model_info && (
-                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">
-                  {pipeline.model_info}
-                </span>
-              )}
-              {pipeline.total_cost && (
-                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/10 text-green-500 rounded">
-                  ${pipeline.total_cost.toFixed(2)}
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {formatDate(pipeline.created_at)} • {pipeline.step_count} steps • {pipeline.output_count} outputs
-            </p>
-            {pipeline.first_prompt && (
-              <p className="text-xs text-muted-foreground/80 italic truncate max-w-md">
-                "{pipeline.first_prompt}"
-              </p>
+        </div>
+
+        {/* Center: Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold">{pipeline.name}</p>
+            {pipeline.model_info && (
+              <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">
+                {pipeline.model_info}
+              </span>
+            )}
+            {pipeline.total_cost && (
+              <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/10 text-green-500 rounded">
+                ${pipeline.total_cost.toFixed(2)}
+              </span>
             )}
           </div>
+          <p className="text-xs text-muted-foreground">
+            {formatDate(pipeline.created_at)} • {pipeline.step_count} steps • {pipeline.output_count} outputs
+          </p>
+          {pipeline.first_prompt && !showPrompts && (
+            <button
+              onClick={() => setShowPrompts(true)}
+              className="text-xs text-muted-foreground/80 italic hover:text-foreground text-left mt-0.5 flex items-center gap-1"
+            >
+              <span className="truncate max-w-lg">"{pipeline.first_prompt}"</span>
+              <ChevronDown className="h-3 w-3 flex-shrink-0" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => toggleHidden.mutate(pipeline.id)}
-            className="p-1 hover:bg-muted rounded text-muted-foreground"
-            disabled={toggleHidden.isPending}
-          >
-            {pipeline.is_hidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-          </button>
-          {getStatusBadge(pipeline.status)}
-        </div>
+
+        {/* Right: Hide button */}
+        <button
+          onClick={() => toggleHidden.mutate(pipeline.id)}
+          className="p-1.5 hover:bg-muted rounded text-muted-foreground"
+          disabled={toggleHidden.isPending}
+          title={pipeline.is_hidden ? 'Show' : 'Hide'}
+        >
+          {pipeline.is_hidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+        </button>
       </div>
-      {/* Tags */}
-      <div className="flex flex-wrap items-center gap-1 mb-2">
+
+      {/* Expanded prompts - outside main row */}
+      {showPrompts && (
+        <div className="mb-2 ml-[88px] space-y-2 bg-muted/50 rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">All Prompts ({allPrompts.length || 1})</span>
+            <button onClick={() => setShowPrompts(false)} className="text-xs text-muted-foreground hover:text-foreground">
+              <ChevronUp className="h-4 w-4" />
+            </button>
+          </div>
+          {allPrompts.length > 0 ? (
+            allPrompts.map((prompt, i) => (
+              <p key={i} className="text-xs text-muted-foreground italic border-l-2 border-primary/30 pl-2">
+                "{prompt}"
+              </p>
+            ))
+          ) : (
+            <p className="text-xs text-muted-foreground italic border-l-2 border-primary/30 pl-2">
+              "{pipeline.first_prompt}"
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Inline preview / expand button - show when collapsed */}
+      {pipeline.output_count > 0 && !isExpanded && (
+        <div className="flex items-center gap-2 mb-2 ml-[88px]">
+          <button onClick={onToggleExpand} className="flex items-center gap-1.5 group">
+            {/* Show thumbnail if available */}
+            {pipeline.first_thumbnail_url && (
+              <div className="flex -space-x-2">
+                <img src={pipeline.first_thumbnail_url} alt="" className="h-10 w-7 object-cover rounded border-2 border-background" loading="lazy" />
+              </div>
+            )}
+            <span className="text-xs text-muted-foreground group-hover:text-primary">
+              {pipeline.output_count} outputs
+              <ChevronDown className="h-3 w-3 inline ml-1" />
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Tags - only show if has tags or editing */}
+      {(pipelineTags.length > 0 || editingTags) && (
+        <div className="flex flex-wrap items-center gap-1 mb-2 ml-[88px]">
         {pipelineTags.map(tag => (
           <span key={tag} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border ${TAG_COLORS[tag] || 'bg-muted'}`}>
             {tag}
@@ -233,21 +296,29 @@ function PipelineItem({
             <Plus className="h-3 w-3" /> tag
           </button>
         )}
-      </div>
-      {/* Outputs */}
-      {pipeline.output_count > 0 && (
-        <div className="space-y-2">
-          <button onClick={onToggleExpand} className="flex items-center gap-2 text-sm font-medium hover:text-primary">
-            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            Outputs ({pipeline.output_count})
-            {pipelineSelected.length > 0 && <span className="text-primary">• {pipelineSelected.length} selected</span>}
-            {!isExpanded && pipeline.first_thumbnail_url && (
-              <img src={pipeline.first_thumbnail_url} alt="" className="h-8 w-6 object-cover rounded ml-2" loading="lazy" />
-            )}
+        </div>
+      )}
+
+      {/* Add tag button - shown when no tags and not editing */}
+      {pipelineTags.length === 0 && !editingTags && (
+        <div className="ml-[88px] mb-2">
+          <button onClick={() => setEditingTags(true)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted">
+            <Plus className="h-3 w-3" /> Add tag
           </button>
-          {isExpanded && (
-            <>
-              {isLoadingDetails ? (
+        </div>
+      )}
+
+      {/* Expanded Outputs */}
+      {pipeline.output_count > 0 && isExpanded && (
+        <div className="space-y-2 ml-[88px]">
+          <div className="flex items-center justify-between">
+            <button onClick={onToggleExpand} className="flex items-center gap-2 text-sm font-medium hover:text-primary">
+              <ChevronUp className="h-4 w-4" />
+              {pipeline.output_count} outputs
+              {pipelineSelected.length > 0 && <span className="text-primary">• {pipelineSelected.length} selected</span>}
+            </button>
+          </div>
+          {isLoadingDetails ? (
                 <OutputGridSkeleton count={Math.min(pipeline.output_count, 8)} />
               ) : outputs.length > 0 ? (
                 <>
@@ -339,8 +410,6 @@ function PipelineItem({
                   <HoverPreview output={hoverOutput} position={hoverPosition} />
                 </>
               ) : <p className="text-sm text-muted-foreground">No outputs</p>}
-            </>
-          )}
         </div>
       )}
     </div>
@@ -357,6 +426,7 @@ export function Jobs() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE)
   const [restartState, setRestartState] = useState<'idle' | 'restarting' | 'done'>('idle')
+  const [sortBy, setSortBy] = useState('newest')
 
   // Debounce search input
   useEffect(() => {
@@ -377,8 +447,32 @@ export function Jobs() {
     offset: 0,
   }), [demoMode, showHidden, tagFilter, statusFilter, debouncedSearch, displayCount])
   const { data, isLoading, isFetching, refetch } = usePipelines(queryParams)
-  const pipelines = data?.pipelines || []
+  const rawPipelines = data?.pipelines || []
   const total = data?.total || 0
+
+  // Sort pipelines client-side
+  const pipelines = useMemo(() => {
+    const sorted = [...rawPipelines]
+    switch (sortBy) {
+      case 'oldest':
+        sorted.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        break
+      case 'name':
+        sorted.sort((a, b) => a.name.localeCompare(b.name))
+        break
+      case 'cost_high':
+        sorted.sort((a, b) => (b.total_cost || 0) - (a.total_cost || 0))
+        break
+      case 'cost_low':
+        sorted.sort((a, b) => (a.total_cost || 0) - (b.total_cost || 0))
+        break
+      case 'newest':
+      default:
+        sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        break
+    }
+    return sorted
+  }, [rawPipelines, sortBy])
   // Reset display count when filters change (intentional - resets pagination on filter change)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -410,42 +504,12 @@ export function Jobs() {
     })
   }, [])
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">All Jobs</h1>
-          <p className="text-muted-foreground">View and manage all your generation jobs</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative w-48">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search jobs..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="pl-8 h-9"
-            />
-            {searchInput && (
-              <button
-                onClick={() => setSearchInput('')}
-                className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Button variant={demoMode ? 'default' : 'outline'} size="sm" onClick={() => setDemoMode(!demoMode)} className="gap-1" title="Show only favorited jobs">
-            <Star className={`h-4 w-4 ${demoMode ? 'fill-current' : ''}`} /> {demoMode ? 'Favorites Only' : 'Favorites'}
-          </Button>
-          <Button variant={showHidden ? 'secondary' : 'outline'} size="sm" onClick={() => setShowHidden(!showHidden)} className="gap-1">
-            {showHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-            {showHidden ? 'Showing Hidden' : 'Hidden'}
-          </Button>
-          <Select options={[{ value: '', label: 'All Tags' }, ...QUICK_TAGS.map(t => ({ value: t, label: t }))]} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
-          <div className="w-36">
-            <Select options={STATUS_OPTIONS} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
-          </div>
-          <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isFetching}>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <h1 className="text-2xl font-bold tracking-tight">Jobs</h1>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isFetching} title="Refresh">
             <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
           </Button>
           <Button
@@ -482,20 +546,59 @@ export function Jobs() {
             ) : restartState === 'done' ? (
               <><CheckCircle className="h-4 w-4" /> Restarted!</>
             ) : (
-              <><RotateCcw className="h-4 w-4" /> Restart Server</>
+              <><RotateCcw className="h-4 w-4" /> Restart</>
             )}
           </Button>
         </div>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Layers className="h-5 w-5" /> All Jobs ({pipelines.length}{total > pipelines.length ? ` / ${total}` : ''})
-          </CardTitle>
-          <CardDescription>Your generated photos and videos from the Playground</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
+
+      {/* Filters Row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[200px] max-w-[300px]">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search jobs..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="pl-8 h-9"
+          />
+          {searchInput && (
+            <button
+              onClick={() => setSearchInput('')}
+              className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* View toggles */}
+        <div className="flex items-center gap-1 border rounded-md p-1">
+          <Button variant={demoMode ? 'default' : 'ghost'} size="sm" onClick={() => setDemoMode(!demoMode)} className="h-7 gap-1 px-2" title="Show only favorited jobs">
+            <Star className={`h-3.5 w-3.5 ${demoMode ? 'fill-current' : ''}`} />
+            <span className="hidden sm:inline">Favorites</span>
+          </Button>
+          <Button variant={showHidden ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowHidden(!showHidden)} className="h-7 gap-1 px-2">
+            {showHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">Hidden</span>
+          </Button>
+        </div>
+
+        {/* Filters */}
+        <Select options={[{ value: '', label: 'All Tags' }, ...QUICK_TAGS.map(t => ({ value: t, label: t }))]} value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+        <Select options={STATUS_OPTIONS} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
+        <Select options={SORT_OPTIONS} value={sortBy} onChange={(e) => setSortBy(e.target.value)} />
+
+        {/* Count */}
+        <span className="text-sm text-muted-foreground ml-auto">
+          {pipelines.length}{total > pipelines.length ? ` of ${total}` : ''} jobs
+        </span>
+      </div>
+
+      {/* Jobs List */}
+      <div className="space-y-3">
+        {isLoading ? (
             <div className="space-y-4">
               {Array.from({ length: 5 }).map((_, i) => <PipelineCardSkeleton key={i} />)}
             </div>
@@ -522,12 +625,11 @@ export function Jobs() {
               )}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No pipeline jobs found. Go to Playground to create one.
+            <p className="text-sm text-muted-foreground text-center py-12 border rounded-lg">
+              No jobs found. Go to Playground to create one.
             </p>
           )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   )
 }

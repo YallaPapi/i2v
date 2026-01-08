@@ -93,8 +93,17 @@ export function usePipelines(params?: {
   return useQuery({
     queryKey: ['pipelines', params],
     queryFn: () => listPipelines(params),
-    staleTime: 5 * 60 * 1000, // 5 minute cache - data changes rarely
-    refetchOnWindowFocus: false, // Don't refetch when switching tabs
+    staleTime: 10 * 1000, // 10 second cache for fresher data
+    // Smart auto-refresh: poll when there are running jobs, stop when all done
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data?.pipelines) return false
+      // Check if any pipelines are still processing
+      const hasRunning = data.pipelines.some(
+        (p: { status: string }) => ['pending', 'submitted', 'running'].includes(p.status)
+      )
+      return hasRunning ? 5000 : false // Poll every 5s when jobs running, otherwise stop
+    },
   })
 }
 
@@ -104,7 +113,16 @@ export function usePipelineDetails(id: number, enabled: boolean = false) {
     queryKey: ['pipeline', id],
     queryFn: () => getPipeline(id),
     enabled, // Only fetch when expanded
-    staleTime: 5 * 60 * 1000, // 5 minute cache
+    staleTime: 10 * 1000, // 10 second cache for fresher data
+    // Auto-refresh when pipeline is still running
+    refetchInterval: (query) => {
+      if (!enabled) return false
+      const data = query.state.data
+      if (!data) return 5000 // Keep polling until we get data
+      // Check if pipeline is still processing
+      const isRunning = ['pending', 'submitted', 'running'].includes(data.status)
+      return isRunning ? 5000 : false // Poll every 5s when running, otherwise stop
+    },
   })
 }
 

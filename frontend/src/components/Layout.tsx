@@ -65,7 +65,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Main content */}
-      <main className="container py-6">{children}</main>
+      <main className="container py-6 px-4 lg:px-8">{children}</main>
     </div>
   )
 }

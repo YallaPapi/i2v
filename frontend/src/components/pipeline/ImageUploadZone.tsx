@@ -31,6 +31,7 @@ export function ImageUploadZone({
   className,
 }: ImageUploadZoneProps) {
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState({ completed: 0, total: 0 })
   const [urlInput, setUrlInput] = useState('')
   const [showUrlInput, setShowUrlInput] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,14 +73,23 @@ export function ImageUploadZone({
     setError(null)
     setIsUploading(true)
 
+    const filesToUpload = acceptedFiles.slice(0, maxFiles - images.length)
+    setUploadProgress({ completed: 0, total: filesToUpload.length })
+
     try {
-      const filesToUpload = acceptedFiles.slice(0, maxFiles - images.length)
-      const uploadPromises = filesToUpload.map(uploadFile)
-      const results = await Promise.all(uploadPromises)
-      const successfulUploads = results
-        .filter((r) => r.image !== null)
-        .map((r) => r.image as UploadedImage)
-      const errors = results.filter((r) => r.error).map((r) => r.error)
+      const successfulUploads: UploadedImage[] = []
+      const errors: string[] = []
+
+      // Upload files sequentially to track progress
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const result = await uploadFile(filesToUpload[i])
+        if (result.image) {
+          successfulUploads.push(result.image)
+        } else if (result.error) {
+          errors.push(result.error)
+        }
+        setUploadProgress({ completed: i + 1, total: filesToUpload.length })
+      }
 
       if (errors.length > 0) {
         setError(errors[0] || 'Some files failed to upload')
@@ -88,6 +98,7 @@ export function ImageUploadZone({
       onImagesChange([...images, ...successfulUploads])
     } finally {
       setIsUploading(false)
+      setUploadProgress({ completed: 0, total: 0 })
     }
   }, [images, maxFiles, disabled, onImagesChange])
 
@@ -146,7 +157,19 @@ export function ImageUploadZone({
         {isUploading ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Uploading images...</p>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">
+                Uploading {uploadProgress.completed} of {uploadProgress.total} images...
+              </p>
+              {uploadProgress.total > 0 && (
+                <div className="w-48 h-2 bg-muted rounded-full mt-2 overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${(uploadProgress.completed / uploadProgress.total) * 100}%` }}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         ) : images.length === 0 ? (
           <div className="flex flex-col items-center gap-3">

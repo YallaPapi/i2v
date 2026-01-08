@@ -71,6 +71,7 @@ export function Playground() {
   const [fluxAcceleration, setFluxAcceleration] = useState<'none' | 'regular' | 'high'>(() =>
     (localStorage.getItem('i2v_fluxAcceleration') as 'none' | 'regular' | 'high') || 'regular'
   )
+  const [showFluxAdvanced, setShowFluxAdvanced] = useState(false)
 
   // I2V Settings
   const [i2vModel, setI2vModel] = useState('kling')
@@ -122,7 +123,7 @@ export function Playground() {
 
   // Pipeline State
   const [isGenerating, setIsGenerating] = useState(false)
-  const [pipelineStatus, setPipelineStatus] = useState<'pending' | 'running' | 'paused' | 'completed' | 'failed'>('pending')
+  const [pipelineStatus, setPipelineStatus] = useState<'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'>('pending')
 
   // Bulk Mode State - persisted to localStorage
   const [bulkMode, setBulkMode] = useState<'photos' | 'videos' | 'both'>(() => {
@@ -148,6 +149,7 @@ export function Playground() {
   // Prompt enhancement settings
   const [enhanceMode, setEnhanceMode] = useState<'location' | 'outfit' | 'expression' | 'rewrite' | 'random'>('random')
   const [enhanceCount, setEnhanceCount] = useState(3)
+  const [enhanceIntensity, setEnhanceIntensity] = useState<'subtle' | 'moderate' | 'wild'>('moderate')
   const [bulkCostEstimate, setBulkCostEstimate] = useState<BulkCostEstimate | null>(null)
   const [bulkPipelineId, setBulkPipelineId] = useState<number | null>(null)
   const [runName, setRunName] = useState('')
@@ -170,16 +172,19 @@ export function Playground() {
   }
   const [recentI2iPrompts, setRecentI2iPrompts] = useState<RecentPrompt[]>([])
   const [recentI2vPrompts, setRecentI2vPrompts] = useState<RecentPrompt[]>([])
-  const [showRecentI2i, setShowRecentI2i] = useState(false)
-  const [showRecentI2v, setShowRecentI2v] = useState(false)
+  const [showRecentI2i, setShowRecentI2i] = useState(true)  // Show by default when prompts exist
+  const [showRecentI2v, setShowRecentI2v] = useState(true)  // Show by default when prompts exist
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null)
 
   // Prompt Builder state
   const [showPromptBuilder, setShowPromptBuilder] = useState(false)
-  const [promptBuilderStyle, setPromptBuilderStyle] = useState<'cosplay' | 'cottagecore'>('cosplay')
+  const [promptBuilderStyle, setPromptBuilderStyle] = useState<'cosplay' | 'cottagecore' | 'gym' | 'bookish' | 'nurse'>('cosplay')
   const [promptBuilderLocation, setPromptBuilderLocation] = useState<'outdoor' | 'indoor' | 'mixed'>('mixed')
   const [promptBuilderCount, setPromptBuilderCount] = useState(10)
   const [promptBuilderExaggeratedBust, setPromptBuilderExaggeratedBust] = useState(false)
+  const [promptBuilderPreserveIdentity, setPromptBuilderPreserveIdentity] = useState(true)
+  const [promptBuilderFraming, setPromptBuilderFraming] = useState<'close' | 'medium' | 'full'>('medium')
+  const [promptBuilderRealism, setPromptBuilderRealism] = useState(true)
   const [promptBuilderLoading, setPromptBuilderLoading] = useState(false)
   const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([])
   const [promptBuilderCopied, setPromptBuilderCopied] = useState(false)
@@ -311,6 +316,9 @@ export function Playground() {
         style: promptBuilderStyle,
         location: promptBuilderLocation,
         exaggerated_bust: promptBuilderExaggeratedBust,
+        preserve_identity: promptBuilderPreserveIdentity,
+        framing: promptBuilderFraming,
+        realism: promptBuilderRealism,
       }
       console.log('[PromptBuilder] Request body:', requestBody)
 
@@ -408,6 +416,7 @@ export function Playground() {
           style: 'photorealistic',
           mode: enhanceMode === 'rewrite' ? 'quick_improve' : 'category_based',
           categories: modeToCategories[enhanceMode] || [],
+          intensity: enhanceIntensity,
         }),
       })
 
@@ -983,17 +992,20 @@ export function Playground() {
                     {showPromptBuilder && (
                       <CardContent className="space-y-4">
                         {/* Settings Row */}
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-4 gap-3">
                           <div className="space-y-1">
-                            <Label className="text-xs">Style</Label>
+                            <Label className="text-xs">Style/Niche</Label>
                             <select
                               value={promptBuilderStyle}
-                              onChange={(e) => setPromptBuilderStyle(e.target.value as 'cosplay' | 'cottagecore')}
+                              onChange={(e) => setPromptBuilderStyle(e.target.value as 'cosplay' | 'cottagecore' | 'gym' | 'bookish' | 'nurse')}
                               className="w-full h-9 px-2 text-sm rounded-md border bg-background"
                               disabled={promptBuilderLoading}
                             >
                               <option value="cosplay">Cosplay (anime)</option>
                               <option value="cottagecore">Cottagecore</option>
+                              <option value="gym">Gym / Fitness</option>
+                              <option value="bookish">Bookish / Dark Academia</option>
+                              <option value="nurse">Nurse / Medical</option>
                             </select>
                           </div>
                           <div className="space-y-1">
@@ -1010,6 +1022,19 @@ export function Playground() {
                             </select>
                           </div>
                           <div className="space-y-1">
+                            <Label className="text-xs">Framing</Label>
+                            <select
+                              value={promptBuilderFraming}
+                              onChange={(e) => setPromptBuilderFraming(e.target.value as 'close' | 'medium' | 'full')}
+                              className="w-full h-9 px-2 text-sm rounded-md border bg-background"
+                              disabled={promptBuilderLoading}
+                            >
+                              <option value="close">Close (face)</option>
+                              <option value="medium">Medium (waist up)</option>
+                              <option value="full">Full body</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
                             <Label className="text-xs">Count</Label>
                             <input
                               type="number"
@@ -1023,17 +1048,39 @@ export function Playground() {
                           </div>
                         </div>
 
-                        {/* Exaggerated Bust Toggle */}
-                        <label className="flex items-center gap-2 text-sm cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={promptBuilderExaggeratedBust}
-                            onChange={(e) => setPromptBuilderExaggeratedBust(e.target.checked)}
-                            disabled={promptBuilderLoading}
-                            className="rounded"
-                          />
-                          <span className="text-muted-foreground">Exaggerated bust</span>
-                        </label>
+                        {/* Modifier Toggles */}
+                        <div className="flex flex-wrap gap-4">
+                          <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={promptBuilderPreserveIdentity}
+                              onChange={(e) => setPromptBuilderPreserveIdentity(e.target.checked)}
+                              disabled={promptBuilderLoading}
+                              className="rounded"
+                            />
+                            <span className="text-muted-foreground">Preserve identity</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={promptBuilderRealism}
+                              onChange={(e) => setPromptBuilderRealism(e.target.checked)}
+                              disabled={promptBuilderLoading}
+                              className="rounded"
+                            />
+                            <span className="text-muted-foreground">Realistic backgrounds</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={promptBuilderExaggeratedBust}
+                              onChange={(e) => setPromptBuilderExaggeratedBust(e.target.checked)}
+                              disabled={promptBuilderLoading}
+                              className="rounded"
+                            />
+                            <span className="text-muted-foreground">Exaggerated bust</span>
+                          </label>
+                        </div>
 
                         {/* Generate Button */}
                         <Button
@@ -1190,7 +1237,7 @@ export function Playground() {
                             Expand your prompts into more variations
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-3 gap-3">
                           <div className="space-y-1">
                             <Label className="text-xs">Enhance by</Label>
                             <select
@@ -1207,17 +1254,30 @@ export function Playground() {
                             </select>
                           </div>
                           <div className="space-y-1">
-                            <Label className="text-xs">Variations per prompt</Label>
+                            <Label className="text-xs">Intensity</Label>
+                            <select
+                              value={enhanceIntensity}
+                              onChange={(e) => setEnhanceIntensity(e.target.value as typeof enhanceIntensity)}
+                              className="w-full h-9 px-2 text-sm rounded-md border bg-background"
+                              disabled={isGenerating}
+                            >
+                              <option value="subtle">Subtle</option>
+                              <option value="moderate">Moderate</option>
+                              <option value="wild">Wild</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Variations</Label>
                             <select
                               value={enhanceCount}
                               onChange={(e) => setEnhanceCount(parseInt(e.target.value))}
                               className="w-full h-9 px-2 text-sm rounded-md border bg-background"
                               disabled={isGenerating}
                             >
-                              <option value={2}>2 variations</option>
-                              <option value={3}>3 variations</option>
-                              <option value={5}>5 variations</option>
-                              <option value={10}>10 variations</option>
+                              <option value={2}>2 each</option>
+                              <option value={3}>3 each</option>
+                              <option value={5}>5 each</option>
+                              <option value={10}>10 each</option>
                             </select>
                           </div>
                         </div>
@@ -1540,15 +1600,28 @@ export function Playground() {
 
                         {/* FLUX settings - shown for all FLUX models (FLUX.1, FLUX.2, Kontext) */}
                         {(i2iModel === 'flux-general' || i2iModel.startsWith('flux-2') || i2iModel.startsWith('flux-kontext')) && (
-                          <div className="space-y-4 p-3 bg-muted/50 rounded-lg border">
-                            <div className="text-sm font-medium flex items-center gap-2">
-                              <Sparkles className="h-4 w-4" />
-                              {i2iModel.startsWith('flux-2') ? 'FLUX.2 Settings' : i2iModel.startsWith('flux-kontext') ? 'FLUX Kontext Settings' : 'FLUX Settings'}
-                              {['flux-2-pro', 'flux-2-max'].includes(i2iModel) && (
-                                <span className="text-xs text-muted-foreground ml-2">(Zero-config model)</span>
+                          <div className="p-3 bg-muted/50 rounded-lg border">
+                            <button
+                              type="button"
+                              onClick={() => setShowFluxAdvanced(!showFluxAdvanced)}
+                              className="w-full text-sm font-medium flex items-center justify-between"
+                            >
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="h-4 w-4" />
+                                {i2iModel.startsWith('flux-2') ? 'FLUX.2 Settings' : i2iModel.startsWith('flux-kontext') ? 'FLUX Kontext Settings' : 'FLUX Settings'}
+                                {['flux-2-pro', 'flux-2-max'].includes(i2iModel) && (
+                                  <span className="text-xs text-muted-foreground ml-2">(Zero-config model)</span>
+                                )}
+                              </div>
+                              {showFluxAdvanced ? (
+                                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
                               )}
-                            </div>
+                            </button>
 
+                            {showFluxAdvanced && (
+                              <div className="space-y-4 mt-4 pt-4 border-t">
                             {/* Strength slider - FLUX.1 only */}
                             {i2iModel === 'flux-general' && (
                               <div className="space-y-2">
@@ -1685,7 +1758,8 @@ export function Playground() {
                                 />
                               </div>
                             )}
-
+                              </div>
+                            )}
                           </div>
                         )}
                       </>

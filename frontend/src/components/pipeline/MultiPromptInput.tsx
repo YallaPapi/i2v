@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
-import { Wand2, Trash2 } from 'lucide-react'
+import { Wand2, Trash2, Undo2 } from 'lucide-react'
 
 interface MultiPromptInputProps {
   prompts: string[]
@@ -27,6 +27,9 @@ export function MultiPromptInput({
   isEnhancing = false,
 }: MultiPromptInputProps) {
   const [text, setText] = useState(prompts.join('\n'))
+  const [canUndo, setCanUndo] = useState(false)
+  const previousPromptsRef = useRef<string[]>([])
+  const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sync text when prompts change externally (e.g., from AI Prompt Builder)
   useEffect(() => {
@@ -60,8 +63,37 @@ export function MultiPromptInput({
   }
 
   const clearAll = () => {
+    // Save prompts for undo
+    previousPromptsRef.current = prompts
     setText('')
     onPromptsChange([])
+    setCanUndo(true)
+
+    // Clear any existing timeout
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current)
+    }
+
+    // Hide undo after 5 seconds
+    undoTimeoutRef.current = setTimeout(() => {
+      setCanUndo(false)
+      previousPromptsRef.current = []
+    }, 5000)
+  }
+
+  const undoClear = () => {
+    if (previousPromptsRef.current.length > 0) {
+      const restoredText = previousPromptsRef.current.join('\n')
+      setText(restoredText)
+      onPromptsChange(previousPromptsRef.current)
+      setCanUndo(false)
+      previousPromptsRef.current = []
+
+      if (undoTimeoutRef.current) {
+        clearTimeout(undoTimeoutRef.current)
+        undoTimeoutRef.current = null
+      }
+    }
   }
 
   return (
@@ -84,6 +116,18 @@ export function MultiPromptInput({
             >
               <Wand2 className="h-4 w-4 mr-1" />
               {isEnhancing ? 'Enhancing...' : 'Enhance All'}
+            </Button>
+          )}
+          {canUndo && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={undoClear}
+              className="text-orange-600 border-orange-300 hover:bg-orange-50"
+            >
+              <Undo2 className="h-4 w-4 mr-1" />
+              Undo
             </Button>
           )}
           {prompts.length > 0 && (
