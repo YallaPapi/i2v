@@ -592,7 +592,7 @@ async def generate_prompts_endpoint(request: PromptGeneratorRequest):
             exaggerated_bust=request.exaggerated_bust,
             preserve_identity=request.preserve_identity,
             framing=request.framing,
-            realism=request.realism,
+            realism_preset=request.realism_preset,
         )
 
         return PromptGeneratorResponse(
@@ -601,7 +601,7 @@ async def generate_prompts_endpoint(request: PromptGeneratorRequest):
             style=request.style,
             location=request.location,
             framing=request.framing,
-            realism=request.realism,
+            realism_preset=request.realism_preset,
         )
 
     except Exception as e:

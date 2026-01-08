@@ -160,12 +160,22 @@ IMAGE_MODELS = {
         "supports_prompt_expansion": False,
         "supports_safety_tolerance": False,
     },
+    # ============== Ideogram Models ==============
+    "ideogram-2": {
+        "submit_url": "https://queue.fal.run/fal-ai/ideogram/v2/remix",
+        "status_url": "https://queue.fal.run/fal-ai/ideogram/v2/remix",
+        "pricing": "$0.04/image",
+        "identity_preservation": False,
+        "description": "Ideogram V2 - Best for text-in-image, accurate typography",
+        "is_flux2": False,
+        "is_ideogram": True,
+    },
 }
 
 ImageModelType = Literal[
     "gpt-image-1.5", "kling-image", "nano-banana-pro", "nano-banana", "flux-general",
     "flux-2-dev", "flux-2-pro", "flux-2-flex", "flux-2-max",
-    "flux-kontext-dev", "flux-kontext-pro"
+    "flux-kontext-dev", "flux-kontext-pro", "ideogram-2"
 ]
 
 # Helper to check if model is FLUX.2 family
@@ -469,6 +479,59 @@ def _build_flux2_payload(
     return payload
 
 
+def _build_ideogram_payload(
+    image_url: str,
+    prompt: str,
+    aspect_ratio: str = "9:16",
+    num_images: int = 1,
+    strength: float = 0.8,
+    style: str = "realistic",
+) -> dict:
+    """
+    Build payload for Ideogram V2 Remix API.
+
+    Args:
+        image_url: Source image to remix
+        prompt: Prompt for remixing
+        aspect_ratio: Output aspect ratio
+        num_images: Number of images to generate
+        strength: How much to transform (0.01-1.0, default 0.8)
+        style: Style type (auto, general, realistic, design, render_3D, anime)
+    """
+    # Map our aspect ratio format to Ideogram's format
+    ideogram_aspect_map = {
+        "9:16": "ASPECT_9_16",
+        "16:9": "ASPECT_16_9",
+        "1:1": "ASPECT_1_1",
+        "4:3": "ASPECT_4_3",
+        "3:4": "ASPECT_3_4",
+        "3:2": "ASPECT_3_2",
+        "2:3": "ASPECT_2_3",
+    }
+    ideogram_aspect = ideogram_aspect_map.get(aspect_ratio, "ASPECT_9_16")
+
+    # Map style to Ideogram's format
+    style_map = {
+        "realistic": "REALISTIC",
+        "design": "DESIGN",
+        "3d": "RENDER_3D",
+        "anime": "ANIME",
+        "auto": "AUTO",
+        "general": "GENERAL",
+    }
+    ideogram_style = style_map.get(style.lower(), "REALISTIC")
+
+    return {
+        "image_url": image_url,
+        "prompt": prompt,
+        "strength": max(0.01, min(1.0, strength)),  # Clamp to valid range
+        "aspect_ratio": ideogram_aspect,
+        "style": ideogram_style,
+        "expand_prompt": True,  # Enable MagicPrompt for better results
+        "num_images": num_images,
+    }
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
@@ -563,6 +626,21 @@ async def submit_image_job(
                     steps=payload["num_inference_steps"],
                     scheduler=payload["scheduler"],
                     image_size=payload["image_size"])
+    # Ideogram models
+    elif IMAGE_MODELS.get(model, {}).get("is_ideogram"):
+        payload = _build_ideogram_payload(
+            image_url=image_url,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            num_images=num_images,
+            strength=flux_strength if flux_strength is not None else 0.8,
+            style="realistic",
+        )
+        logger.info("Ideogram payload built",
+                    model=model,
+                    prompt=prompt[:100] if prompt else "NO PROMPT",
+                    strength=payload["strength"],
+                    style=payload["style"])
     else:
         payload = _build_image_payload(
             model, image_url, prompt, negative_prompt, num_images, aspect_ratio, quality

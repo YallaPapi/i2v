@@ -1029,6 +1029,34 @@ The caption should only make sense in a NURSE/MEDICAL context. Generic captions 
 All lowercase, no periods. Setup only, end with colon."""
 }
 
+# Realism presets for different photo aesthetics
+REALISM_PRESETS = {
+    "default": {
+        "prefix": "Shot on iPhone, casual photo, ",
+        "suffix": ", realistic skin texture with visible pores and natural imperfections, natural lighting, slightly imperfect candid photo",
+    },
+    "phone_grainy": {
+        "prefix": "Shot on iPhone in low light, high ISO 3200, grainy, ",
+        "suffix": ", visible grain and noise, dim ambient lighting, slightly blurry, candid snapshot, imperfect photo quality",
+    },
+    "harsh_flash": {
+        "prefix": "Photo with harsh direct flash, high contrast, ",
+        "suffix": ", bright flash lighting creating sharp shadows, washed out highlights, slight red-eye, amateur party photo aesthetic",
+    },
+    "film_aesthetic": {
+        "prefix": "Shot on Kodak Portra 400, 35mm film, ",
+        "suffix": ", natural film grain, subtle light leaks, warm tones, organic unedited look, vintage film photography",
+    },
+    "selfie": {
+        "prefix": "Front camera selfie, casual, ",
+        "suffix": ", slightly unflattering angle, uneven bathroom lighting, authentic mirror selfie aesthetic",
+    },
+    "candid": {
+        "prefix": "Caught mid-action candid photo, ",
+        "suffix": ", slightly blurry, imperfect timing, awkward framing, unstaged authentic moment, motion blur",
+    },
+}
+
 PROMPT_GENERATION_TEMPLATE = """You are generating {count} detailed i2i (image-to-image) prompts for realistic vertical iPhone photos designed for Instagram and TikTok.
 
 ## Output Format
@@ -1238,7 +1266,7 @@ async def generate_prompts(
     exaggerated_bust: bool = False,
     preserve_identity: bool = True,
     framing: Literal["close", "medium", "full"] = "medium",
-    realism: bool = True,
+    realism_preset: Literal["default", "phone_grainy", "harsh_flash", "film_aesthetic", "selfie", "candid"] = "default",
 ) -> list[str]:
     """
     Generate i2i prompts using Claude.
@@ -1251,7 +1279,7 @@ async def generate_prompts(
         exaggerated_bust: If True, add exaggerated bust description to prompts
         preserve_identity: If True, add "preserving her exact facial features" to prompts
         framing: "close" (face/shoulders), "medium" (waist up), "full" (head to toe)
-        realism: If True, add anti-painted-background modifiers
+        realism_preset: Style preset for realism injection (default, phone_grainy, harsh_flash, etc.)
 
     Returns:
         List of generated prompts
@@ -1276,8 +1304,8 @@ async def generate_prompts(
     }
     framing_prefix = framing_prefixes.get(framing, "Medium shot of ")
 
-    # Build realism suffix (anti-painted-background)
-    realism_suffix = ", photographed on location, natural ambient lighting, authentic environment" if realism else ""
+    # Build realism suffix (for template - basic version, main injection happens post-generation)
+    realism_suffix = ", photographed on location, natural ambient lighting, authentic environment"
 
     logger.info(
         "Generating prompts",
@@ -1287,7 +1315,7 @@ async def generate_prompts(
         caption_category=category,
         preserve_identity=preserve_identity,
         framing=framing,
-        realism=realism,
+        realism_preset=realism_preset,
     )
 
     prompt = PROMPT_GENERATION_TEMPLATE.format(
@@ -1311,9 +1339,10 @@ async def generate_prompts(
 
     raw_text = message.content[0].text.strip()
 
-    # Realism tags to inject into every prompt
-    REALISM_PREFIX = "Shot on iPhone, casual photo, "
-    REALISM_SUFFIX = ", realistic skin texture with visible pores and natural imperfections, natural lighting, slightly imperfect candid photo"
+    # Get realism preset settings
+    preset = REALISM_PRESETS.get(realism_preset, REALISM_PRESETS["default"])
+    REALISM_PREFIX = preset["prefix"]
+    REALISM_SUFFIX = preset["suffix"]
     BODY_PRESERVE = "preserving her exact body structure and proportions,"
 
     # Parse prompts - split by --- and clean each one
@@ -1378,6 +1407,6 @@ async def generate_prompts(
 
             clean_prompts.append(cleaned)
 
-    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), exaggerated_bust=exaggerated_bust, preserve_identity=preserve_identity, framing=framing, realism=realism)
+    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), exaggerated_bust=exaggerated_bust, preserve_identity=preserve_identity, framing=framing, realism_preset=realism_preset)
 
     return clean_prompts

@@ -92,6 +92,17 @@ MODELS = {
         "status_url": "https://queue.fal.run/fal-ai/sora-2",
         "pricing": "$0.30/s (720p), $0.50/s (1080p) - 4/8/12s",
     },
+    # Luma Dream Machine models
+    "luma": {
+        "submit_url": "https://queue.fal.run/fal-ai/luma-dream-machine/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/luma-dream-machine",
+        "pricing": "$0.032/s (5s=$0.16, 9s=$0.29)",
+    },
+    "luma-ray2": {
+        "submit_url": "https://queue.fal.run/fal-ai/luma-dream-machine/ray-2/image-to-video",
+        "status_url": "https://queue.fal.run/fal-ai/luma-dream-machine",
+        "pricing": "$0.05/s (5s=$0.25, 9s=$0.45) - better quality",
+    },
 }
 
 ModelType = Literal[
@@ -109,6 +120,8 @@ ModelType = Literal[
     "veo31-fast-flf",
     "sora-2",
     "sora-2-pro",
+    "luma",
+    "luma-ray2",
 ]
 
 # Default negative prompt - used when none specified
@@ -211,6 +224,19 @@ def _build_payload(
             "duration": sora_duration,
             "resolution": sora_resolution,
             "aspect_ratio": "9:16",
+        }
+    # Luma Dream Machine models - duration: 5s or 9s
+    elif model in ("luma", "luma-ray2"):
+        # Luma only supports 5s or 9s duration
+        luma_duration = "9s" if duration_sec >= 8 else "5s"
+        # Resolution mapping: 540p, 720p, 1080p
+        luma_resolution = resolution if resolution in ("540p", "720p", "1080p") else "720p"
+        return {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": luma_duration,
+            "aspect_ratio": "9:16",
+            "resolution": luma_resolution,
         }
     else:
         raise ValueError(f"Unknown model: {model}")

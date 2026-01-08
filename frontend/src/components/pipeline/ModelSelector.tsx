@@ -118,6 +118,15 @@ const I2I_MODELS: ModelOption[] = [
     provider: 'Black Forest Labs',
     description: 'Production in-context editing',
   },
+  // Ideogram
+  {
+    value: 'ideogram-2',
+    label: 'Ideogram V2',
+    price: '$0.04/img',
+    priceValue: 0.04,
+    provider: 'Ideogram',
+    description: 'Best for text-in-image - accurate typography rendering',
+  },
 ]
 
 // Pricing from fal.ai - January 2026 verified rates (per-second)
@@ -238,6 +247,23 @@ const I2V_MODELS: ModelOption[] = [
     priceValue: 0.50,
     provider: 'OpenAI',
     description: '720p=$0.30/s, 1080p=$0.50/s',
+  },
+  // Luma Dream Machine models
+  {
+    value: 'luma',
+    label: 'Luma Dream Machine',
+    price: '$0.032/s',
+    priceValue: 0.032,
+    provider: 'Luma',
+    description: '5s or 9s clips, smooth fluid animations',
+  },
+  {
+    value: 'luma-ray2',
+    label: 'Luma Ray2',
+    price: '$0.05/s',
+    priceValue: 0.05,
+    provider: 'Luma',
+    description: 'Ray2 - higher quality, better physics',
   },
 ]
 

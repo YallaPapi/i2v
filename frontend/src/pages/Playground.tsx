@@ -185,7 +185,7 @@ export function Playground() {
   const [promptBuilderExaggeratedBust, setPromptBuilderExaggeratedBust] = useState(false)
   const [promptBuilderPreserveIdentity, setPromptBuilderPreserveIdentity] = useState(true)
   const [promptBuilderFraming, setPromptBuilderFraming] = useState<'close' | 'medium' | 'full'>('medium')
-  const [promptBuilderRealism, setPromptBuilderRealism] = useState(true)
+  const [promptBuilderRealismPreset, setPromptBuilderRealismPreset] = useState<'default' | 'phone_grainy' | 'harsh_flash' | 'film_aesthetic' | 'selfie' | 'candid'>('default')
   const [promptBuilderLoading, setPromptBuilderLoading] = useState(false)
   const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([])
   const [promptBuilderCopied, setPromptBuilderCopied] = useState(false)
@@ -319,7 +319,7 @@ export function Playground() {
         exaggerated_bust: promptBuilderExaggeratedBust,
         preserve_identity: promptBuilderPreserveIdentity,
         framing: promptBuilderFraming,
-        realism: promptBuilderRealism,
+        realism_preset: promptBuilderRealismPreset,
       }
       console.log('[PromptBuilder] Request body:', requestBody)
 
@@ -1018,16 +1018,22 @@ export function Playground() {
                             />
                             <span className="text-muted-foreground">Preserve identity</span>
                           </label>
-                          <label className="flex items-center gap-2 text-sm cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={promptBuilderRealism}
-                              onChange={(e) => setPromptBuilderRealism(e.target.checked)}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Photo Style</span>
+                            <select
+                              value={promptBuilderRealismPreset}
+                              onChange={(e) => setPromptBuilderRealismPreset(e.target.value as typeof promptBuilderRealismPreset)}
                               disabled={promptBuilderLoading}
-                              className="rounded"
-                            />
-                            <span className="text-muted-foreground">Realistic backgrounds</span>
-                          </label>
+                              className="h-8 px-2 text-sm rounded-md border bg-background"
+                            >
+                              <option value="default">iPhone (default)</option>
+                              <option value="phone_grainy">Grainy / Low Light</option>
+                              <option value="harsh_flash">Harsh Flash</option>
+                              <option value="film_aesthetic">Film / Kodak</option>
+                              <option value="selfie">Selfie</option>
+                              <option value="candid">Candid / Motion</option>
+                            </select>
+                          </div>
                           <label className="flex items-center gap-2 text-sm cursor-pointer">
                             <input
                               type="checkbox"

@@ -29,6 +29,7 @@ export type VideoModel =
   | 'kling' | 'kling-master' | 'kling-standard'
   | 'veo2' | 'veo31-fast' | 'veo31' | 'veo31-flf' | 'veo31-fast-flf'
   | 'sora-2' | 'sora-2-pro'
+  | 'luma' | 'luma-ray2'
 
 // Image job types
 export interface ImageJob {
@@ -73,6 +74,8 @@ export type ImageModel =
   // FLUX.1 Kontext (in-context editing)
   | 'flux-kontext-dev'
   | 'flux-kontext-pro'
+  // Ideogram
+  | 'ideogram-2'
 
 // Helper to check if model is FLUX.2 or Kontext
 export const isFlux2Model = (model: string): boolean => {
@@ -215,6 +218,8 @@ export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string }
   { value: 'veo31-fast-flf', label: 'Veo3.1 Fast FLF', pricing: '$0.10/s' },
   { value: 'sora-2', label: 'OpenAI Sora 2', pricing: '$0.10/s' },
   { value: 'sora-2-pro', label: 'OpenAI Sora 2 Pro', pricing: '$0.30-0.50/s' },
+  { value: 'luma', label: 'Luma Dream Machine', pricing: '$0.032/s' },
+  { value: 'luma-ray2', label: 'Luma Ray2', pricing: '$0.05/s' },
 ]
 
 export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }[] = [
@@ -232,6 +237,8 @@ export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }
   // FLUX.1 Kontext
   { value: 'flux-kontext-dev', label: 'FLUX Kontext Dev', pricing: '$0.025/image' },
   { value: 'flux-kontext-pro', label: 'FLUX Kontext Pro', pricing: '$0.04/image' },
+  // Ideogram
+  { value: 'ideogram-2', label: 'Ideogram V2', pricing: '$0.04/image' },
 ]
 
 export const RESOLUTIONS = [

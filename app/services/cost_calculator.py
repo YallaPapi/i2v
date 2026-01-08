@@ -34,6 +34,8 @@ class CostCalculator:
         # FLUX.1 Kontext
         "flux-kontext-dev": Decimal("0.025"),
         "flux-kontext-pro": Decimal("0.04"),
+        # Ideogram
+        "ideogram-2": Decimal("0.04"),
     }
 
     # I2V Model pricing - PER-SECOND rates from fal.ai (January 2026)
@@ -65,6 +67,9 @@ class CostCalculator:
         # Sora models - per-second
         "sora-2": Decimal("0.10"),  # Sora 2 (720p only)
         "sora-2-pro": Decimal("0.50"),  # Sora 2 Pro (1080p rate, 720p is $0.30/s)
+        # Luma Dream Machine models - per-second
+        "luma": Decimal("0.032"),  # Luma base (5s=$0.16, 9s=$0.29)
+        "luma-ray2": Decimal("0.05"),  # Luma Ray2 (5s=$0.25, 9s=$0.45)
     }
 
     # Wan 2.1 uses FLAT per-video pricing (not per-second)

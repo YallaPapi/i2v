@@ -20,6 +20,8 @@ MODEL_RESOLUTIONS = {
     "veo31-fast-flf": ["720p", "1080p"],
     "sora-2": ["720p"],
     "sora-2-pro": ["720p", "1080p"],
+    "luma": ["540p", "720p", "1080p"],
+    "luma-ray2": ["540p", "720p", "1080p"],
 }
 
 
@@ -46,6 +48,8 @@ class JobCreate(BaseModel):
         "veo31-fast-flf",
         "sora-2",
         "sora-2-pro",
+        "luma",
+        "luma-ray2",
     ] = "wan"
 
     @field_validator("resolution")
@@ -87,7 +91,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# Image model type - includes all FLUX.1, FLUX.2, and Kontext variants
+# Image model type - includes all FLUX.1, FLUX.2, Kontext, and Ideogram variants
 ImageModelType = Literal[
     "gpt-image-1.5",
     "kling-image",
@@ -102,6 +106,8 @@ ImageModelType = Literal[
     # FLUX.1 Kontext (in-context editing)
     "flux-kontext-dev",
     "flux-kontext-pro",
+    # Ideogram (text-in-image)
+    "ideogram-2",
 ]
 
 
@@ -267,6 +273,8 @@ class I2VConfig(BaseModel):
         "veo31-fast-flf",
         "sora-2",
         "sora-2-pro",
+        "luma",
+        "luma-ray2",
     ] = "kling"
     videos_per_image: int = 1
     resolution: Literal["480p", "580p", "720p", "1080p"] = "1080p"
@@ -537,6 +545,8 @@ class BulkI2VConfig(BaseModel):
         "veo31-fast-flf",
         "sora-2",
         "sora-2-pro",
+        "luma",
+        "luma-ray2",
     ] = "kling"
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
     duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
@@ -630,6 +640,8 @@ class AnimateSelectedRequest(BaseModel):
         "veo31-fast-flf",
         "sora-2",
         "sora-2-pro",
+        "luma",
+        "luma-ray2",
     ] = "kling"
     resolution: Literal["480p", "720p", "1080p"] = "1080p"
     duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12
@@ -650,7 +662,7 @@ class PromptGeneratorRequest(BaseModel):
     exaggerated_bust: bool = False  # Add exaggerated bust description to prompts
     preserve_identity: bool = True  # Add "preserving her exact facial features" to prompts
     framing: Literal["close", "medium", "full"] = "medium"  # close=face/shoulders, medium=waist up, full=head to toe
-    realism: bool = True  # Add anti-painted-background modifiers for realistic environments
+    realism_preset: Literal["default", "phone_grainy", "harsh_flash", "film_aesthetic", "selfie", "candid"] = "default"
 
 
 class PromptGeneratorResponse(BaseModel):
@@ -661,4 +673,4 @@ class PromptGeneratorResponse(BaseModel):
     style: str
     location: str
     framing: str = "medium"
-    realism: bool = True
+    realism_preset: str = "default"
