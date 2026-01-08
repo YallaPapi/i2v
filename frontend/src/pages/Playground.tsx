@@ -124,6 +124,7 @@ export function Playground() {
   // Pipeline State
   const [isGenerating, setIsGenerating] = useState(false)
   const [pipelineStatus, setPipelineStatus] = useState<'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'>('pending')
+  const [jobSent, setJobSent] = useState(false)  // Shows "Job sent!" indicator
 
   // Bulk Mode State - persisted to localStorage
   const [bulkMode, setBulkMode] = useState<'photos' | 'videos' | 'both'>(() => {
@@ -616,43 +617,13 @@ export function Playground() {
       const data = await response.json()
       setBulkPipelineId(data.pipeline_id)
 
-      // Poll for status
-      const pollBulkStatus = async () => {
-        const statusRes = await fetch(`/api/pipelines/bulk/${data.pipeline_id}`)
-        if (statusRes.ok) {
-          const statusData = await statusRes.json()
-          setPipelineStatus(statusData.status)
-          setBulkGroups(statusData.groups)
-          setBulkTotals(statusData.totals)
+      // Show "Job sent!" and reset immediately so user can create another job
+      setJobSent(true)
+      setIsGenerating(false)
+      setPipelineStatus('pending')
+      setTimeout(() => setJobSent(false), 4000)  // Hide after 4 seconds
 
-          if (statusData.status === 'running') {
-            setTimeout(pollBulkStatus, 2000)
-          } else {
-            setIsGenerating(false)
-          }
-        }
-      }
-
-      // Also poll the regular pipeline endpoint to get step statuses
-      const pollSteps = async () => {
-        const stepsRes = await fetch(`/api/pipelines/${data.pipeline_id}`)
-        if (stepsRes.ok) {
-          const stepsData = await stepsRes.json()
-          setBulkSteps(stepsData.steps?.map((s: { id: number; step_type: string; status: string; inputs?: { source_image_index?: number } }) => ({
-            id: s.id,
-            step_type: s.step_type,
-            status: s.status,
-            source_index: s.inputs?.source_image_index,
-          })) || [])
-
-          if (stepsData.status === 'running') {
-            setTimeout(pollSteps, 2000)
-          }
-        }
-      }
-
-      pollBulkStatus()
-      pollSteps()
+      // Note: User can check progress on Jobs page - no polling needed here
     } catch (error) {
       console.error('Bulk pipeline failed:', error)
       setPipelineStatus('failed')
@@ -703,23 +674,11 @@ export function Playground() {
         const data = await response.json()
         setBulkPipelineId(data.pipeline_id)
 
-        // Poll for status
-        const pollStatus = async () => {
-          const statusRes = await fetch(`/api/pipelines/bulk/${data.pipeline_id}`)
-          if (statusRes.ok) {
-            const statusData = await statusRes.json()
-            setPipelineStatus(statusData.status)
-            setBulkGroups(statusData.groups)
-
-            if (statusData.status === 'running') {
-              setTimeout(pollStatus, 2000)
-            } else {
-              setIsGenerating(false)
-            }
-          }
-        }
-
-        pollStatus()
+        // Show "Job sent!" and reset immediately so user can create another job
+        setJobSent(true)
+        setIsGenerating(false)
+        setPipelineStatus('pending')
+        setTimeout(() => setJobSent(false), 4000)
       }
     } catch (error) {
       console.error('Carousel generation failed:', error)
@@ -785,24 +744,11 @@ export function Playground() {
       const data = await response.json()
       setBulkPipelineId(data.pipeline_id)
 
-      // Poll for status
-      const pollStatus = async () => {
-        const statusRes = await fetch(`/api/pipelines/bulk/${data.pipeline_id}`)
-        if (statusRes.ok) {
-          const statusData = await statusRes.json()
-          setPipelineStatus(statusData.status)
-          setBulkGroups(statusData.groups)
-          setBulkTotals(statusData.totals)
-
-          if (statusData.status === 'running') {
-            setTimeout(pollStatus, 2000)
-          } else {
-            setIsGenerating(false)
-          }
-        }
-      }
-
-      pollStatus()
+      // Show "Job sent!" and reset immediately so user can create another job
+      setJobSent(true)
+      setIsGenerating(false)
+      setPipelineStatus('pending')
+      setTimeout(() => setJobSent(false), 4000)
     } catch (error) {
       console.error('Animate pipeline failed:', error)
       setPipelineStatus('failed')
@@ -882,6 +828,18 @@ export function Playground() {
       </div>
 
       <div className="container mx-auto px-4 py-6">
+        {/* Job Sent Toast */}
+        {jobSent && (
+          <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-right duration-300">
+            <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span className="font-medium">Job sent! Check Jobs page for progress.</span>
+            </div>
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">

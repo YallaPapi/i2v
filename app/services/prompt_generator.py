@@ -1311,6 +1311,11 @@ async def generate_prompts(
 
     raw_text = message.content[0].text.strip()
 
+    # Realism tags to inject into every prompt
+    REALISM_PREFIX = "Shot on iPhone, casual photo, "
+    REALISM_SUFFIX = ", realistic skin texture with visible pores and natural imperfections, natural lighting, slightly imperfect candid photo"
+    BODY_PRESERVE = "preserving her exact body structure and proportions,"
+
     # Parse prompts - split by --- and clean each one
     raw_prompts = raw_text.split("---")
     clean_prompts = []
@@ -1318,12 +1323,10 @@ async def generate_prompts(
         # Remove line breaks within prompt, collapse to single line
         cleaned = " ".join(p.strip().split())
         if cleaned:
-            # Inject exaggerated bust text if enabled
+            # Inject exaggerated bust OR body preservation (mutually exclusive)
             if exaggerated_bust:
-                # Find a good injection point - after describing the woman/subject
-                # Look for common patterns and inject after them
+                # Add bust enhancement
                 bust_text = "with an oversized bust, exaggerated chest size,"
-                # Inject early in the prompt, after "the woman in the photo"
                 if "the woman in the photo," in cleaned:
                     cleaned = cleaned.replace(
                         "the woman in the photo,",
@@ -1337,12 +1340,42 @@ async def generate_prompts(
                         1
                     )
                 else:
-                    # Fallback: add near the beginning after first comma
                     first_comma = cleaned.find(",")
                     if first_comma > 0:
                         cleaned = cleaned[:first_comma + 1] + f" {bust_text}" + cleaned[first_comma + 1:]
                     else:
                         cleaned = f"{bust_text} {cleaned}"
+            else:
+                # Add body preservation to prevent bust reduction
+                if "the woman in the photo," in cleaned:
+                    cleaned = cleaned.replace(
+                        "the woman in the photo,",
+                        f"the woman in the photo, {BODY_PRESERVE}",
+                        1
+                    )
+                elif "the woman in the photo" in cleaned:
+                    cleaned = cleaned.replace(
+                        "the woman in the photo",
+                        f"the woman in the photo {BODY_PRESERVE}",
+                        1
+                    )
+
+            # Inject realism prefix at start
+            cleaned = REALISM_PREFIX + cleaned
+
+            # Inject realism suffix before caption (if present) or at end
+            if "on-screen caption" in cleaned.lower():
+                # Find the caption part and insert suffix before it
+                caption_idx = cleaned.lower().find("on-screen caption")
+                # Go back to find the comma before "on-screen"
+                insert_point = cleaned.rfind(",", 0, caption_idx)
+                if insert_point > 0:
+                    cleaned = cleaned[:insert_point] + REALISM_SUFFIX + cleaned[insert_point:]
+                else:
+                    cleaned = cleaned[:caption_idx] + REALISM_SUFFIX + ", " + cleaned[caption_idx:]
+            else:
+                cleaned = cleaned + REALISM_SUFFIX
+
             clean_prompts.append(cleaned)
 
     logger.info("Generated prompts", requested=count, actual=len(clean_prompts), exaggerated_bust=exaggerated_bust, preserve_identity=preserve_identity, framing=framing, realism=realism)

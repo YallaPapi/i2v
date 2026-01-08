@@ -1066,13 +1066,19 @@ async def create_bulk_pipeline(
                     step_order=step_order,
                     status=StepStatus.PENDING.value,
                 )
+                # Build negative prompt: user's additions + baseline protections
+                baseline_negative = "different person, face change, face swap, altered facial features, airbrushed skin, smooth skin, plastic skin, porcelain skin, over-processed, beauty filter, HDR, studio lighting, anime face, 3d render, CGI, doll-like, waxy skin, deformed face, deformed hands, extra fingers"
+                user_negative = request.i2i_config.negative_prompt or ""
+                # If user provided something, prepend it to baseline; otherwise just use baseline
+                final_negative = f"{user_negative}, {baseline_negative}" if user_negative.strip() else baseline_negative
+
                 step.set_config(
                     {
                         "model": request.i2i_config.model,
                         "images_per_prompt": request.i2i_config.images_per_prompt,
                         "aspect_ratio": request.i2i_config.aspect_ratio,
                         "quality": request.i2i_config.quality,
-                        "negative_prompt": request.i2i_config.negative_prompt,
+                        "negative_prompt": final_negative,
                         # FLUX parameters (FLUX.1 + FLUX.2 common)
                         "flux_strength": request.i2i_config.flux_strength,
                         "flux_guidance_scale": request.i2i_config.flux_guidance_scale,

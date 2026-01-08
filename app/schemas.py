@@ -502,7 +502,7 @@ class BulkI2IConfig(BaseModel):
     images_per_prompt: int = 1
     aspect_ratio: Literal["1:1", "9:16", "16:9", "4:3", "3:4"] = "9:16"
     quality: Literal["low", "medium", "high"] = "high"
-    negative_prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None  # User additions - baseline is always appended in backend
     # FLUX.1 parameters (flux-general only)
     flux_strength: Optional[float] = None  # 0.0-1.0, default 0.75
     flux_scheduler: Optional[Literal["euler", "dpmpp_2m"]] = None  # FLUX.1 only
