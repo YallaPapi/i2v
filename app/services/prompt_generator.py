@@ -1029,15 +1029,23 @@ The caption should only make sense in a NURSE/MEDICAL context. Generic captions 
 All lowercase, no periods. Setup only, end with colon."""
 }
 
+# Bust size enhancement levels
+BUST_SIZE_PRESETS = {
+    "none": None,
+    "subtle": "with a slightly fuller bust,",
+    "moderate": "with an enhanced bust, fuller chest,",
+    "exaggerated": "with an oversized bust, exaggerated chest size, very large breasts,",
+}
+
 # Realism presets for different photo aesthetics
 REALISM_PRESETS = {
     "default": {
         "prefix": "Shot on iPhone, casual photo, ",
-        "suffix": ", realistic skin texture with visible pores and natural imperfections, natural lighting, slightly imperfect candid photo",
+        "suffix": ", imperfect real human skin with visible pores and blemishes, unedited skin texture, natural lighting, authentic candid photo NOT retouched",
     },
     "phone_grainy": {
         "prefix": "Shot on iPhone in low light, high ISO 3200, grainy, ",
-        "suffix": ", visible grain and noise, dim ambient lighting, slightly blurry, candid snapshot, imperfect photo quality",
+        "suffix": ", visible grain and noise, dim ambient lighting, slightly blurry, candid snapshot, imperfect photo quality, unedited skin",
     },
     "harsh_flash": {
         "prefix": "Photo with harsh direct flash, high contrast, ",
@@ -1067,10 +1075,10 @@ PROMPT_GENERATION_TEMPLATE = """You are generating {count} detailed i2i (image-t
 
 ## Prompt Structure (comma-separated segments)
 Format each prompt like this, with commas separating each segment:
-"{framing_prefix}realistic vertical iPhone photo, 9:16 aspect ratio, woman in the photo{identity_text}, [outfit/costume details], [pose/expression], [location], [lighting]{realism_suffix}, on-screen caption reads: [CAPTION]"
+"{framing_prefix}realistic vertical iPhone photo, 9:16 aspect ratio, woman in the photo{identity_text}, [outfit/costume details], [pose/expression], [location], [lighting]{realism_suffix}, off-center TikTok-style caption written in Proxima Nova Semibold font white text with black outline reads: [CAPTION]"
 
 Example of CORRECT comma-separated format:
-"Medium shot of realistic vertical iPhone photo, 9:16 aspect ratio, woman in the photo, preserving her exact facial features, dressed as Miku in grey school uniform with teal tie, teal twintail wig, teal colored contacts, slight smile, looking at camera, standing in Tokyo street at night, neon signs in background, natural ambient lighting, photographed on location, on-screen caption reads: pov he asked about my costume"
+"Medium shot of realistic vertical iPhone photo, 9:16 aspect ratio, woman in the photo, preserving her exact facial features, dressed as Miku in grey school uniform with teal tie, teal twintail wig, teal colored contacts, slight smile, looking at camera, standing in Tokyo street at night, neon signs in background, natural ambient lighting, photographed on location, off-center TikTok-style caption written in Proxima Nova Semibold font white text with black outline reads: pov he asked about my costume"
 
 Example of WRONG run-on format:
 "A realistic vertical iPhone photo in 9:16 aspect ratio of the woman in the photo who is dressed in cosplay as Miku wearing a grey school uniform with a teal tie and she has a teal twintail wig with teal colored contacts and she is smiling slightly while looking at the camera as she stands in a Tokyo street at night with neon signs behind her..."
@@ -1079,8 +1087,8 @@ Example of WRONG run-on format:
 - Real iPhone photo quality - NOT airbrushed, NOT CGI, NOT anime-style
 - Real skin texture, real lighting, real person
 - For cosplay: REAL HUMAN wearing a COSTUME with wigs/colored contacts as needed
-- The on-screen caption segment MUST be: "on-screen caption reads: [CAPTION]"
-- Caption is TikTok-style, off-center, Proxima Nova Semibold, white text with thin black outline
+- The caption segment MUST be: "off-center TikTok-style caption written in Proxima Nova Semibold font white text with black outline reads: [CAPTION]"
+- Caption is off-center (NOT at bottom, NOT centered)
 
 ## Location Instructions
 {location_instructions}
@@ -1263,7 +1271,7 @@ async def generate_prompts(
     count: int,
     style: Literal["cosplay", "cottagecore", "gym", "bookish", "nurse"],
     location: Literal["outdoor", "indoor", "mixed"],
-    exaggerated_bust: bool = False,
+    bust_size: Literal["none", "subtle", "moderate", "exaggerated"] = "none",
     preserve_identity: bool = True,
     framing: Literal["close", "medium", "full"] = "medium",
     realism_preset: Literal["default", "phone_grainy", "harsh_flash", "film_aesthetic", "selfie", "candid"] = "default",
@@ -1276,7 +1284,7 @@ async def generate_prompts(
         count: Number of prompts to generate (1-50)
         style: "cosplay" or "cottagecore"
         location: "outdoor", "indoor", or "mixed"
-        exaggerated_bust: If True, add exaggerated bust description to prompts
+        bust_size: Bust enhancement level - "none", "subtle", "moderate", or "exaggerated"
         preserve_identity: If True, add "preserving her exact facial features" to prompts
         framing: "close" (face/shoulders), "medium" (waist up), "full" (head to toe)
         realism_preset: Style preset for realism injection (default, phone_grainy, harsh_flash, etc.)
@@ -1352,10 +1360,10 @@ async def generate_prompts(
         # Remove line breaks within prompt, collapse to single line
         cleaned = " ".join(p.strip().split())
         if cleaned:
-            # Inject exaggerated bust OR body preservation (mutually exclusive)
-            if exaggerated_bust:
-                # Add bust enhancement
-                bust_text = "with an oversized bust, exaggerated chest size,"
+            # Inject bust size enhancement OR body preservation
+            bust_text = BUST_SIZE_PRESETS.get(bust_size)
+            if bust_text:
+                # Add bust enhancement based on selected level
                 if "the woman in the photo," in cleaned:
                     cleaned = cleaned.replace(
                         "the woman in the photo,",
@@ -1375,7 +1383,7 @@ async def generate_prompts(
                     else:
                         cleaned = f"{bust_text} {cleaned}"
             else:
-                # Add body preservation to prevent bust reduction
+                # No bust enhancement - add body preservation to prevent changes
                 if "the woman in the photo," in cleaned:
                     cleaned = cleaned.replace(
                         "the woman in the photo,",
@@ -1393,10 +1401,10 @@ async def generate_prompts(
             cleaned = REALISM_PREFIX + cleaned
 
             # Inject realism suffix before caption (if present) or at end
-            if "on-screen caption" in cleaned.lower():
+            if "caption reads" in cleaned.lower():
                 # Find the caption part and insert suffix before it
-                caption_idx = cleaned.lower().find("on-screen caption")
-                # Go back to find the comma before "on-screen"
+                caption_idx = cleaned.lower().find("caption reads")
+                # Go back to find the comma before the caption section
                 insert_point = cleaned.rfind(",", 0, caption_idx)
                 if insert_point > 0:
                     cleaned = cleaned[:insert_point] + REALISM_SUFFIX + cleaned[insert_point:]
@@ -1407,6 +1415,6 @@ async def generate_prompts(
 
             clean_prompts.append(cleaned)
 
-    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), exaggerated_bust=exaggerated_bust, preserve_identity=preserve_identity, framing=framing, realism_preset=realism_preset)
+    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), bust_size=bust_size, preserve_identity=preserve_identity, framing=framing, realism_preset=realism_preset)
 
     return clean_prompts

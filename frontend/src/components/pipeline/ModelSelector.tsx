@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, AlertTriangle } from 'lucide-react'
 
 type ModelType = 'i2i' | 'i2v'
 
@@ -13,6 +13,7 @@ interface ModelOption {
   provider: string
   description?: string
   recommended?: boolean
+  nsfw?: boolean  // NSFW models require vast.ai GPU
 }
 
 interface ModelSelectorProps {
@@ -126,6 +127,34 @@ const I2I_MODELS: ModelOption[] = [
     priceValue: 0.04,
     provider: 'Ideogram',
     description: 'Best for text-in-image - accurate typography rendering',
+  },
+  // NSFW Models (vast.ai GPU - open source, only GPU compute costs)
+  {
+    value: 'pony-v6',
+    label: 'Pony V6 XL',
+    price: '~$0.005/img',
+    priceValue: 0.005,
+    provider: 'NSFW (vast.ai)',
+    description: 'Anime/stylized NSFW - open source, GPU compute only',
+    nsfw: true,
+  },
+  {
+    value: 'pony-realistic',
+    label: 'Pony Realism',
+    price: '~$0.005/img',
+    priceValue: 0.005,
+    provider: 'NSFW (vast.ai)',
+    description: 'Photorealistic NSFW - open source, GPU compute only',
+    nsfw: true,
+  },
+  {
+    value: 'sdxl-base',
+    label: 'SDXL Base',
+    price: '~$0.004/img',
+    priceValue: 0.004,
+    provider: 'NSFW (vast.ai)',
+    description: 'General purpose SDXL - open source, GPU compute only',
+    nsfw: true,
   },
 ]
 
@@ -353,7 +382,7 @@ export function ModelSelector({
 
       {/* Selected Model Info */}
       {selectedModel && (
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="text-muted-foreground">{selectedModel.description}</span>
           {selectedModel.recommended && (
             <Badge variant="secondary" className="text-xs gap-1">
@@ -361,6 +390,19 @@ export function ModelSelector({
               Best Value
             </Badge>
           )}
+          {selectedModel.nsfw && (
+            <Badge variant="destructive" className="text-xs gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              NSFW - GPU Rental
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {/* NSFW Warning */}
+      {selectedModel?.nsfw && (
+        <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 p-2 rounded-md">
+          ⚠️ This model runs on rented vast.ai GPU. Cold start may take 2-5 min. Requires VASTAI_API_KEY.
         </div>
       )}
 

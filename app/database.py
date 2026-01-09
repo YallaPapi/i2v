@@ -32,6 +32,12 @@ def init_db():
         Pipeline,
         PipelineStep,
         UploadCache,
+        User,
+        ModelProfile,
+        CreditTransaction,
+        BatchJob,
+        BatchJobItem,
+        Template,
     )
 
     Base.metadata.create_all(bind=engine)

@@ -6,8 +6,17 @@ import structlog
 
 from app.fal_client import submit_job, get_job_result, MODELS as VIDEO_MODELS
 from app.image_client import submit_image_job, get_image_result, IMAGE_MODELS
+from app.services.nsfw_image_executor import generate_nsfw_image, NSFW_MODELS
 
 logger = structlog.get_logger()
+
+# NSFW model names for routing
+NSFW_MODEL_NAMES = set(NSFW_MODELS.keys())  # {'pony-v6', 'pony-realistic', 'sdxl-base'}
+
+
+def is_nsfw_model(model: str) -> bool:
+    """Check if a model is an NSFW model that requires vast.ai."""
+    return model in NSFW_MODEL_NAMES
 
 # Poll interval and timeout for job completion
 POLL_INTERVAL_SECONDS = 3
@@ -117,19 +126,51 @@ async def generate_image(
     flux_enable_prompt_expansion: Optional[bool] = None,  # dev/flex only
     flux_safety_tolerance: Optional[str] = None,  # pro/flex/max: "1"-"5"
     flux_acceleration: Optional[str] = None,  # dev only: "none"/"regular"/"high"
+    # NSFW model parameters (pony-v6, pony-realistic, sdxl-base)
+    nsfw_denoise: float = 0.65,
+    nsfw_steps: int = 25,
+    nsfw_cfg: float = 7.0,
+    nsfw_seed: int = -1,
 ) -> List[str]:
     """
     Generate image(s) from a source image.
 
-    Supports all image models including FLUX.2 variants:
-    - flux-2-dev: configurable (guidance_scale, steps, prompt_expansion, acceleration)
-    - flux-2-pro: zero-config (only safety_tolerance)
-    - flux-2-flex: fully configurable (all params)
-    - flux-2-max: zero-config (only safety_tolerance)
-    - flux-kontext-dev/pro: configurable (guidance_scale, steps)
+    Supports all image models including:
+    - FLUX.2 variants (fal.ai)
+    - NSFW models: pony-v6, pony-realistic, sdxl-base (vast.ai + ComfyUI)
 
     Returns list of image URLs.
     """
+    # Route NSFW models to vast.ai executor
+    if is_nsfw_model(model):
+        logger.info("Routing to NSFW executor",
+                    model=model,
+                    image_url=image_url[:50] if image_url else "NO IMAGE",
+                    prompt=prompt[:80] if prompt else "NO PROMPT")
+
+        # Generate images (NSFW executor generates one at a time)
+        results = []
+        for _ in range(num_images):
+            result = await generate_nsfw_image(
+                source_image_url=image_url,
+                prompt=prompt,
+                model=model,
+                negative_prompt=negative_prompt,
+                denoise=nsfw_denoise,
+                steps=nsfw_steps,
+                cfg=nsfw_cfg,
+                seed=nsfw_seed,
+            )
+
+            if result["status"] == "completed" and result.get("result_url"):
+                results.append(result["result_url"])
+            else:
+                raise Exception(result.get("error_message", "NSFW generation failed"))
+
+        logger.info("NSFW images generated", model=model, count=len(results))
+        return results
+
+    # Standard SFW models via fal.ai
     # Check if FLUX.2 model for enhanced logging
     is_flux2 = model.startswith("flux-2") or model.startswith("flux-kontext")
 

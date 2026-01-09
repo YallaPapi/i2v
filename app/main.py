@@ -42,6 +42,13 @@ from app.face_swap_client import (
 )
 from app.fal_upload import upload_image, SUPPORTED_FORMATS
 from app.routers.pipelines import router as pipelines_router
+from app.routers.vastai import router as vastai_router
+from app.routers.nsfw import router as nsfw_router
+from app.routers.nsfw_images import router as nsfw_images_router
+from app.routers.auth import router as auth_router
+from app.routers.credits import router as credits_router
+from app.routers.batch_jobs import router as batch_jobs_router
+from app.routers.templates import router as templates_router
 
 logger = structlog.get_logger()
 
@@ -276,7 +283,14 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 
 # Include routers
+app.include_router(auth_router, prefix="/api")  # Auth: /api/auth/login, /api/auth/signup
+app.include_router(credits_router, prefix="/api")  # Credits: /api/credits/balance
+app.include_router(batch_jobs_router, prefix="/api")  # Batch jobs: /api/batch-jobs
+app.include_router(templates_router, prefix="/api")  # Templates: /api/templates
 app.include_router(pipelines_router, prefix="/api")
+app.include_router(vastai_router, prefix="/api")
+app.include_router(nsfw_router, prefix="/api")
+app.include_router(nsfw_images_router, prefix="/api")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -589,7 +603,7 @@ async def generate_prompts_endpoint(request: PromptGeneratorRequest):
             count=request.count,
             style=request.style,
             location=request.location,
-            exaggerated_bust=request.exaggerated_bust,
+            bust_size=request.bust_size,
             preserve_identity=request.preserve_identity,
             framing=request.framing,
             realism_preset=request.realism_preset,

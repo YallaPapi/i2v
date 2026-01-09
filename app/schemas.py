@@ -99,7 +99,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# Image model type - includes all FLUX.1, FLUX.2, Kontext, and Ideogram variants
+# Image model type - includes all FLUX.1, FLUX.2, Kontext, Ideogram, and NSFW variants
 ImageModelType = Literal[
     "gpt-image-1.5",
     "kling-image",
@@ -116,6 +116,10 @@ ImageModelType = Literal[
     "flux-kontext-pro",
     # Ideogram (text-in-image)
     "ideogram-2",
+    # NSFW models (vast.ai + ComfyUI)
+    "pony-v6",
+    "pony-realistic",
+    "sdxl-base",
 ]
 
 
@@ -679,7 +683,7 @@ class PromptGeneratorRequest(BaseModel):
     count: int = 10  # 1-50 prompts
     style: Literal["cosplay", "cottagecore", "gym", "bookish", "nurse"] = "cosplay"
     location: Literal["outdoor", "indoor", "mixed"] = "mixed"
-    exaggerated_bust: bool = False  # Add exaggerated bust description to prompts
+    bust_size: Literal["none", "subtle", "moderate", "exaggerated"] = "none"  # Bust enhancement level
     preserve_identity: bool = True  # Add "preserving her exact facial features" to prompts
     framing: Literal["close", "medium", "full"] = "medium"  # close=face/shoulders, medium=waist up, full=head to toe
     realism_preset: Literal["default", "phone_grainy", "harsh_flash", "film_aesthetic", "selfie", "candid"] = "default"

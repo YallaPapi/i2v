@@ -156,7 +156,7 @@ export function Playground() {
   const [runName, setRunName] = useState('')
   const [bulkSteps, setBulkSteps] = useState<BulkStep[]>([])
   const [bulkGroups, setBulkGroups] = useState<SourceGroup[]>([])
-  const [bulkTotals, setBulkTotals] = useState({ source_images: 0, i2i_generated: 0, i2v_generated: 0, total_cost: 0 })
+  const [bulkTotals, _setBulkTotals] = useState({ source_images: 0, i2i_generated: 0, i2v_generated: 0, total_cost: 0 })
 
   // Carousel Mode State - each prompt = one slide in the story
   const [carouselPrompts, setCarouselPrompts] = useState<string[]>([])
@@ -182,7 +182,7 @@ export function Playground() {
   const [promptBuilderStyle, setPromptBuilderStyle] = useState<'cosplay' | 'cottagecore' | 'gym' | 'bookish' | 'nurse'>('cosplay')
   const [promptBuilderLocation, setPromptBuilderLocation] = useState<'outdoor' | 'indoor' | 'mixed'>('mixed')
   const [promptBuilderCount, setPromptBuilderCount] = useState(10)
-  const [promptBuilderExaggeratedBust, setPromptBuilderExaggeratedBust] = useState(false)
+  const [promptBuilderBustSize, setPromptBuilderBustSize] = useState<'none' | 'subtle' | 'moderate' | 'exaggerated'>('none')
   const [promptBuilderPreserveIdentity, setPromptBuilderPreserveIdentity] = useState(true)
   const [promptBuilderFraming, setPromptBuilderFraming] = useState<'close' | 'medium' | 'full'>('medium')
   const [promptBuilderRealismPreset, setPromptBuilderRealismPreset] = useState<'default' | 'phone_grainy' | 'harsh_flash' | 'film_aesthetic' | 'selfie' | 'candid'>('default')
@@ -316,7 +316,7 @@ export function Playground() {
         count: promptBuilderCount,
         style: promptBuilderStyle,
         location: promptBuilderLocation,
-        exaggerated_bust: promptBuilderExaggeratedBust,
+        bust_size: promptBuilderBustSize,
         preserve_identity: promptBuilderPreserveIdentity,
         framing: promptBuilderFraming,
         realism_preset: promptBuilderRealismPreset,
@@ -1034,16 +1034,20 @@ export function Playground() {
                               <option value="candid">Candid / Motion</option>
                             </select>
                           </div>
-                          <label className="flex items-center gap-2 text-sm cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={promptBuilderExaggeratedBust}
-                              onChange={(e) => setPromptBuilderExaggeratedBust(e.target.checked)}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm text-muted-foreground">Bust Size</span>
+                            <select
+                              value={promptBuilderBustSize}
+                              onChange={(e) => setPromptBuilderBustSize(e.target.value as 'none' | 'subtle' | 'moderate' | 'exaggerated')}
                               disabled={promptBuilderLoading}
-                              className="rounded"
-                            />
-                            <span className="text-muted-foreground">Exaggerated bust</span>
-                          </label>
+                              className="border rounded px-2 py-1 text-sm"
+                            >
+                              <option value="none">None (preserve original)</option>
+                              <option value="subtle">Subtle enhancement</option>
+                              <option value="moderate">Moderate enhancement</option>
+                              <option value="exaggerated">Exaggerated</option>
+                            </select>
+                          </div>
                         </div>
 
                         {/* Generate Button */}

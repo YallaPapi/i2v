@@ -1,0 +1,638 @@
+# Product Requirements Document: AI Content Factory for OF Managers
+
+## Executive Summary
+
+A bulk content generation platform purpose-built for OnlyFans managers and creators. The platform enables users to generate 100+ pieces of social media and NSFW content in under an hour using template-based generation, eliminating the need for manual prompting, technical knowledge, or one-by-one API calls.
+
+**Target User:** OnlyFans managers who need to create bulk social media content (TikTok, Instagram, Twitter) and NSFW content for multiple models.
+
+**Core Value Proposition:** "Generate a week's worth of content in an hour. No prompting required."
+
+**Key Differentiators:**
+- Template-based (no learning curve)
+- Bulk generation (100+ pieces at once)
+- End-to-end pipeline (image → video → audio → lip sync)
+- Purpose-built for OF workflow
+- Current events integration (auto trend-jacking)
+
+---
+
+## Phase 1: Template System
+
+### 1.1 Template Architecture
+
+Each template is a pre-configured generation recipe that includes:
+- Base prompt structure with variables
+- Recommended model(s)
+- Output format (image, video, carousel)
+- Variation parameters (what changes between generations)
+- Caption templates (on-screen text)
+- Aspect ratio and duration settings
+
+```
+Template Structure:
+{
+  "id": "cosplay_thirst_tiktok",
+  "name": "Cosplay Thirst Trap",
+  "category": "social_sfw",
+  "output_type": "video",
+  "duration": "5-10s",
+  "aspect_ratio": "9:16",
+  "base_prompt": "beautiful woman in {costume} cosplay, {pose}, {setting}, professional photography...",
+  "variables": {
+    "costume": ["anime schoolgirl", "nurse", "maid", "catgirl", ...],
+    "pose": ["standing", "sitting", "looking back", ...],
+    "setting": ["bedroom", "studio", "outdoor", ...]
+  },
+  "caption_templates": [
+    "POV: your gf dressed up for you",
+    "would you still love me if i was a {costume}",
+    "the things i'd do for attention",
+    ...
+  ],
+  "recommended_model": "gpt-image-1.5",
+  "video_model": "wan"
+}
+```
+
+### 1.2 Launch Templates (Research Required)
+
+Research and implement the following template categories:
+
+**Social Media Templates (SFW/Spicy for TikTok/IG):**
+1. Cosplay thirst trap with captions
+2. Gym/fitness thirst content
+3. "Get ready with me" (GRWM)
+4. POV boyfriend/girlfriend scenarios
+5. Outfit transition videos
+6. "Day in my life" aesthetic clips
+7. Reply to comment format
+8. Dancing/lip sync style
+9. ASMR-adjacent (eating, whispering)
+10. Hot takes / opinion format
+
+**NSFW Templates (for OF/Fansly):**
+11. Lingerie photoshoot variations
+12. Implied nude teases
+13. Solo content variations
+14. POV intimate scenarios
+15. Roleplay scenarios (nurse, teacher, etc.)
+
+**Brainrot/Viral Templates:**
+16. Subway Surfers split screen
+17. Fake podcast clips
+18. AI narration over clips
+19. "Tell me without telling me" format
+20. Trending sound formats
+
+### 1.3 Research Tasks
+
+- [ ] Analyze top 100 performing OF-related TikToks for format patterns
+- [ ] Research current viral templates on TikTok/Instagram
+- [ ] Interview 3-5 OF managers about their content workflow
+- [ ] Document prompt structures that produce consistent results
+- [ ] Test each template with 10+ generations for quality consistency
+
+---
+
+## Phase 2: Carousel Generator
+
+### 2.1 Carousel System
+
+Carousels are multi-image posts that tell a story or sequence. Instagram and TikTok photo mode heavily favor this format.
+
+**Carousel Types:**
+1. **Story Progression** - Images that tell a narrative (getting ready, date night, etc.)
+2. **Outfit Showcase** - Multiple looks/outfits in sequence
+3. **Before/After** - Transformation sequences
+4. **Ranking Format** - "Ranking [things] as a [type of girl]"
+5. **This or That** - Comparison slides
+6. **POV Sequences** - "POV: you take me on a date" with multiple scenes
+
+**Technical Requirements:**
+- Generate 3-10 images with consistent face/identity
+- Maintain style consistency across carousel
+- Support text overlays per slide
+- Export as individual images or combined video slideshow
+- Support transitions for video carousel format
+
+### 2.2 Carousel Template Structure
+
+```
+Carousel Template:
+{
+  "id": "date_night_carousel",
+  "name": "Date Night POV",
+  "slides": [
+    {"scene": "getting ready in mirror", "caption": "getting ready for our date"},
+    {"scene": "outfit reveal full body", "caption": "do you like it?"},
+    {"scene": "in car passenger seat", "caption": "pick me up energy"},
+    {"scene": "at restaurant table", "caption": "my face when you're paying"},
+    {"scene": "walking at night street", "caption": "best night ever"}
+  ],
+  "variation_options": {
+    "outfit_style": ["elegant dress", "casual chic", "sexy"],
+    "location_vibe": ["fancy", "casual", "romantic"]
+  }
+}
+```
+
+### 2.3 Research Tasks
+
+- [ ] Analyze top-performing Instagram carousels in OF niche
+- [ ] Research TikTok photo mode trends
+- [ ] Document ideal slide counts (3, 5, 7, 10)
+- [ ] Test face consistency across multi-image generations
+- [ ] Develop transition templates for video carousels
+
+---
+
+## Phase 3: Current Events / Trending Topics Engine
+
+### 3.1 Headline Scraper System
+
+Automatically pull trending topics and news headlines to generate timely, engagement-optimized content. This solves the "what should I post about" problem.
+
+**Data Sources:**
+- Google Trends API
+- Twitter/X trending topics
+- NewsAPI for headlines
+- Reddit trending (r/all, relevant subreddits)
+- TikTok trending sounds/hashtags (if API available)
+
+**Content Generation Flow:**
+```
+1. Scrape headlines/trends daily (or on-demand)
+2. Filter for relevant/safe topics (no politics, tragedy, controversy)
+3. Generate caption templates based on trends
+4. User selects which trends to use
+5. System generates content with trend-based captions
+```
+
+### 3.2 Caption Templates for Trends
+
+```
+Trend-based caption formats:
+- "POV: your gf just found out about {HEADLINE}"
+- "me pretending to care about {TOPIC} for the algorithm"
+- "the feminine urge to {TREND_ACTION}"
+- "he asked me about {TOPIC} and i said..."
+- "hot take: {OPINION_ON_TREND}"
+- "rating {TRENDING_THING} as a hot girl"
+```
+
+### 3.3 Safety Filters
+
+Topics to auto-filter OUT:
+- Political content (elections, politicians)
+- Tragedies (deaths, disasters, shootings)
+- Controversial social issues
+- Anything involving minors
+- Brand-specific content (potential legal issues)
+
+Topics to prioritize:
+- Pop culture (movies, music, celebrities)
+- Sports events
+- Viral moments
+- Seasonal events (holidays, seasons)
+- Internet culture / memes
+
+### 3.4 Research Tasks
+
+- [ ] Evaluate news/trend APIs (NewsAPI, Google Trends, etc.)
+- [ ] Build topic classification system (safe vs unsafe)
+- [ ] Test trend-to-caption generation with LLM
+- [ ] Develop freshness scoring (prioritize recent trends)
+- [ ] Create trend category taxonomy
+
+---
+
+## Phase 4: Bulk Generation Engine
+
+### 4.1 Core Requirements
+
+The system must handle:
+- 100+ generations in a single batch job
+- Multiple concurrent users with separate queues
+- Progress tracking and ETA estimates
+- Failure handling and automatic retries
+- Organized output (folders by template, date, etc.)
+
+### 4.2 Variation Engine
+
+When generating bulk content, the system automatically varies:
+- Outfits/costumes (from template variables)
+- Poses and angles
+- Settings/backgrounds
+- Caption text (from caption templates)
+- Minor prompt variations for diversity
+
+**Variation Strategy:**
+```
+For 100 generations of "Cosplay TikTok" template:
+- 10 different costumes × 10 variations each
+- Each variation has unique pose, setting, caption
+- Face/identity remains consistent (same model)
+```
+
+### 4.3 Queue Management
+
+```
+Job Queue Structure:
+{
+  "job_id": "uuid",
+  "user_id": "user_123",
+  "template": "cosplay_thirst_tiktok",
+  "quantity": 100,
+  "model_profile": "model_456",  // Face reference
+  "status": "processing",
+  "progress": {
+    "completed": 45,
+    "failed": 2,
+    "pending": 53
+  },
+  "created_at": "2024-01-08T10:00:00Z",
+  "estimated_completion": "2024-01-08T11:15:00Z"
+}
+```
+
+### 4.4 Research Tasks
+
+- [ ] Benchmark generation speeds per model
+- [ ] Design optimal batch sizes for GPU efficiency
+- [ ] Implement job priority system
+- [ ] Build progress notification system (webhooks, email)
+- [ ] Design output organization structure
+
+---
+
+## Phase 5: Model Identity System
+
+### 5.1 Model Profiles
+
+Each OF model (the person being generated) has a profile:
+- Reference images (3-10 face photos)
+- Body type preferences
+- Style preferences
+- Voice sample (for audio generation)
+- Custom LoRA (if trained)
+
+### 5.2 Face Consistency
+
+Critical requirement: Generated content must look like the same person across all outputs.
+
+**Approaches:**
+1. **Reference image injection** - Include face reference in each generation
+2. **IP-Adapter / InstantID** - Face embedding models
+3. **Custom LoRA** - Train model-specific LoRA (higher quality, more effort)
+4. **Face swap post-processing** - Generate generic, swap face after
+
+### 5.3 Voice Cloning
+
+For audio content:
+- User uploads 1-3 minute voice sample
+- System creates voice clone using XTTS/RVC
+- Clone is used for all audio generation for that model
+- Supports speech and vocalizations
+
+### 5.4 Research Tasks
+
+- [ ] Test face consistency methods (IP-Adapter, InstantID, LoRA)
+- [ ] Benchmark quality vs speed tradeoffs
+- [ ] Evaluate voice cloning quality with short samples
+- [ ] Design model profile data structure
+- [ ] Build reference image validation (quality, face detection)
+
+---
+
+## Phase 6: Pricing & Economics
+
+### 6.1 Cost Analysis (Research Required)
+
+**Our Costs:**
+
+| Resource | Cost | Notes |
+|----------|------|-------|
+| fal.ai GPT Image 1.5 (high) | $0.20/img | Best for realistic |
+| fal.ai GPT Image 1.5 (medium) | $0.07/img | Good balance |
+| fal.ai FLUX.2 Pro | $0.05/img | Good quality |
+| fal.ai Kling video (5s) | $0.35/vid | Per-second pricing |
+| fal.ai Wan video (5s, 1080p) | $0.75/vid | Per-second pricing |
+| Self-hosted Pony (vast.ai) | ~$0.005/img | GPU compute only |
+| Self-hosted FLUX.2 Dev | ~$0.005/img | GPU compute only |
+| Self-hosted audio (Bark) | ~$0.002/sec | GPU compute only |
+| Self-hosted lip sync | ~$0.005/sec | GPU compute only |
+| vast.ai GPU (dedicated) | $230/month | 5090 24/7 |
+
+**Research Required:**
+- [ ] Survey 10+ OF managers on current content spend
+- [ ] Research competitor pricing (if any direct competitors)
+- [ ] Calculate break-even points per pricing model
+- [ ] Model subscription vs pay-as-you-go economics
+
+### 6.2 Pricing Strategy
+
+**Principle:** Higher margin on self-hosted, pass through costs on fal.ai.
+
+```
+PRICING TIERS:
+
+Tier 1: Starter ($49/month)
+- 500 credits
+- Standard templates
+- Email support
+- Good for: Small creators, testing
+
+Tier 2: Pro ($149/month)
+- 2,000 credits
+- All templates
+- Priority queue
+- Voice cloning
+- Good for: Active managers (1-2 models)
+
+Tier 3: Agency ($399/month)
+- 10,000 credits
+- All features
+- Dedicated GPU time
+- Custom templates
+- API access
+- Good for: Agencies (5+ models)
+
+PAY-AS-YOU-GO:
+- Credits at $0.10 each (no subscription)
+- For occasional users
+
+CREDIT COSTS:
+- SFW image (GPT): 3-5 credits ($0.30-0.50)
+- SFW image (self-hosted): 1 credit ($0.10)
+- NSFW image: 1 credit ($0.10)
+- Video (5s): 5-10 credits ($0.50-1.00)
+- Full pipeline (img+vid+audio+lipsync): 15-25 credits ($1.50-2.50)
+- Carousel (5 images): 5-10 credits ($0.50-1.00)
+```
+
+### 6.3 Competitive Analysis (Research Required)
+
+- [ ] Research Civitai pricing and features
+- [ ] Research other AI content tools (HeyGen, Synthesia, etc.)
+- [ ] Research what OF managers currently pay for content
+- [ ] Calculate ROI comparison (our platform vs hiring editors)
+
+---
+
+## Phase 7: Content Moderation & Safety
+
+### 7.1 Legal Requirements
+
+- CSAM detection mandatory (PhotoDNA or equivalent)
+- Age verification for uploaded faces
+- NCMEC reporting for detected illegal content
+- Terms of Service with prohibited content
+
+### 7.2 Moderation Pipeline
+
+```
+INPUT MODERATION (before generation):
+1. Face upload → Age estimation (block if <20 appearance)
+2. Face upload → Celebrity detection (block famous people)
+3. Face upload → CSAM check (block + report)
+4. Prompt check → Keyword filter (block prohibited terms)
+
+OUTPUT MODERATION (after generation):
+1. Generated image → CSAM check
+2. Generated image → Violence check
+3. Generated image → Quality check (reject bad generations)
+```
+
+### 7.3 Content Tiers
+
+```
+STANDARD TIER (CCBill + Crypto):
+- SFW social media content
+- Spicy/suggestive content
+- Standard NSFW
+- Cartoon violence (fictional)
+
+EXTREME TIER (Crypto only):
+- Explicit NSFW
+- Extreme fetish (legal)
+- Content CCBill won't process
+```
+
+### 7.4 Creator Verification
+
+For users who want to generate content of real people (themselves):
+1. Upload government ID (age verification)
+2. Upload selfie holding ID (identity verification)
+3. Sign consent form for AI generation
+4. Manual review (1-24 hours)
+5. Face embedding stored, only that user can generate that face
+
+### 7.5 Research Tasks
+
+- [ ] Evaluate moderation APIs (Azure, AWS, Google)
+- [ ] Research PhotoDNA access requirements
+- [ ] Document legal requirements by jurisdiction
+- [ ] Design creator verification workflow
+- [ ] Build keyword blocklist
+
+---
+
+## Phase 8: Technical Infrastructure
+
+### 8.1 Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  FRONTEND (Next.js on Vercel)                               │
+│  - Template browser                                          │
+│  - Model profile management                                  │
+│  - Bulk job dashboard                                        │
+│  - Content library                                           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  BACKEND (FastAPI on VPS)                                   │
+│  - Auth & user management                                    │
+│  - Credits system                                            │
+│  - Job queue (Redis)                                         │
+│  - Moderation pipeline                                       │
+│  - Template engine                                           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+┌─────────────────────────┐     ┌─────────────────────────────┐
+│  FAL.AI                 │     │  VAST.AI GPU POOL           │
+│  - GPT Image 1.5        │     │  - ComfyUI                  │
+│  - FLUX.2 Pro           │     │  - Pony V6 / Realism        │
+│  - Kling / Wan video    │     │  - FLUX.2 Dev               │
+│                         │     │  - Bark audio               │
+│                         │     │  - Wav2Lip                  │
+└─────────────────────────┘     └─────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  CLOUDFLARE R2                                              │
+│  - Generated content storage                                 │
+│  - Model profile assets                                      │
+│  - Voice samples                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 8.2 GPU Scaling Strategy
+
+```
+PHASE 1 (0-50 users):
+- 1 dedicated vast.ai 5090 ($230/mo)
+- Handle ~4,000 images/day or ~180/hour
+
+PHASE 2 (50-200 users):
+- 2 dedicated GPUs ($460/mo)
+- 1 on-demand for overflow
+- Handle ~8,000 images/day
+
+PHASE 3 (200+ users):
+- 3+ dedicated GPUs
+- Auto-scaling pool
+- Queue-based spin-up
+```
+
+### 8.3 Research Tasks
+
+- [ ] Benchmark generation speeds by model
+- [ ] Design job routing logic (fal.ai vs self-hosted)
+- [ ] Build Docker image with all models
+- [ ] Test multi-model loading on single GPU
+- [ ] Design auto-scaling triggers
+
+---
+
+## Phase 9: Payment Processing
+
+### 9.1 Payment Methods
+
+**CCBill (Primary for standard content):**
+- Credit card processing
+- NSFW-friendly
+- 10-15% fees
+- Handle all compliance
+
+**Cryptocurrency (For all tiers + extreme content):**
+- USDC, ETH, BTC
+- Lower fees (~1%)
+- Required for extreme tier
+- Privacy option
+
+### 9.2 Implementation
+
+- [ ] CCBill merchant account application
+- [ ] CCBill webhook integration
+- [ ] Crypto payment flow (Coinbase Commerce or direct wallet)
+- [ ] Credits ledger system
+- [ ] Subscription billing logic
+- [ ] Refund handling
+
+---
+
+## Phase 10: Launch Plan
+
+### 10.1 MVP Scope (4 weeks)
+
+Week 1-2:
+- [ ] Template system with 5 core templates
+- [ ] Bulk generation queue
+- [ ] Basic model profiles (face upload)
+- [ ] Credits system (manual top-up for beta)
+
+Week 3:
+- [ ] 10 total templates
+- [ ] Carousel generator
+- [ ] Voice cloning integration
+- [ ] Progress tracking UI
+
+Week 4:
+- [ ] Payment integration (CCBill)
+- [ ] Content moderation (basic)
+- [ ] Landing page
+- [ ] Beta user onboarding
+
+### 10.2 Post-MVP (Month 2-3)
+
+- [ ] Current events/trending integration
+- [ ] Advanced moderation (PhotoDNA)
+- [ ] Crypto payments
+- [ ] API access for power users
+- [ ] Custom LoRA training
+- [ ] Mobile-responsive improvements
+
+### 10.3 Success Metrics
+
+- 100 beta users in month 1
+- 10 paying customers by end of month 1
+- $5,000 MRR by end of month 3
+- 50,000 generations by end of month 3
+
+---
+
+## Appendix A: Model Selection
+
+### A.1 Image Models (Research and finalize)
+
+**SFW/Realistic (via fal.ai):**
+- GPT Image 1.5 - Best photorealism
+- FLUX.2 Pro - High quality
+- Ideogram V2 - Text in images
+
+**NSFW/Self-hosted (via vast.ai):**
+- Pony Diffusion V6 XL - Anime/stylized
+- Pony Realism - Photorealistic NSFW
+- FLUX.2 Dev - General purpose
+
+**Research Required:**
+- [ ] Test top 10 Civitai models for quality
+- [ ] Evaluate VRAM requirements
+- [ ] Check licensing for commercial use
+
+### A.2 Video Models
+
+- Kling 2.6 Pro - Fast, good quality
+- Wan 2.5/2.6 - Good motion, open source
+- Luma Ray2 - Smooth animations
+
+### A.3 LoRAs (Research and curate)
+
+- [ ] Research top 20 LoRAs on Civitai by category
+- [ ] Test compatibility with base models
+- [ ] Evaluate licensing
+- [ ] Create curated "style packs"
+
+---
+
+## Appendix B: Competitor Analysis (Research Required)
+
+| Competitor | Strengths | Weaknesses | Our Advantage |
+|------------|-----------|------------|---------------|
+| Civitai | Huge model library | Technical, not bulk-focused | Templates, simplicity |
+| Manual/VAs | Human quality | Slow, expensive | 100x faster, cheaper |
+| HeyGen | Easy to use | SFW only, expensive | NSFW, bulk pricing |
+| Runway | Good video | General purpose, SFW | Purpose-built for OF |
+
+---
+
+## Appendix C: Risk Analysis
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| fal.ai blocks NSFW | Medium | High | Self-hosted fallback ready |
+| CCBill rejects application | Low | High | Crypto-only launch option |
+| Legal issues (content) | Low | Critical | Strong moderation, legal review |
+| GPU costs exceed revenue | Medium | Medium | Careful pricing, usage limits |
+| Low user adoption | Medium | High | Validate with beta users first |
+
+---
+
+## Document History
+
+- v1.0 - 2024-01-08 - Initial PRD

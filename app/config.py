@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import secrets
 
 
 class Settings(BaseSettings):
@@ -19,8 +20,36 @@ class Settings(BaseSettings):
     # Optional - for prompt enhancement
     anthropic_api_key: Optional[str] = None
 
-    # Database
-    db_path: str = "wan_jobs.db"
+    # Database - SQLite (default for local dev) or PostgreSQL (production)
+    db_path: str = "wan_jobs.db"  # SQLite path (used when database_url not set)
+    database_url: Optional[str] = None  # PostgreSQL URL: postgresql+asyncpg://user:pass@host/db
+
+    # Auth & Security
+    jwt_secret_key: str = secrets.token_urlsafe(32)  # Auto-generate if not set (set in prod!)
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days default
+    refresh_token_expire_minutes: int = 60 * 24 * 30  # 30 days
+
+    # User defaults
+    default_user_tier: str = "starter"  # starter, pro, agency
+    default_user_credits: int = 0
+
+    # Rate limiting (enforced at nginx/cloudflare, but defined here for reference)
+    login_rate_limit_per_minute: int = 10
+    signup_rate_limit_per_minute: int = 5
+
+    # CORS
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"  # Comma-separated
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated string."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def is_postgres(self) -> bool:
+        """Check if using PostgreSQL."""
+        return self.database_url is not None and self.database_url.startswith("postgresql")
 
     # Worker
     worker_poll_interval_seconds: int = 10

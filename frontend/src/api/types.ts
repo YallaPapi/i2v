@@ -77,6 +77,10 @@ export type ImageModel =
   | 'flux-kontext-pro'
   // Ideogram
   | 'ideogram-2'
+  // NSFW Models (vast.ai GPU)
+  | 'pony-v6'
+  | 'pony-realistic'
+  | 'sdxl-base'
 
 // Helper to check if model is FLUX.2 or Kontext
 export const isFlux2Model = (model: string): boolean => {
@@ -227,7 +231,7 @@ export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string }
   { value: 'stable-video', label: 'Stable Video Diffusion', pricing: '$0.075/vid' },
 ]
 
-export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }[] = [
+export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string; nsfw?: boolean }[] = [
   { value: 'gpt-image-1.5', label: 'GPT Image 1.5', pricing: '$0.009-0.20/image' },
   { value: 'kling-image', label: 'Kling Image', pricing: '$0.028/image' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', pricing: '$0.15/image' },
@@ -244,7 +248,16 @@ export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string }
   { value: 'flux-kontext-pro', label: 'FLUX Kontext Pro', pricing: '$0.04/image' },
   // Ideogram
   { value: 'ideogram-2', label: 'Ideogram V2', pricing: '$0.04/image' },
+  // NSFW Models (vast.ai GPU - open source, GPU compute only)
+  { value: 'pony-v6', label: 'Pony V6 XL (NSFW)', pricing: '~$0.005/image', nsfw: true },
+  { value: 'pony-realistic', label: 'Pony Realism (NSFW)', pricing: '~$0.005/image', nsfw: true },
+  { value: 'sdxl-base', label: 'SDXL Base (NSFW)', pricing: '~$0.004/image', nsfw: true },
 ]
+
+// Helper to check if model is NSFW (requires vast.ai)
+export const isNSFWModel = (model: string): boolean => {
+  return ['pony-v6', 'pony-realistic', 'sdxl-base'].includes(model)
+}
 
 export const RESOLUTIONS = [
   { value: '480p', label: '480p' },

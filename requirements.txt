@@ -7,12 +7,27 @@ pydantic-settings>=2.5.2
 # Database
 sqlalchemy>=2.0.35
 alembic>=1.13.3
+asyncpg>=0.29.0  # PostgreSQL async driver (for production)
+aiosqlite>=0.20.0  # SQLite async driver (for local dev)
+
+# Authentication
+python-jose[cryptography]>=3.3.0  # JWT encoding/decoding
+passlib[argon2]>=1.7.4  # Password hashing with argon2
+argon2-cffi>=23.1.0  # Argon2 password hashing
+email-validator>=2.0.0  # Email validation for Pydantic
 
 # HTTP Client
 httpx==0.27.2
 
+# Form Data / File Upload
+python-multipart>=0.0.6
+
 # Fal AI Client
 fal-client>=0.10.0
+
+# AI API Clients
+anthropic>=0.38.0
+openai>=1.50.0
 
 # Environment
 python-dotenv==1.0.1
@@ -25,6 +40,9 @@ structlog==24.4.0
 
 # Monitoring
 prometheus-client==0.21.0
+
+# Production Server
+gunicorn>=21.0.0
 
 # Production Hardening
 portalocker>=2.10.0

@@ -36,6 +36,11 @@ class CostCalculator:
         "flux-kontext-pro": Decimal("0.04"),
         # Ideogram
         "ideogram-2": Decimal("0.04"),
+        # NSFW models (vast.ai GPU rental - open source, only pay for compute)
+        # RTX 4090 ~$0.30-0.50/hr, ~20s per image = ~$0.003/image
+        "pony-v6": Decimal("0.005"),          # GPU compute only
+        "pony-realistic": Decimal("0.005"),   # GPU compute only
+        "sdxl-base": Decimal("0.004"),        # Slightly faster = cheaper
     }
 
     # I2V Model pricing - PER-SECOND rates from fal.ai (January 2026)

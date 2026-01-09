@@ -1,10 +1,26 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-i2v}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-i2v_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-i2v}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-i2v}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching/queuing
   redis:
     image: redis:7.4-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -14,5 +30,41 @@ services:
       timeout: 5s
       retries: 5
 
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-i2v}:${POSTGRES_PASSWORD:-i2v_secret_password}@postgres:5432/${POSTGRES_DB:-i2v}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./downloads:/app/downloads
+    expose:
+      - "8000"
+
+  # Frontend + Nginx Reverse Proxy
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+
 volumes:
+  postgres_data:
   redis_data:
