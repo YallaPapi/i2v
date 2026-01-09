@@ -22,6 +22,7 @@ class InstanceResponse(BaseModel):
     price_per_hour: float
     ssh_host: str | None = None
     api_port: int | None = None
+    public_ip: str | None = None  # Direct public IP for HTTP connections
 
 
 class OfferResponse(BaseModel):
@@ -69,6 +70,7 @@ def _instance_to_response(instance: VastInstance) -> InstanceResponse:
         price_per_hour=instance.dph_total,
         ssh_host=instance.ssh_host,
         api_port=instance.api_port,
+        public_ip=instance.public_ip,
     )
 
 
@@ -359,11 +361,11 @@ async def list_instance_loras(instance_id: int) -> list[LoraInfo]:
     if not instance:
         raise HTTPException(status_code=404, detail="Instance not found")
 
-    if not instance.ssh_host or not instance.api_port:
+    if not instance.public_ip or not instance.api_port:
         raise HTTPException(status_code=400, detail="Instance not ready (no API endpoint)")
 
     # Query ComfyUI's object_info endpoint to get available LoRAs
-    comfyui_url = f"http://{instance.ssh_host}:{instance.api_port}"
+    comfyui_url = f"http://{instance.public_ip}:{instance.api_port}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http_client:

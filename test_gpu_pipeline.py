@@ -47,7 +47,7 @@ async def test_pipeline():
         for inst in instances:
             print(f"    - ID {inst.id}: {inst.gpu_name} ({inst.status})")
             if inst.api_port:
-                print(f"      API: http://{inst.ssh_host}:{inst.api_port}")
+                print(f"      API: http://{inst.public_ip}:{inst.api_port}")
     except Exception as e:
         print(f"    ERROR: {e}")
         return False
@@ -86,8 +86,8 @@ async def test_pipeline():
 
             print(f"    Status: {instance.status} (waited {int(time.time() - start)}s)")
 
-            if instance.status == "running" and instance.api_port:
-                print(f"    Instance ready! API at http://{instance.ssh_host}:{instance.api_port}")
+            if instance.status == "running" and instance.api_port and instance.public_ip:
+                print(f"    Instance ready! API at http://{instance.public_ip}:{instance.api_port}")
                 break
 
             await asyncio.sleep(10)
@@ -100,7 +100,7 @@ async def test_pipeline():
 
     # Step 5: Check ComfyUI is responding
     print("\n[5] Checking ComfyUI API...")
-    comfyui_url = f"http://{instance.ssh_host}:{instance.api_port}"
+    comfyui_url = f"http://{instance.public_ip}:{instance.api_port}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:

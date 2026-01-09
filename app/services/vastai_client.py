@@ -112,14 +112,47 @@ async def upload_image_to_comfyui(
 
 VASTAI_API_URL = "https://console.vast.ai/api/v0"
 
-# Recommended Docker images for different workloads
-# Set COMFYUI_DOCKER_IMAGE env var to use a custom image with pre-baked models
-# Using pytorch base image with manual ComfyUI install for simplicity
+# =============================================================================
+# DOCKER IMAGE CONFIGURATION (Researched 2025/2026)
+# =============================================================================
+# Use ai-dock ComfyUI image which has:
+# - ComfyUI pre-installed and auto-starts via supervisord
+# - Built-in auth (disable with WEB_ENABLE_AUTH=false for API access)
+# - Startup time: 30-120 seconds depending on model downloads
+#
+# IMPORTANT: Vast.ai env is plain KEY=VALUE pairs, NOT docker CLI flags!
+# Port exposure requires direct_port_start/direct_port_end in payload.
+# =============================================================================
+COMFYUI_DOCKER_IMAGE = os.getenv(
+    "COMFYUI_DOCKER_IMAGE",
+    "ghcr.io/ai-dock/comfyui:v2-cuda-12.1.1-base-22.04-v0.2.7"  # Verified tag
+)
+
+# Environment variables for ai-dock ComfyUI
+# These are plain KEY=VALUE pairs passed to the container
+# Using port 8080 because jupyter_direc already exposes it on Vast.ai
+COMFYUI_ENV_VARS = {
+    "WEB_ENABLE_AUTH": "false",      # Disable auth for API access
+    "COMFYUI_PORT_HOST": "8080",     # Use 8080 since jupyter_direc exposes it
+    "PYTHONUNBUFFERED": "1",
+}
+
+# Docker images for different workloads
 DOCKER_IMAGES = {
-    "comfyui": os.getenv("COMFYUI_DOCKER_IMAGE", "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime"),
+    "comfyui": COMFYUI_DOCKER_IMAGE,
     "a1111": "ghcr.io/ai-dock/stable-diffusion-webui:latest",
     "kohya": "ghcr.io/ai-dock/kohya-ss:latest",
 }
+
+
+def get_comfyui_image() -> str:
+    """Get the ComfyUI Docker image to use for vast.ai instances.
+
+    Returns the official vast.ai ComfyUI image which is pre-configured
+    with proper port exposure (8188) and startup behavior.
+    """
+    return COMFYUI_DOCKER_IMAGE
+
 
 # Minimum specs for different workloads
 MIN_SPECS = {
@@ -128,66 +161,113 @@ MIN_SPECS = {
     "lora": {"gpu_ram": 24, "disk_space": 100},  # LoRA training
 }
 
-# ComfyUI installation and model download script
-# This runs on startup to install ComfyUI and download required models
-COMFYUI_STARTUP_SCRIPT = """#!/bin/bash
-set -e
 
-echo "[startup] Starting ComfyUI setup..."
 
-# Install system dependencies
-apt-get update && apt-get install -y git wget aria2 libgl1-mesa-glx libglib2.0-0 || true
+# =============================================================================
+# PORT PARSING HELPER
+# =============================================================================
+def _extract_comfyui_port(instance_or_ports: dict) -> int:
+    """Extract the external ComfyUI API port from vast.ai instance data.
 
-# Clone ComfyUI if not exists
-if [ ! -d "/workspace/ComfyUI" ]; then
-    echo "[startup] Cloning ComfyUI..."
-    cd /workspace
-    git clone https://github.com/comfyanonymous/ComfyUI.git
-    cd ComfyUI
-    pip install -r requirements.txt
-else
-    echo "[startup] ComfyUI already exists"
-    cd /workspace/ComfyUI
-fi
+    Vast.ai maps internal container ports to random external ports.
+    This function extracts the external HostPort that can be used to
+    connect to ComfyUI from outside the container.
 
-MODEL_DIR="/workspace/ComfyUI/models"
-mkdir -p "$MODEL_DIR/checkpoints" "$MODEL_DIR/vae" "$MODEL_DIR/loras"
+    Args:
+        instance_or_ports: Either a full instance dict with a "ports" key,
+                          or just the ports mapping dict directly.
 
-# Download models function
-download_model() {
-    local url="$1" dest="$2"
-    if [ ! -f "$dest" ]; then
-        echo "[models] Downloading $(basename $dest)..."
-        aria2c -x 16 -s 16 -k 1M -o "$dest" "$url" || wget --progress=dot:giga -O "$dest" "$url" || rm -f "$dest"
-    else
-        echo "[models] Already exists: $(basename $dest)"
-    fi
-}
+    Returns:
+        The external port number (HostPort) as an integer.
 
-# Download SDXL Base (priority - smaller and always works)
-download_model "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" "$MODEL_DIR/checkpoints/sd_xl_base_1.0.safetensors"
+    Raises:
+        RuntimeError: If no ComfyUI port mapping is found.
 
-# Download SDXL VAE
-download_model "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors" "$MODEL_DIR/vae/sdxl_vae.safetensors"
+    Example:
+        # Vast.ai returns ports like:
+        # {"8188/tcp": [{"HostPort": "33526"}], "22/tcp": [{"HostPort": "22345"}]}
+        # This function returns 33526 (the external port for ComfyUI)
 
-# Download Pony (if time permits - it's large)
-download_model "https://huggingface.co/AstraliteHeart/pony-diffusion-v6-xl/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors" "$MODEL_DIR/checkpoints/ponyDiffusionV6XL_v6.safetensors" &
+        port = _extract_comfyui_port(instance_data)
+        url = f"http://{instance_data['ssh_host']}:{port}"
+    """
+    # Handle both full instance dict and just ports dict
+    if "ports" in instance_or_ports:
+        ports = instance_or_ports.get("ports") or {}
+    else:
+        ports = instance_or_ports
 
-echo "[startup] Starting ComfyUI server..."
-cd /workspace/ComfyUI
-python main.py --listen 0.0.0.0 --port 8188 &
+    if not isinstance(ports, dict):
+        raise RuntimeError(f"Invalid ports data type: {type(ports)}")
 
-# Wait for ComfyUI to be ready
-sleep 10
-echo "[startup] ComfyUI should be running on port 8188"
+    def _get_host_port(key: str) -> int | None:
+        """Extract HostPort from a port mapping entry."""
+        entries = ports.get(key)
+        if not entries:
+            return None
+        if not isinstance(entries, list) or not entries:
+            return None
+        host_port = entries[0].get("HostPort")
+        if host_port is None:
+            return None
+        try:
+            return int(host_port)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid HostPort value for {key}: {host_port}")
+            return None
 
-# Wait for background downloads
-wait
-echo "[startup] Setup complete"
+    # Try 8080 first (exposed by jupyter_direc on Vast.ai)
+    # We configure COMFYUI_PORT_HOST=8080 to use this port
+    port = _get_host_port("8080/tcp")
+    if port is not None:
+        logger.debug(f"Found ComfyUI port on 8080/tcp -> external port {port}")
+        return port
 
-# Keep container running
-tail -f /dev/null
-"""
+    # Fallback to 8188 (standard ComfyUI port, requires direct port exposure)
+    port = _get_host_port("8188/tcp")
+    if port is not None:
+        logger.debug(f"Found ComfyUI port on 8188/tcp (fallback) -> external port {port}")
+        return port
+
+    # No port found
+    available_ports = list(ports.keys()) if ports else []
+    raise RuntimeError(
+        f"No ComfyUI port mapping found (tried 8080/tcp, 8188/tcp). "
+        f"Available ports: {available_ports}"
+    )
+
+
+def build_comfyui_url(instance: "VastInstance", scheme: str = "http") -> str:
+    """Build the ComfyUI API base URL from a VastInstance.
+
+    Uses the instance's public_ip and api_port (external mapped port)
+    to construct the URL that can be used to access the ComfyUI API.
+
+    IMPORTANT: We use public_ip (public_ipaddr from API), NOT ssh_host.
+    ssh_host is an SSH proxy address (e.g., ssh1.vast.ai) for SSH connections only.
+    public_ip is the actual public IP for direct HTTP connections.
+
+    Args:
+        instance: VastInstance with public_ip and api_port populated
+        scheme: URL scheme (http or https), defaults to http
+
+    Returns:
+        Base URL string like "http://78.83.187.54:17533"
+
+    Raises:
+        ValueError: If instance is missing public_ip or api_port
+
+    Example:
+        instance = await client.get_or_create_instance()
+        url = build_comfyui_url(instance)
+        response = await http.get(f"{url}/system_stats")
+    """
+    if not instance.public_ip:
+        raise ValueError("Instance missing public_ip for ComfyUI URL")
+    if not instance.api_port:
+        raise ValueError("Instance missing api_port for ComfyUI URL")
+
+    return f"{scheme}://{instance.public_ip}:{instance.api_port}"
 
 
 @dataclass
@@ -203,7 +283,8 @@ class VastInstance:
     dph_total: float  # $/hr
     ssh_host: str | None = None
     ssh_port: int | None = None
-    api_port: int | None = None  # ComfyUI API port
+    api_port: int | None = None  # ComfyUI API port (external mapped port)
+    public_ip: str | None = None  # Direct public IP for HTTP connections
 
 
 class VastAIClient:
@@ -300,45 +381,63 @@ class VastAIClient:
     async def create_instance(
         self,
         offer_id: int,
-        docker_image: str = "ai-dock/comfyui:latest",
+        docker_image: str | None = None,
         disk_space: int = 50,
         env_vars: dict | None = None,
         onstart_script: str | None = None,
+        workload: Literal["image", "video", "lora"] = "image",
     ) -> VastInstance | None:
         """
         Rent a GPU instance from vast.ai.
 
         Args:
             offer_id: The offer ID to rent
-            docker_image: Docker image to run
-            disk_space: Disk space in GB
+            docker_image: Docker image to run (defaults to vastai/comfy)
+            disk_space: Disk space in GB (minimum 50GB for ComfyUI models)
             env_vars: Environment variables for the container
-            onstart_script: Script to run on startup
+            onstart_script: Script to run on startup (empty for official image)
+            workload: Workload type for selecting appropriate image
 
         Returns:
             VastInstance if successful, None otherwise
+
+        Note:
+            For ComfyUI workloads, we use the official vastai/comfy image which
+            handles its own startup on port 8188. Do NOT pass custom onstart
+            scripts as they may conflict with the image's entrypoint.
         """
         if not self.api_key:
             return None
 
         client = await self._get_client()
 
-        # Use ComfyUI startup script that installs everything from scratch
-        if onstart_script is None:
-            onstart_script = COMFYUI_STARTUP_SCRIPT
+        # Use default ComfyUI image if not specified
+        if docker_image is None:
+            docker_image = get_comfyui_image()
 
-        # Environment configuration
-        default_env = {
-            "PYTHONUNBUFFERED": "1",
-        }
+        # Enforce minimum disk space for model storage
+        MIN_DISK_GB = 50
+        if disk_space < MIN_DISK_GB:
+            logger.info(f"Increasing disk space from {disk_space}GB to {MIN_DISK_GB}GB minimum")
+            disk_space = MIN_DISK_GB
+
+        # For ai-dock ComfyUI image, we let supervisord handle startup
+        if onstart_script is None:
+            onstart_script = ""
+
+        # Environment configuration - plain KEY=VALUE pairs only!
+        # NO docker CLI flags like -p or -e - Vast.ai doesn't parse those
+        default_env = dict(COMFYUI_ENV_VARS)
         if env_vars:
             default_env.update(env_vars)
 
+        # Use jupyter_direc which exposes port 8080
+        # ai-dock is configured via COMFYUI_PORT_HOST=8080 to use this port
         payload = {
             "client_id": "i2v-app",
             "image": docker_image,
             "disk": disk_space,
-            "runtype": "ssh_direc ssh_proxy",  # Enable direct port access and SSH
+            "runtype": "jupyter_direc ssh_direc ssh_proxy",  # jupyter_direc exposes 8080
             "onstart": onstart_script,
             "env": default_env,
             "python_utf8": True,
@@ -392,13 +491,21 @@ class VastAIClient:
 
                 status = data.get("actual_status", "unknown")
                 if status == "running":
-                    # Extract port mapping - format varies
-                    ports = data.get("ports") or {}
-                    api_port = None
-                    if isinstance(ports, dict):
-                        port_info = ports.get("8188/tcp", [])
-                        if port_info and isinstance(port_info, list):
-                            api_port = port_info[0].get("HostPort")
+                    # Extract ComfyUI port using shared helper
+                    try:
+                        api_port = _extract_comfyui_port(data)
+                    except RuntimeError as e:
+                        logger.warning("Instance running but port not found", error=str(e))
+                        api_port = None
+
+                    ssh_host = data.get("ssh_host")
+                    public_ip = data.get("public_ipaddr")
+                    logger.info(
+                        "Instance ready",
+                        instance_id=instance_id,
+                        public_ip=public_ip,
+                        api_port=api_port,
+                    )
 
                     return VastInstance(
                         id=instance_id,
@@ -409,9 +516,10 @@ class VastAIClient:
                         ram=data.get("cpu_ram", 0),
                         disk_space=data.get("disk_space", 0),
                         dph_total=data.get("dph_total", 0),
-                        ssh_host=data.get("ssh_host"),
+                        ssh_host=ssh_host,
                         ssh_port=data.get("ssh_port"),
                         api_port=api_port,
+                        public_ip=public_ip,
                     )
                 elif status in ("exited", "error"):
                     logger.error("Instance failed to start", status=status, msg=data.get("status_msg"))
@@ -446,17 +554,19 @@ class VastAIClient:
             if "instances" in data:
                 data = data["instances"]
 
-            # Extract port mapping
-            ports = data.get("ports") or {}
+            # Extract ComfyUI port using shared helper (only for running instances)
+            status = data.get("actual_status", "unknown")
             api_port = None
-            if isinstance(ports, dict):
-                port_info = ports.get("8188/tcp", [])
-                if port_info and isinstance(port_info, list):
-                    api_port = port_info[0].get("HostPort")
+            if status == "running":
+                try:
+                    api_port = _extract_comfyui_port(data)
+                except RuntimeError as e:
+                    logger.warning("Instance running but port not found",
+                                   instance_id=instance_id, error=str(e))
 
             return VastInstance(
                 id=instance_id,
-                status=data.get("actual_status", "unknown"),
+                status=status,
                 gpu_name=data.get("gpu_name", "Unknown"),
                 gpu_ram=data.get("gpu_ram", 0),
                 cpu_cores=data.get("cpu_cores", 0),
@@ -466,6 +576,7 @@ class VastAIClient:
                 ssh_host=data.get("ssh_host"),
                 ssh_port=data.get("ssh_port"),
                 api_port=api_port,
+                public_ip=data.get("public_ipaddr"),
             )
         except Exception as e:
             logger.error("Failed to get instance", instance_id=instance_id, error=str(e))
@@ -488,9 +599,18 @@ class VastAIClient:
 
             instances = []
             for inst in data.get("instances", []):
+                # Extract ComfyUI port for running instances
+                status = inst.get("actual_status", "unknown")
+                api_port = None
+                if status == "running":
+                    try:
+                        api_port = _extract_comfyui_port(inst)
+                    except RuntimeError:
+                        pass
+
                 instances.append(VastInstance(
                     id=inst.get("id"),
-                    status=inst.get("actual_status", "unknown"),
+                    status=status,
                     gpu_name=inst.get("gpu_name", "Unknown"),
                     gpu_ram=inst.get("gpu_ram", 0),
                     cpu_cores=inst.get("cpu_cores", 0),
@@ -499,6 +619,8 @@ class VastAIClient:
                     dph_total=inst.get("dph_total", 0),
                     ssh_host=inst.get("ssh_host"),
                     ssh_port=inst.get("ssh_port"),
+                    api_port=api_port,
+                    public_ip=inst.get("public_ipaddr"),
                 ))
             return instances
         except Exception as e:
@@ -544,11 +666,12 @@ class VastAIClient:
         Returns:
             Result dict with output URLs if successful
         """
-        if not instance.ssh_host or not instance.api_port:
-            logger.error("Instance not ready for API calls")
+        if not instance.public_ip or not instance.api_port:
+            logger.error("Instance not ready for API calls (missing public_ip or api_port)")
             return None
 
-        api_url = f"http://{instance.ssh_host}:{instance.api_port}"
+        # Use build_comfyui_url helper which correctly uses public_ip (not ssh_host)
+        api_url = build_comfyui_url(instance)
         client = await self._get_client()
 
         try:
