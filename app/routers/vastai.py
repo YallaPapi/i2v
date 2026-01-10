@@ -852,8 +852,7 @@ async def generate_video_swarmui(request: SwarmUIGenerateRequest) -> dict:
 
         # Get or create SwarmUI instance
         instance = await client.get_or_create_swarmui_instance(
-            max_price=0.50,
-            min_gpu_ram=24,
+            max_price=1.50,
         )
 
         if not instance:

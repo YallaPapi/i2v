@@ -15,7 +15,7 @@ import { FileUpload } from '@/components/ui/file-upload'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useCreateVideoJob, useVideoJobs } from '@/hooks/useJobs'
 import { VIDEO_MODELS, RESOLUTIONS, DURATIONS, isSelfHostedModel } from '@/api/types'
-import { generateGPUVideo } from '@/api/client'
+import { generateSwarmUIVideo } from '@/api/client'
 import type { VideoJob, VideoModel } from '@/api/types'
 import { Video, CheckCircle, XCircle, Clock, ExternalLink, Link, Upload } from 'lucide-react'
 
@@ -52,13 +52,11 @@ export function VideoGeneration() {
   const createJob = useCreateVideoJob()
   const { data: recentJobs, isLoading: jobsLoading } = useVideoJobs({ limit: 10 })
 
-  // GPU video generation (ComfyUI-based for vast.ai instances)
+  // GPU video generation (SwarmUI-based for vast.ai instances)
   const gpuGenerate = useMutation({
-    mutationFn: generateGPUVideo,
+    mutationFn: generateSwarmUIVideo,
     onSuccess: (data) => {
-      // ComfyUI returns videos array
-      const videoUrl = data.videos?.[0] || ''
-      setGPUResult({ video_url: videoUrl, gpu_used: data.gpu_used })
+      setGPUResult({ video_url: data.video_url, gpu_used: data.gpu_used })
     },
   })
 
@@ -91,10 +89,9 @@ export function VideoGeneration() {
           prompt: data.motion_prompt,
           negative_prompt: data.negative_prompt,
           num_frames: 81,  // ~3.4s at 24fps
+          fps: 24,
           steps: 4,        // LightX2V fast
           cfg_scale: 1.0,
-          width: 832,      // Wan 2.2 optimal resolution
-          height: 480,
         })
         reset()
         setUploadedUrl('')
