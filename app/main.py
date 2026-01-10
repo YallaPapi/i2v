@@ -49,6 +49,8 @@ from app.routers.auth import router as auth_router
 from app.routers.credits import router as credits_router
 from app.routers.batch_jobs import router as batch_jobs_router
 from app.routers.templates import router as templates_router
+from app.routers.swarmui import router as swarmui_router
+from app.routers.gpu_config import router as gpu_config_router
 
 logger = structlog.get_logger()
 
@@ -289,6 +291,8 @@ app.include_router(batch_jobs_router, prefix="/api")  # Batch jobs: /api/batch-j
 app.include_router(templates_router, prefix="/api")  # Templates: /api/templates
 app.include_router(pipelines_router, prefix="/api")
 app.include_router(vastai_router, prefix="/api")
+app.include_router(swarmui_router, prefix="/api")  # SwarmUI: /api/swarm/*
+app.include_router(gpu_config_router, prefix="/api")  # GPU config: /api/gpu/*
 app.include_router(nsfw_router, prefix="/api")
 app.include_router(nsfw_images_router, prefix="/api")
 

@@ -1,0 +1,61 @@
+# Custom SwarmUI Docker image with performance optimizations
+# Base: vast.ai official SwarmUI image
+FROM vastai/swarmui:latest
+
+LABEL maintainer="i2v-app"
+LABEL description="SwarmUI with SageAttention, xformers, and video generation support"
+
+# Set environment variables for performance
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ENV CUDA_MODULE_LOADING=LAZY
+ENV TORCH_CUDNN_V8_API_ENABLED=1
+ENV CUDNN_V8_API_ENABLED=1
+ENV SWARMUI_ENABLE_SAGE_ATTENTION=true
+
+# Install performance packages
+RUN pip install --no-cache-dir \
+    triton \
+    xformers \
+    accelerate \
+    && pip install --no-cache-dir sageattention || \
+    pip install --no-cache-dir git+https://github.com/thu-ml/SageAttention.git
+
+# Install Flash Attention 2 (if compatible with CUDA version)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash Attention not available"
+
+# Create model directories (SwarmUI structure)
+RUN mkdir -p /workspace/SwarmUI/Models/diffusion_models \
+    && mkdir -p /workspace/SwarmUI/Models/Lora \
+    && mkdir -p /workspace/SwarmUI/Models/VAE \
+    && mkdir -p /workspace/SwarmUI/Models/Stable-Diffusion \
+    && mkdir -p /workspace/SwarmUI/Models/text_encoders \
+    && mkdir -p /workspace/SwarmUI/Models/clip
+
+# Install ComfyUI custom nodes (SwarmUI uses ComfyUI backend)
+WORKDIR /workspace/SwarmUI/dlbackend/ComfyUI/custom_nodes
+
+# GGUF support - for quantized Wan models
+RUN git clone https://github.com/city96/ComfyUI-GGUF.git \
+    && cd ComfyUI-GGUF && pip install -r requirements.txt || true
+
+# Wan Video Wrapper
+RUN git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \
+    && cd ComfyUI-WanVideoWrapper && pip install -r requirements.txt || true
+
+# Video Helper Suite
+RUN git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
+    && cd ComfyUI-VideoHelperSuite && pip install -r requirements.txt || true
+
+# KJNodes
+RUN git clone https://github.com/kijai/ComfyUI-KJNodes.git \
+    && cd ComfyUI-KJNodes && pip install -r requirements.txt || true
+
+# Back to workspace
+WORKDIR /workspace/SwarmUI
+
+# Verify installations
+RUN python -c "import sageattention; print('SageAttention OK')" || echo "SageAttention check failed"
+RUN python -c "import xformers; print('xformers OK')" || echo "xformers check failed"
+
+# Default command (inherited from base)
+CMD ["bash", "-c", "cd /workspace/SwarmUI && ./launch-linux.sh --host 0.0.0.0 --port 7801"]

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,7 +14,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { FileUpload } from '@/components/ui/file-upload'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useCreateVideoJob, useVideoJobs } from '@/hooks/useJobs'
-import { VIDEO_MODELS, RESOLUTIONS, DURATIONS } from '@/api/types'
+import { VIDEO_MODELS, RESOLUTIONS, DURATIONS, isSelfHostedModel } from '@/api/types'
+import { generateGPUVideo } from '@/api/client'
 import type { VideoJob, VideoModel } from '@/api/types'
 import { Video, CheckCircle, XCircle, Clock, ExternalLink, Link, Upload } from 'lucide-react'
 
@@ -46,8 +48,19 @@ export function VideoGeneration() {
   const [selectedModel, setSelectedModel] = useState<VideoModel>('kling')
   const [inputMode, setInputMode] = useState<'url' | 'upload'>('url')
   const [uploadedUrl, setUploadedUrl] = useState<string>('')
+  const [gpuResult, setGPUResult] = useState<{ video_url: string; gpu_used: string } | null>(null)
   const createJob = useCreateVideoJob()
   const { data: recentJobs, isLoading: jobsLoading } = useVideoJobs({ limit: 10 })
+
+  // GPU video generation (ComfyUI-based for vast.ai instances)
+  const gpuGenerate = useMutation({
+    mutationFn: generateGPUVideo,
+    onSuccess: (data) => {
+      // ComfyUI returns videos array
+      const videoUrl = data.videos?.[0] || ''
+      setGPUResult({ video_url: videoUrl, gpu_used: data.gpu_used })
+    },
+  })
 
   const {
     register,
@@ -69,6 +82,26 @@ export function VideoGeneration() {
       if (!imageUrl) {
         return
       }
+
+      // Check if using GPU (self-hosted on vast.ai)
+      if (isSelfHostedModel(data.model)) {
+        setGPUResult(null)
+        await gpuGenerate.mutateAsync({
+          image_url: imageUrl,
+          prompt: data.motion_prompt,
+          negative_prompt: data.negative_prompt,
+          num_frames: 81,  // ~3.4s at 24fps
+          steps: 4,        // LightX2V fast
+          cfg_scale: 1.0,
+          width: 832,      // Wan 2.2 optimal resolution
+          height: 480,
+        })
+        reset()
+        setUploadedUrl('')
+        return
+      }
+
+      // Cloud models (fal.ai)
       await createJob.mutateAsync({
         image_url: imageUrl,
         motion_prompt: data.motion_prompt,
@@ -83,6 +116,8 @@ export function VideoGeneration() {
       console.error('Failed to create job:', error)
     }
   }
+
+  const isGenerating = createJob.isPending || gpuGenerate.isPending
 
   const modelInfo = VIDEO_MODELS.find((m) => m.value === selectedModel)
 
@@ -135,7 +170,7 @@ export function VideoGeneration() {
                   <TabsContent value="upload">
                     <FileUpload
                       onUpload={(url) => setUploadedUrl(url)}
-                      disabled={createJob.isPending}
+                      disabled={isGenerating}
                     />
                     {uploadedUrl && (
                       <p className="text-xs text-green-600 mt-1">Image uploaded successfully</p>
@@ -204,21 +239,21 @@ export function VideoGeneration() {
               <Button
                 type="submit"
                 className="w-full"
-                disabled={createJob.isPending}
+                disabled={isGenerating}
               >
-                {createJob.isPending ? (
+                {isGenerating ? (
                   <>
                     <Spinner size="sm" className="mr-2" />
-                    Creating Job...
+                    {isSelfHostedModel(selectedModel) ? 'Generating on GPU...' : 'Creating Job...'}
                   </>
                 ) : (
-                  'Create Video Job'
+                  isSelfHostedModel(selectedModel) ? 'Generate on GPU (5090)' : 'Create Video Job'
                 )}
               </Button>
 
-              {createJob.isError && (
+              {(createJob.isError || gpuGenerate.isError) && (
                 <p className="text-sm text-destructive text-center">
-                  Failed to create job. Please try again.
+                  Failed to generate. {gpuGenerate.error?.message || 'Please try again.'}
                 </p>
               )}
 
@@ -226,6 +261,23 @@ export function VideoGeneration() {
                 <p className="text-sm text-green-600 text-center">
                   Job created successfully! ID: {createJob.data?.id}
                 </p>
+              )}
+
+              {gpuResult && (
+                <div className="border rounded-lg p-4 bg-green-50 space-y-2">
+                  <p className="text-sm font-medium text-green-800">
+                    Video generated on {gpuResult.gpu_used}!
+                  </p>
+                  <a
+                    href={gpuResult.video_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center text-sm text-blue-600 hover:underline"
+                  >
+                    <ExternalLink className="h-3 w-3 mr-1" />
+                    View Video
+                  </a>
+                </div>
               )}
             </form>
           </CardContent>

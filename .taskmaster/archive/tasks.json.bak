@@ -1,0 +1,1065 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "272",
+        "title": "Backend foundation with FastAPI, auth, and core models",
+        "description": "Set up the FastAPI backend service, core project structure, authentication, and base data models to support templates, jobs, users, and credits.",
+        "details": "Tech stack:\n- Backend: FastAPI 0.115+, Python 3.11\n- DB: PostgreSQL 16 (via SQLAlchemy 2.x + Alembic for migrations)\n- Auth: JWT-based session tokens, password hashing with argon2-cffi\n- Packaging: Poetry or uv for dependency management\n\nImplementation steps:\n1) Initialize FastAPI project structure with routers for /auth, /users, /templates, /jobs, /credits.\n2) Configure PostgreSQL connection using SQLAlchemy 2.x async engine and sessionmaker.\n3) Define ORM models: User (id, email, hashed_password, role, tier, credits_balance, created_at), Template, Job, ModelProfile, PaymentTransaction.\n4) Implement signup/login endpoints with email+password, using Pydantic models for request/response schemas.\n5) Implement JWT issuing and verification (e.g., python-jose), including role field to distinguish admin vs manager users.\n6) Add basic rate limiting at API gateway/reverse proxy (e.g., via nginx/Cloudflare rules) to protect login.\n\nPseudo-code (simplified):\n```python\napp = FastAPI()\n\nengine = create_async_engine(DB_URL)\nAsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)\n\nclass User(Base):\n    __tablename__ = \"users\"\n    id = mapped_column(Integer, primary_key=True)\n    email = mapped_column(String, unique=True, index=True)\n    hashed_password = mapped_column(String)\n    role = mapped_column(String, default=\"manager\")\n    tier = mapped_column(String, default=\"starter\")\n    credits_balance = mapped_column(Integer, default=0)\n\n@app.post(\"/auth/login\")\nasync def login(creds: LoginIn, db: AsyncSession = Depends(get_db)):\n    user = await get_user_by_email(db, creds.email)\n    verify_password(creds.password, user.hashed_password)\n    token = create_jwt({\"sub\": user.id, \"role\": user.role})\n    return {\"access_token\": token}\n```\n\nSecurity notes:\n- Store secrets (JWT keys, DB password) in environment variables or HashiCorp Vault.\n- Enforce HTTPS via reverse proxy; restrict FastAPI to internal network.\n- Use proper CORS config for Next.js origin.\n",
+        "testStrategy": "- Unit tests for auth flows (signup, login, token verification) using pytest + httpx.\n- DB migration tests to ensure models create expected tables.\n- Security tests: verify password hashing, token expiration, and that protected endpoints reject missing/invalid JWTs.\n- Integration test calling auth endpoints from a test Next.js client (or Postman) to ensure CORS and JSON contracts are correct.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Align existing FastAPI project structure and environment for Postgres and auth",
+            "description": "Review the current i2v FastAPI backend (SQLite, existing routers/models) and update the project structure and configuration to support PostgreSQL, environment-based settings, and upcoming auth-related modules without breaking existing endpoints.",
+            "dependencies": [],
+            "details": "1) Inspect current app layout (main.py, routers, models, DB session setup) and identify where to plug in new auth and user domains. 2) Introduce or extend a central config module (e.g., app/core/config.py) using environment variables for DB URL, JWT secret, token expiry, CORS origins, and argon2 parameters. 3) Decide and configure packaging (Poetry or uv) and update pyproject/dependency files to include FastAPI 0.115+, SQLAlchemy 2.x async, Alembic, argon2-cffi, JWT library (e.g., python-jose), and psycopg/asyncpg. 4) Ensure FastAPI app initialization includes a place to register new /auth, /users, /templates, /jobs, /credits routers while keeping existing pipelines/vastai/nsfw/image/video routers. 5) Verify local and dev environment configs for HTTPS termination, CORS to Next.js frontend, and secrets management via env or Vault, without changing existing behavior.",
+            "status": "done",
+            "testStrategy": "Smoke-test existing endpoints (pipelines, image/video generation) after dependency and config changes to ensure they still start and respond successfully.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:08:04.782Z"
+          },
+          {
+            "id": 2,
+            "title": "Configure async PostgreSQL integration with SQLAlchemy 2.x and Alembic",
+            "description": "Replace or augment the existing SQLite setup with an async PostgreSQL 16 configuration using SQLAlchemy 2.x and Alembic migrations while keeping the app running during the transition.",
+            "dependencies": [
+              1
+            ],
+            "details": "1) Add an async PostgreSQL engine factory using SQLAlchemy 2.x (create_async_engine) and async_sessionmaker in a dedicated db module (e.g., app/db/session.py). 2) Implement a get_db dependency that yields AsyncSession instances and update existing DB-dependent code to use the async session where feasible. 3) Initialize Alembic configuration pointing at the async models metadata, including naming conventions, and set up migration scripts directory. 4) Create initial migration(s) for existing core models (Job/ImageJob and related tables) plus any required base tables, targeting PostgreSQL. 5) Provide a transitional plan or script for data migration from SQLite to PostgreSQL if necessary, or configure the app to run exclusively on Postgres in non-local environments. 6) Ensure DB URL and pool settings are driven by environment variables and safe defaults for production.",
+            "status": "pending",
+            "testStrategy": "Run Alembic upgrade/downgrade in a test database and verify that all expected tables (existing jobs plus new ones when added) are created with correct columns and constraints; add basic DB connectivity test that opens an AsyncSession and executes a trivial SELECT 1.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Define core SQLAlchemy ORM and Pydantic models for User, Template, Job, ModelProfile, PaymentTransaction",
+            "description": "Create or extend ORM models and corresponding Pydantic schemas to support users, templates, jobs, model profiles, and payment transactions, including fields for roles, tiers, and credits, integrated with the existing job models.",
+            "dependencies": [
+              2
+            ],
+            "details": "1) Implement a User ORM model with fields: id (UUID or integer PK), email (unique, indexed), hashed_password, role (e.g., admin/manager), tier (e.g., starter/pro), credits_balance, created_at, and any necessary relations to jobs or payments. 2) Define or update Template, Job, ModelProfile, and PaymentTransaction ORM models in Postgres, ensuring they follow the PRD structure and have foreign keys back to User where required (e.g., Job.user_id, Job.template_id, Job.model_profile_id, PaymentTransaction.user_id). 3) Align the new Job model with the Redis/Celery queue design (job_id UUID, status, progress, estimated_completion) while preserving compatibility with existing Job/ImageJob usage. 4) Create Pydantic request/response schemas for User (create, read, auth response), Template, Job, ModelProfile, and PaymentTransaction, separating internal fields (hashed_password) from public ones. 5) Generate and apply Alembic migrations for all new or modified models. 6) Update or add repository/service helper functions for common operations (e.g., get_user_by_email, create_user, adjust_credits, list_jobs_for_user).",
+            "status": "done",
+            "testStrategy": "Add unit tests that create and read ORM entities in a test Postgres database using AsyncSession, verifying relations, unique constraints (email), default values (role, tier, credits_balance), and that Alembic migrations produce the expected tables and columns.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:08:04.786Z"
+          },
+          {
+            "id": 4,
+            "title": "Implement authentication layer with argon2 password hashing and JWT-based auth endpoints",
+            "description": "Build the /auth and /users routers to support user signup, login, and token-based authentication, using argon2-cffi for password hashing and a JWT library for token issuing and verification, then integrate this layer into the existing app.",
+            "dependencies": [
+              3
+            ],
+            "details": "1) Implement a security module (e.g., app/core/security.py) that provides functions for hashing passwords with argon2-cffi, verifying passwords, and generating/verifying JWT access tokens with embedded sub (user id) and role claims plus expiration. 2) Create Pydantic schemas for signup/login requests and auth responses (e.g., access_token, token_type, user info). 3) Implement /auth/signup to create a new User: validate email, hash password, set default role/tier/credits, and persist to Postgres. 4) Implement /auth/login to authenticate via email+password, verify hash, and return a JWT access token and possibly refresh token if needed. 5) Add a reusable dependency (e.g., get_current_user) that reads the Authorization header, validates the JWT, loads the user from DB, and enforces active status and role checks. 6) Protect existing and new routers (/templates, /jobs, /credits, selected image/video generation endpoints) by requiring authenticated users, with role checks for admin-only operations where applicable. 7) Ensure CORS, HTTPS assumptions, and secret storage (JWT keys) adhere to security notes, and document required env variables for auth.",
+            "status": "done",
+            "testStrategy": "Write pytest+httpx async tests covering signup, login, and token verification flows: successful signup/login, invalid credentials, expired/invalid tokens, and access to protected endpoints requiring valid JWT; include tests confirming argon2 hashing and that plain passwords are never stored or returned.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:08:04.789Z"
+          },
+          {
+            "id": 5,
+            "title": "Add credits, tiers, and basic rate limiting integration for auth-related endpoints",
+            "description": "Implement backend support for user credits and tiers, expose minimal /credits and related user endpoints, and define basic rate limiting rules at the gateway level for login and other sensitive operations.",
+            "dependencies": [
+              4
+            ],
+            "details": "1) Extend the User and PaymentTransaction logic to support reading and updating credits_balance in a controlled way (e.g., helper functions for increment/decrement with safety checks). 2) Implement basic /credits endpoints (e.g., GET /credits/me, optional POST/PUT for admin credit adjustments) using the authenticated user context. 3) Integrate credits and tier checks into job/template creation flows (e.g., ensure users have sufficient credits before submitting batch jobs; deduct credits when a job is accepted). 4) Coordinate with the deployment/gateway layer (nginx/Cloudflare) by specifying concrete rate limiting rules for /auth/login and possibly /auth/signup (e.g., X requests per minute per IP), and ensure any required headers or paths are documented. 5) Update FastAPI dependencies or middleware to surface clear error responses when rate limits or credit checks fail, without leaking sensitive details. 6) Ensure existing unauthenticated functionality that must remain public is explicitly whitelisted and unaffected by credit checks.",
+            "status": "done",
+            "testStrategy": "Add unit and integration tests that verify credit balance changes during job creation, that users with insufficient credits are blocked, and that tier-based restrictions (if any) are enforced; where possible, add tests simulating rapid login attempts to confirm rate-limit error handling paths in the API layer behave as expected (even if the actual limiting is enforced at the proxy).",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:09:43.780Z"
+          }
+        ],
+        "updatedAt": "2026-01-08T11:09:43.843Z"
+      },
+      {
+        "id": "273",
+        "title": "Redis-backed job queue and batch processing framework",
+        "description": "Implement a Redis-based job queue to support 100+ generation batch jobs, status tracking, and worker processes orchestrating calls to generation backends.",
+        "details": "Tech stack:\n- Redis 7 as queue + ephemeral state store\n- RQ or Celery (recommend Celery 5.x with Redis broker and result backend)\n\nImplementation steps:\n1) Define a Job ORM model in Postgres mirroring PRD structure: job_id (UUID), user_id, template_id, quantity, model_profile_id, status, progress fields, created_at, estimated_completion.\n2) Implement Celery app configured with Redis URL, serialize tasks with JSON.\n3) Define task signature for `generate_batch(job_id: str)` that loads job, resolves template + model profile, enqueues per-item subtasks if desired.\n4) Implement progress tracking pattern: job row updated after each image/video is generated; also maintain a Redis hash keyed by job_id for fast reads.\n5) Design job status API endpoints: GET /jobs/{job_id} returning JSON with completed, failed, pending counts and ETA.\n6) Implement simple ETA estimation: maintain moving average of per-item generation time per model_type; ETA = remaining_items * avg_time.\n\nPseudo-code snippet:\n```python\ncelery_app = Celery(__name__, broker=REDIS_URL, backend=REDIS_URL)\n\n@celery_app.task\ndef generate_item(job_id: str, item_idx: int):\n    job = get_job(job_id)\n    template = get_template(job.template_id)\n    # call generation backend\n    result_url = run_generation(template, job.model_profile_id)\n    update_job_progress(job_id, item_idx, result_url)\n\n@celery_app.task\ndef generate_batch(job_id: str):\n    job = get_job(job_id)\n    for i in range(job.quantity):\n        generate_item.delay(job_id, i)\n```\n\nScalability:\n- Containerize worker processes separately from FastAPI.\n- Use concurrency config (e.g., Celery worker -c 4–8 depending on GPU throughput and API limits).\n- Enforce per-user concurrent job limits (e.g., 2 active jobs for Starter, 5 for Agency).\n",
+        "testStrategy": "- Unit tests for job creation: posting /jobs, verifying DB records and Redis entries.\n- Celery integration tests using in-memory Redis or test instance to assert tasks are enqueued and statuses updated.\n- Load test by simulating 10 users each submitting 100-generation jobs; verify queue stability and accurate progress counts.\n- Negative tests for invalid job IDs and unauthorized access to others’ jobs.",
+        "priority": "high",
+        "dependencies": [
+          "272"
+        ],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design batch Job data model and progress/ETA schema",
+            "description": "Define and document the persistent and ephemeral data structures needed to represent a batch generation job, its items, progress, and ETA, aligned with existing single-job orchestrator code.",
+            "dependencies": [],
+            "details": "• Extend or create a Postgres ORM model `Job` (and optionally `JobItem`) that mirrors the PRD structure for batch jobs: job_id (UUID), user_id, template_id, quantity, model_profile_id, status (queued|running|completed|failed|canceled), per-status item counts, progress fields (e.g., completed_items, failed_items), created_at, started_at, finished_at, estimated_completion, and any metadata required by existing pipeline_executor.\n• Define how individual generated outputs (URLs, errors) are stored or linked (e.g., via a `JobItem` table or reuse existing result tables) while keeping storage minimal for MVP.\n• Specify Redis in-memory structures for fast status reads, e.g., a Redis hash per job_id containing counts (completed, failed, pending), last_update_ts, latest ETA, and optionally lightweight per-item status bitmaps.\n• Document state transitions for batch jobs (e.g., queued→running when first item starts; running→completed when all items done; running→failed when all items failed or hard error) and how those transitions are reflected in both Postgres and Redis.\n• Align the model and fields with current job_orchestrator.py, job_worker.py, and pipeline_executor.py so that single-job logic can be reused for each batch item with minimal refactoring.",
+            "status": "done",
+            "testStrategy": null,
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:13:54.932Z"
+          },
+          {
+            "id": 2,
+            "title": "Implement MVP in-memory asyncio batch queue using existing orchestrator",
+            "description": "Build a minimal, in-process async batch job queue that orchestrates 100+ item generation batches using asyncio and existing job_orchestrator/pipeline_executor components, without Redis/Celery.",
+            "dependencies": [
+              1
+            ],
+            "details": "• Implement an asyncio-based batch runner module (e.g., batch_queue.py) that exposes an API like `submit_batch_job(job_id: str)` used by FastAPI or the existing API layer.\n• Inside the runner, load the Job record, then schedule per-item tasks (0..quantity-1) using asyncio constructs (e.g., gather, Semaphore) to cap in-flight items based on configured concurrency and backend/GPU limits.\n• For each item task, call into the existing single-job pipeline (e.g., job_worker or pipeline_executor) with parameters derived from the Job and template/model_profile, reusing current generation backend integration.\n• Update Job progress after each item completes or fails: increment counters, store result URL or error where appropriate, and update ETA using the chosen estimation formula.\n• Maintain an in-memory job registry (e.g., dict keyed by job_id) with current status, counts, and ETA to support fast status reads, and ensure safe access from FastAPI handlers (e.g., via a shared singleton or background task manager).\n• Ensure that the in-memory queue gracefully handles 100+ item jobs by limiting concurrency and avoiding blocking the main event loop (e.g., offload CPU-bound steps with run_in_executor if needed).",
+            "status": "done",
+            "testStrategy": null,
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:13:54.935Z"
+          },
+          {
+            "id": 3,
+            "title": "Add batch job creation and status API endpoints",
+            "description": "Expose HTTP endpoints for creating batch jobs and retrieving their status, wired into the new in-memory batch runner and Job data model.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "• Implement a POST /jobs or POST /batch-jobs endpoint that validates input (template_id, model_profile_id, quantity, etc.), enforces per-user concurrent job limits based on tier (e.g., Starter=2, Agency=5), and creates the Job record with initial status and progress fields.\n• After persisting the Job, invoke the in-memory batch queue `submit_batch_job(job_id)` asynchronously (e.g., via FastAPI background tasks) so the request returns quickly while processing continues in the background.\n• Implement a GET /jobs/{job_id} endpoint returning JSON with job_id, status, quantity, completed_items, failed_items, pending_items, latest ETA, and optionally an item-level summary or a link to detailed results.\n• Make the status endpoint read primarily from the in-memory registry (or Redis hash once introduced) for low latency, falling back to Postgres if needed when the in-memory entry is missing (e.g., after restart, for now just returning DB state without live ETA).\n• Enforce auth/authorization checks so users can only see their own jobs and the limits logic is consistent with credits/pricing tasks.\n• Document the API shapes and expected status codes, including behavior when a job_id is not found or still initializing.",
+            "status": "done",
+            "testStrategy": null,
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:13:54.939Z"
+          },
+          {
+            "id": 4,
+            "title": "Implement robust progress tracking and ETA estimation logic",
+            "description": "Implement and wire a reusable progress-tracking component that updates Job state after each item, maintains fast-read status structures, and computes a moving-average-based ETA for batch jobs.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "• Create a progress service (e.g., job_progress.py) exposing functions like `record_item_result(job_id, item_idx, success, duration, result_url=None, error=None)`.\n• In this service, update Postgres Job counters and timestamps within a transaction, and update the in-memory registry (or Redis hash later) with completed, failed, pending counts and last_update_ts.\n• Maintain per-model-type moving averages of per-item generation time (e.g., in memory keyed by model_type, with N-sample EWMA) and store a snapshot on job completion for future use if desired.\n• Compute ETA on each progress update as remaining_items * avg_time_for_model_type, clamp to non-negative, and store both in DB and the fast-read cache.\n• Ensure that progress updates are idempotent for a given (job_id, item_idx) to prevent double counting if item tasks retry or are resumed.\n• Add minimal logging/metrics hooks (e.g., debug logs or counters) to observe throughput, error rates, and ETA accuracy for later tuning.",
+            "status": "done",
+            "testStrategy": null,
+            "parentId": "undefined",
+            "updatedAt": "2026-01-08T11:13:54.942Z"
+          },
+          {
+            "id": 5,
+            "title": "Plan and scaffold future Redis/Celery-based implementation",
+            "description": "Prepare the codebase and configuration so the MVP in-memory batch queue can later be swapped to a Redis/Celery implementation with minimal changes to callers.",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "• Define an abstract batch queue interface (e.g., `BatchQueue` with `submit_batch_job`, `get_job_state`, `cancel_job`) and adapt the current in-memory implementation to conform to this interface.\n• Create a skeleton Celery app configuration file (celery_app.py) wired for Redis broker/result backend, JSON serialization, and basic reliability settings, but keep it optional/not required for MVP runtime.\n• Sketch Celery task signatures for `generate_batch(job_id: str)` and `generate_item(job_id: str, item_idx: int)` that delegate to the same progress service and pipeline executor used by the in-memory path, without fully enabling them in production yet.\n• Add configuration flags or environment-driven selection (e.g., QUEUE_BACKEND=inmemory|celery_redis) so the application can later flip between implementations without changing business logic.\n• Document the migration path from the MVP in-memory queue to Redis/Celery, including which parts are already compatible (data model, progress service, APIs) and which will need follow-up work (worker containers, deployment, monitoring).",
+            "status": "pending",
+            "testStrategy": null,
+            "parentId": "undefined"
+          }
+        ],
+        "updatedAt": "2026-01-08T11:13:55.023Z"
+      },
+      {
+        "id": "274",
+        "title": "Template schema, storage, and CRUD API",
+        "description": "Design and implement the template data model, JSON schema, and admin CRUD endpoints for generation recipes (including carousel templates).",
+        "details": "Implementation steps:\n1) Define Template ORM with fields: id (string slug), name, category, output_type, duration, aspect_ratio, base_prompt, variables (JSONB), caption_templates (JSONB), recommended_model, video_model, created_by, is_active.\n2) For carousel templates, either use a subtype or a separate CarouselTemplate table referencing Template with slides (JSONB) and variation_options (JSONB).\n3) Implement Pydantic models for create/update/read with strong type checking for variables and caption_templates.\n4) Build admin-only endpoints:\n   - POST /admin/templates\n   - PATCH /admin/templates/{id}\n   - GET /templates (public list, filtered by category, tier)\n   - GET /templates/{id}\n5) Implement simple server-side validation: ensure required keys for each output_type (e.g., slides for carousel, duration for video).\n6) Seed initial 5–10 core templates for MVP based on PRD (cosplay thirst trap, gym, GRWM, POV, lingerie photoshoot).\n\nPseudo-code snippets:\n```python\nclass Template(Base):\n    __tablename__ = \"templates\"\n    id = mapped_column(String, primary_key=True)\n    name = mapped_column(String)\n    category = mapped_column(String)  # social_sfw, nsfw, brainrot\n    output_type = mapped_column(String)  # image, video, carousel\n    base_prompt = mapped_column(Text)\n    variables = mapped_column(JSONB)\n    caption_templates = mapped_column(JSONB)\n\n@app.get(\"/templates\")\nasync def list_templates(category: str | None = None):\n    q = select(Template).where(Template.is_active == True)\n    if category:\n        q = q.where(Template.category == category)\n    return await db.execute(q)\n```\n\nStorage:\n- Store full JSON for templates also in a versioned S3/R2 bucket for backup and offline editing if needed.\n",
+        "testStrategy": "- Unit tests for template validation (e.g., missing base_prompt, invalid variables shape) using pytest.\n- API tests for admin CRUD, including auth/role enforcement.\n- Contract tests to ensure returned JSON structure aligns with frontend expectations for template browsing.\n- Regression tests ensuring seeded template IDs remain stable for existing jobs.",
+        "priority": "high",
+        "dependencies": [
+          "272"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-08T11:55:09.239Z"
+      },
+      {
+        "id": "275",
+        "title": "Next.js frontend scaffolding and core UI shell",
+        "description": "Set up Next.js app on Vercel with authentication, layout, and basic navigation for template browser, model profiles, jobs dashboard, and content library.",
+        "details": "Tech stack:\n- Next.js 15 (app router)\n- TypeScript\n- UI: Tailwind CSS + headless component library (e.g., Radix UI or shadcn/ui)\n- Auth: next-auth with custom JWT provider calling FastAPI\n\nImplementation steps:\n1) Initialize Next.js app with TypeScript and Tailwind.\n2) Create top-level routes: /login, /templates, /jobs, /models, /library, /billing.\n3) Implement global layout with sidebar navigation and top bar showing credits, user tier.\n4) Integrate next-auth using CredentialsProvider that calls FastAPI /auth/login and stores returned JWT in session; attach JWT as Authorization header for API calls.\n5) Implement API client abstraction using fetch or axios with automatic token injection and refresh handling.\n6) Add basic error boundary and toast system for API feedback.\n\nPseudo-code:\n```ts\nconst api = async (path: string, options: RequestInit = {}) => {\n  const session = await getServerSession(authOptions)\n  const headers = {\n    ...options.headers,\n    Authorization: `Bearer ${session?.accessToken}`,\n  }\n  const res = await fetch(`${process.env.API_URL}${path}`, { ...options, headers })\n  if (!res.ok) throw new Error(await res.text())\n  return res.json()\n}\n```\n\nBest practices:\n- Use React Query/TanStack Query for data fetching and caching templates/jobs.\n- Enforce role-based UI gating (e.g., admin-only template editing) via session role.\n",
+        "testStrategy": "- Frontend unit tests with Jest/Testing Library for core components and auth flows.\n- E2E tests with Playwright or Cypress to verify login, navigation, and unauthorized redirect behavior.\n- Manual smoke test in staging environment on Vercel to verify CORS and API connectivity to FastAPI.",
+        "priority": "high",
+        "dependencies": [
+          "272"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-08T12:00:30.606Z"
+      },
+      {
+        "id": "276",
+        "title": "Template browser and generation configuration UI",
+        "description": "Implement UI for browsing templates, viewing details, and configuring batch generation parameters (quantity, model profile, variations).",
+        "details": "Implementation steps:\n1) Create /templates page listing templates by category (social SFW, NSFW, brainrot, carousel) with search and filters.\n2) Build template detail panel/modal showing example description, variables, caption examples, recommended model, and estimated credit cost per generation.\n3) Add generation configuration form:\n   - Quantity (1–200, default 100)\n   - Model profile selection (from /models)\n   - Advanced options (e.g., restrict costumes list subset, aspect ratio override if allowed)\n4) On submit, call POST /jobs with template_id, quantity, model_profile_id, output options.\n5) Display immediate feedback: job id, initial ETA, link to /jobs/{id}.\n\nImplementation considerations:\n- Use React Hook Form + Zod for client-side validation.\n- Pre-calculate estimated credit cost from template + quantity and user tier.\n\nPseudo-code:\n```ts\nconst onSubmit = async (values) => {\n  const job = await api('/jobs', {\n    method: 'POST',\n    body: JSON.stringify({\n      template_id: selected.id,\n      quantity: values.quantity,\n      model_profile_id: values.modelProfileId,\n    }),\n  })\n  router.push(`/jobs/${job.job_id}`)\n}\n```\n",
+        "testStrategy": "- UI tests to verify that selecting template and filling form produces correct API request payload.\n- Validation tests for invalid quantity, missing model profile.\n- E2E test: create job from template and assert redirect to job detail page with correct job info.",
+        "priority": "high",
+        "dependencies": [
+          "274",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "277",
+        "title": "Bulk job dashboard and real-time progress tracking",
+        "description": "Build backend and frontend for job status display, progress updates, and basic notifications for batch generations.",
+        "details": "Implementation steps:\n1) Backend: extend /jobs endpoints:\n   - GET /jobs?status=active|completed\n   - GET /jobs/{id}\n   - Optional: WebSocket endpoint /ws/jobs/{id} or use Server-Sent Events for real-time updates.\n2) Ensure Celery workers call an internal helper to update job.progress and estimated_completion after each item.\n3) Frontend: /jobs page listing recent jobs, status badges, progress bars.\n4) Job detail page: per-item thumbnails (lazy-loaded), counts for completed/failed/pending, and estimated completion time.\n5) Optional: browser notifications for job completion (via Notification API) once user opts in.\n\nPseudo-code for updates:\n```python\ndef update_job_progress(job_id, delta_success=0, delta_failed=0):\n    job = get_job(job_id)\n    job.completed += delta_success\n    job.failed += delta_failed\n    job.pending = job.quantity - job.completed - job.failed\n    job.estimated_completion = calc_eta(job)\n    db.commit()\n    redis.publish(f\"job:{job_id}\", job.progress)\n```\n",
+        "testStrategy": "- Backend tests verifying progress math and ETA calculation are correct given mocked timings.\n- Frontend tests: simulate SSE/WebSocket messages and ensure progress bar updates.\n- E2E: run a small batch job in staging and verify UI reflects updates and final completion state.",
+        "priority": "high",
+        "dependencies": [
+          "273",
+          "276"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "278",
+        "title": "Cloudflare R2 integration for content and asset storage",
+        "description": "Configure Cloudflare R2 buckets and backend utilities for storing generated media, model profile assets, and voice samples.",
+        "details": "Implementation steps:\n1) Create R2 buckets: `generated-content`, `model-assets`, `voice-samples` with private access; optionally a `public-thumbs` bucket for small previews.\n2) In FastAPI, use AWS S3-compatible SDK (boto3 or minio client) configured with R2 endpoint and credentials.\n3) Implement helper functions:\n   - `upload_file(file_bytes, bucket, key) -> url`\n   - `generate_signed_url(bucket, key, expires_in)` for secure delivery.\n4) Store only keys in Postgres (e.g., `r2://generated-content/user123/job456/item789.png`), not full URLs.\n5) For content library, serve signed URLs via GET /media/{id} that validates ownership and streams/redirects.\n\nPseudo-code:\n```python\ns3 = boto3.client(\n  's3', endpoint_url=R2_ENDPOINT,\n  aws_access_key_id=R2_KEY,\n  aws_secret_access_key=R2_SECRET,\n)\n\ndef upload_bytes(bucket, key, data, content_type):\n    s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)\n```\n\nBest practices:\n- Enforce object-level encryption (KMS or SSE-S3 equivalent) if required.\n- Use lifecycle rules for old assets if storage cost becomes significant.\n",
+        "testStrategy": "- Unit tests mocking boto3 to ensure correct bucket/key naming and error handling.\n- Integration test with real R2 dev bucket to upload/download a test file.\n- Security test: ensure signed URLs expire and that users cannot access others’ media IDs.",
+        "priority": "high",
+        "dependencies": [
+          "272",
+          "273"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "279",
+        "title": "Image and video generation backend integration (fal.ai and VAST/ComfyUI)",
+        "description": "Implement backend adapters to trigger image/video generation via fal.ai APIs and self-hosted ComfyUI/other pipelines on VAST.ai GPUs.",
+        "details": "Implementation steps:\n1) Create abstract interface `GenerationBackend` with methods:\n   - `generate_image(prompt, options) -> url`\n   - `generate_video(prompt, options) -> url`\n2) Implement `FalAiBackend` using fal.ai REST APIs for GPT Image 1.5, FLUX.2 Pro, Kling/Wan; handle API keys, rate limits, retries with exponential backoff.\n3) Implement `SelfHostedBackend` calling a ComfyUI HTTP API running on VAST.ai with flows configured for Pony/Flux/Bark/Wav2Lip.\n4) Add routing logic in FastAPI service: choose backend per template + pricing strategy (fal.ai for SFW high quality, self-hosted for NSFW and margin optimization), with override flags.\n5) Ensure generation functions stream or poll job status where asynchronous (e.g., video generation) before marking item complete.\n\nPseudo-code for adapter:\n```python\nclass FalAiBackend(GenerationBackend):\n    async def generate_image(self, prompt, opts):\n        payload = {\"prompt\": prompt, \"size\": opts[\"size\"], ...}\n        r = await client.post(\"/gpt-image-1.5\", json=payload)\n        r.raise_for_status()\n        return r.json()[\"url\"]\n```\n\nOperational notes:\n- Keep timeouts and concurrency tuned to GPU capacity and fal.ai’s limits.\n- Log per-call latency and error codes for future benchmarking.\n",
+        "testStrategy": "- Mocked unit tests for each backend adapter verifying correct payloads and handling of success/error responses.\n- Integration tests against a sandbox fal.ai key and a dev ComfyUI server to verify real generations for smoke testing.\n- Load test of 50–100 parallel image requests to validate queuing logic and rate-limit handling.",
+        "priority": "high",
+        "dependencies": [
+          "273",
+          "274",
+          "278"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "280",
+        "title": "Variation engine for prompts, captions, and parameters",
+        "description": "Design and implement a variation engine that expands a template into diverse prompts, captions, and settings while maintaining face/identity consistency.",
+        "details": "Implementation steps:\n1) Create a `VariationEngine` module that, given a template and batch size, returns a list of generation specifications:\n   - selected costume/pose/setting combos\n   - caption text chosen from caption_templates with variable interpolation\n   - minor prompt variations (e.g., randomly adding style adjectives from a curated list).\n2) Implement deterministic randomization using a seed per job to allow reproducibility.\n3) For large batches, design combination strategy as per PRD: e.g., 10 costumes × 10 variations each for 100 items.\n4) Ensure each spec includes a consistent identity reference (e.g., same face embedding/model profile id) and optionally pose hints.\n\nPseudo-code:\n```python\ndef build_specs(template, job, seed):\n    rng = random.Random(seed)\n    specs = []\n    costumes = cycle(template.variables[\"costume\"])\n    poses = template.variables[\"pose\"]\n    settings = template.variables[\"setting\"]\n    for i in range(job.quantity):\n        costume = next(costumes)\n        pose = rng.choice(poses)\n        setting = rng.choice(settings)\n        caption_tpl = rng.choice(template.caption_templates)\n        caption = caption_tpl.format(costume=costume)\n        prompt = template.base_prompt.format(costume=costume, pose=pose, setting=setting)\n        specs.append({\"prompt\": prompt, \"caption\": caption})\n    return specs\n```\n\nBest practices:\n- Avoid over-randomization that harms consistency; keep base structure stable.\n- Allow templates to define which variables must vary vs remain fixed.\n",
+        "testStrategy": "- Unit tests: given a template and seed, verify output list length, diversity (e.g., presence of each costume), and deterministic behavior across runs.\n- Property tests to ensure no unformatted placeholders remain in prompts or captions.\n- Integration test: run 100-spec generation spec build and ensure performance and memory usage are acceptable.",
+        "priority": "high",
+        "dependencies": [
+          "274",
+          "273"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "281",
+        "title": "Model profile system with face reference assets",
+        "description": "Implement model profile data structures and UI for uploading reference images, body/style preferences, and linking to jobs.",
+        "details": "Implementation steps:\n1) Backend ORM `ModelProfile`: id, user_id, name, description, body_type, style_prefs (JSON), voice_clone_id (nullable), face_embedding_ids (JSON), created_at.\n2) Implement endpoints:\n   - POST /models for creating profile metadata\n   - POST /models/{id}/images to upload 3–10 face photos; store in R2 `model-assets` and record paths.\n   - GET /models, GET /models/{id} for listing and viewing profiles.\n3) Frontend /models page: list profiles with thumbnails; detail view to upload/manage reference images and preferences.\n4) Enforce per-tier limits (e.g., Starter 2 profiles, Pro 5, Agency 20) at API level.\n5) Implement basic validation: minimum 3 images before profile can be used for generation.\n\nPseudo-code:\n```python\n@app.post(\"/models/{id}/images\")\nasync def upload_model_image(id: str, file: UploadFile, user=Depends(auth)):\n    profile = get_profile_owned_by_user(id, user.id)\n    key = f\"models/{user.id}/{id}/{uuid4()}.jpg\"\n    await upload_bytes(MODEL_BUCKET, key, await file.read(), file.content_type)\n    add_image_to_profile(profile, key)\n```\n",
+        "testStrategy": "- Backend tests for model profile creation, permission checks, and image upload size/type validation.\n- Frontend tests for upload UI, max count, and proper display of stored images.\n- E2E test: create a profile, upload 3 images, then create a job using that profile to ensure linkage works end-to-end.",
+        "priority": "high",
+        "dependencies": [
+          "272",
+          "278",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "282",
+        "title": "Face consistency pipeline using InstantID/IP-Adapter and/or face swap",
+        "description": "Integrate selected face consistency methods into the generation pipeline to ensure the same identity across images and videos.",
+        "details": "Implementation steps:\n1) On self-hosted ComfyUI pipelines, configure nodes for InstantID/IP-Adapter using face reference images from R2 and precomputed face embeddings.\n2) Implement a service that, given a model_profile_id, returns a prepared face embedding or reference image URL list for generation.\n3) Modify generation specs to include identity parameters (embedding path, weight) for each item.\n4) For fallback or additional control, integrate a face swap model (e.g., roop/talking-head diffusion) as a post-processing step for items that deviate.\n5) Implement quality metric heuristic (e.g., cosine similarity of face embeddings between generated image and reference using a face recognition model) to decide if a face swap pass is needed.\n\nPseudo-code (conceptual):\n```python\nembedding = load_or_compute_embedding(profile)\nfor spec in specs:\n    result = backend.generate_image(prompt=spec[\"prompt\"], identity_embedding=embedding)\n    if not is_similar_face(result, embedding):\n        result = faceswap(result, profile.reference_image)\n```\n\nPerformance notes:\n- Cache embeddings per profile.\n- Limit face swap usage due to extra GPU cost, only on low-similarity outputs.\n",
+        "testStrategy": "- Offline evaluation: run A/B tests on sample profiles measuring face similarity scores across carousels.\n- Unit tests for embedding caching and similarity threshold logic.\n- Manual QA for visual inspection of different templates using same profile to validate identity consistency.",
+        "priority": "high",
+        "dependencies": [
+          "281",
+          "279",
+          "280"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "283",
+        "title": "Carousel generator logic for multi-image sequences and video slideshows",
+        "description": "Implement backend and frontend support for carousel templates producing 3–10 images with consistent identity, text overlays, and optional video slideshow export.",
+        "details": "Implementation steps:\n1) Extend VariationEngine to handle CarouselTemplate slides: for each slide, construct a prompt based on scene and global variation options (outfit_style, location_vibe).\n2) Generate N slides per job item, ensuring same model profile/embedding used across all.\n3) After generation, apply text overlays per slide caption using an image processing library (e.g., Pillow or ImageMagick) with safe text wrapping and brand-consistent fonts.\n4) Optionally, provide a worker task to stitch carousel images into a video slideshow (e.g., via ffmpeg) with simple transitions.\n5) Store carousel images as a grouped record in DB (e.g., CarouselItem table referencing JobItem) and in R2.\n6) Frontend: dedicated carousel preview component allowing swipe between slides and download as ZIP or video.\n\nPseudo-code for image stitching:\n```bash\nffmpeg -framerate 1 -pattern_type glob -i 'slide*.png' \\\n  -vf \"fade=t=in:st=0:d=0.5,fade=t=out:st=3.5:d=0.5\" \\\n  -pix_fmt yuv420p out.mp4\n```\n",
+        "testStrategy": "- Backend tests: given a carousel template, verify slide prompts and captions map correctly; assert same profile/embedding passed to each slide.\n- Integration tests generating a 5-slide carousel for a test profile; validate face similarity and storage structure.\n- Frontend tests for carousel viewer UI and download flows.\n- Manual QA on video slideshow transitions and caption readability on mobile aspect ratios.",
+        "priority": "high",
+        "dependencies": [
+          "280",
+          "281",
+          "282",
+          "278"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "284",
+        "title": "Current events / trending topics ingestion and filtering engine",
+        "description": "Build a backend service that periodically pulls trending topics from selected APIs (Google Trends, NewsAPI, Reddit, X) and filters them for safe, relevant content.",
+        "details": "Implementation steps:\n1) Create cron/scheduler (e.g., Celery beat or systemd + script) to run scraping tasks every N minutes/hours.\n2) Integrate with:\n   - Google Trends (pytrends or direct API) for search trends.\n   - NewsAPI for headlines.\n   - Reddit (PRAW or REST) for r/all and selected subreddits.\n   - X/Twitter trending via third-party API or scraping if ToS-compliant.\n3) Normalize data into Trend table: id, source, title, topic, category, url, published_at, raw_payload, freshness_score.\n4) Implement topic classification and safety filter:\n   - Use a lightweight text classifier (e.g., Hugging Face zero-shot or an LLM call) to label topics as safe/unsafe per PRD rules (no politics, tragedies, minors, etc.).\n   - Drop or flag unsafe topics.\n5) Implement freshness scoring: higher weight for last 24–48 hours; degrade over time.\n\nPseudo-code (simplified):\n```python\nfor headline in newsapi.get_top_headlines():\n    if is_unsafe(headline.title):\n        continue\n    trend = Trend(\n        source=\"newsapi\",\n        title=headline.title,\n        topic=extract_topic(headline),\n        published_at=headline.published_at,\n        freshness_score=compute_freshness(headline.published_at),\n    )\n    db.add(trend)\n```\n",
+        "testStrategy": "- Unit tests for safety classifier using curated examples of allowed/blocked topics.\n- Integration tests hitting sandbox/limited APIs to ensure parsing and persistence work.\n- Scheduled job tests verifying no duplicate trend entries and that stale topics’ freshness decreases as expected.",
+        "priority": "medium",
+        "dependencies": [
+          "272"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "285",
+        "title": "Trend-based caption generation templates and API",
+        "description": "Implement a system to generate captions based on current trends using pre-defined templates and optional LLM assistance.",
+        "details": "Implementation steps:\n1) Encode the provided trend caption templates as structured patterns in DB or config, e.g., `\"POV: your gf just found out about {HEADLINE}\"`.\n2) Create API endpoint GET /trends returning a curated, safe list of trends for the user to choose.\n3) Implement POST /trends/{id}/captions that:\n   - Selects several caption templates matching the trend category.\n   - Optionally calls an LLM (OpenAI, etc.) to generate `OPINION_ON_TREND` or `TREND_ACTION` variables while enforcing NSFW and safety boundaries.\n4) Integrate with template system by allowing templates to mark caption_source = static or trend-based.\n5) Frontend: simple UI to browse trends and attach them to a job, previewing generated captions.\n\nPseudo-code:\n```python\n@app.post(\"/trends/{id}/captions\")\nasync def make_captions(id: str):\n    trend = get_trend(id)\n    tpl = random.choice(TREND_CAPTION_TEMPLATES)\n    caption = tpl.format(HEADLINE=trend.title, TOPIC=trend.topic)\n    return {\"caption\": caption}\n```\n",
+        "testStrategy": "- Unit tests for template interpolation and correct mapping of HEADLINE/TOPIC placeholders.\n- Safety tests: ensure LLM prompts include clear instructions to avoid banned topics and minors.\n- UX tests: confirm user can select a trend and see multiple caption suggestions before confirming for a job.",
+        "priority": "medium",
+        "dependencies": [
+          "274",
+          "284"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "286",
+        "title": "Credits ledger and pricing logic implementation",
+        "description": "Implement per-action credit debiting, pricing tiers, and a robust credits ledger to support subscriptions and pay-as-you-go usage.",
+        "details": "Implementation steps:\n1) Define `CreditTransaction` table: id, user_id, amount (positive for top-up, negative for consumption), description, job_id (nullable), created_at, source (payment, manual, promo).\n2) Implement helper `adjust_credits(user_id, delta, reason, job_id=None)` that writes a transaction and updates User.credits_balance within a DB transaction.\n3) Encode pricing table (credits per image/video/carousel/pipeline) in configuration, keyed by action and tier (Starter, Pro, Agency, PAYG).\n4) On job creation, compute expected credits = quantity × per-unit cost based on template output_type and job options; ensure user has enough credits; optionally hold them by pre-debiting or using a reserved_credits field.\n5) After job completion, reconcile reserved vs actual usage (e.g., refunds for failed generations if policy allows).\n\nPseudo-code:\n```python\ndef charge_for_job(user, job):\n    cost_per = pricing_table[user.tier][job.output_type]\n    total = cost_per * job.quantity\n    if user.credits_balance < total:\n        raise HTTPException(402, \"Insufficient credits\")\n    adjust_credits(user.id, -total, f\"Job {job.id}\", job.id)\n```\n",
+        "testStrategy": "- Unit tests for pricing calculations across tiers and content types.\n- Transactional tests ensuring concurrent job creation does not allow overspending (use DB-level row locking).\n- Integration tests: simulate payment top-up, run a job, verify credits debited and ledger entries created correctly.",
+        "priority": "high",
+        "dependencies": [
+          "272",
+          "273",
+          "274"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "287",
+        "title": "Payment processing integration with CCBill and crypto",
+        "description": "Integrate CCBill for primary payments and a crypto provider (e.g., Coinbase Commerce) for all tiers and extreme content purchases.",
+        "details": "Implementation steps:\n1) Implement a `PaymentTransaction` table: id, user_id, provider (ccbill|crypto), external_id, status, amount_usd, credits_purchased, created_at.\n2) CCBill:\n   - Implement webhook endpoint /payments/ccbill/webhook verifying signatures and updating PaymentTransaction records.\n   - Map successful payments to credit top-ups based on pricing tiers and subscription plans.\n   - Handle recurring billing events by updating user tier and credits.\n3) Crypto:\n   - Integrate Coinbase Commerce or similar to create charge sessions for chosen credit packages.\n   - Implement /payments/crypto/webhook for confirmation; on success, mark PaymentTransaction as completed and adjust credits.\n4) Add /billing page UI allowing users to select plan (Starter/Pro/Agency) or PAYG packs, showing equivalent credits and prices.\n5) Implement refund logic hooks to reverse credits and mark transactions as refunded when required.\n\nSecurity & compliance:\n- Do not store raw card data; CCBill handles it.\n- Log all webhook events for audit.\n",
+        "testStrategy": "- Webhook integration tests with simulated payloads from CCBill and crypto provider documentation.\n- Tests verifying idempotency: re-sent webhooks should not double-credit accounts.\n- UI tests: selecting plan and being redirected to provider, then returning to app with upgraded tier and credits.",
+        "priority": "high",
+        "dependencies": [
+          "286",
+          "275",
+          "272"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "288",
+        "title": "Voice cloning pipeline integration for audio generation",
+        "description": "Implement voice sample upload, cloning with XTTS/RVC or similar models on self-hosted GPU, and audio generation usage in content pipeline.",
+        "details": "Implementation steps:\n1) In frontend model profile UI, allow uploading a 1–3 minute voice sample; POST to /models/{id}/voice.\n2) Backend: store sample in R2 `voice-samples`, then enqueue a Celery task `create_voice_clone(profile_id)`.\n3) On worker side, call self-hosted XTTS/RVC service or script to train/create a clone; store resulting clone identifier and metadata in ModelProfile.voice_clone_id.\n4) Implement audio generation helper `generate_voice_line(profile_id, text)` using Bark or XTTS with the stored clone id, running on VAST.ai GPU.\n5) Integrate into pipelines that require narration or vocalizations (e.g., end-to-end img+vid+audio+lipsync), saving audio files to R2 and linking in DB.\n\nPseudo-code:\n```python\n@celery_app.task\ndef create_voice_clone(profile_id: str):\n    sample = download_sample(profile_id)\n    clone_id = xtts_api.create_clone(sample)\n    save_clone_id(profile_id, clone_id)\n```\n\nConsiderations:\n- Enforce file size and format limits; convert to standard sample rate (e.g., 16kHz) via ffmpeg.\n- Show progress indicator in UI while clone is being created.\n",
+        "testStrategy": "- Backend tests for voice upload validation, task enqueueing, and clone id persistence.\n- Integration test with a dev XTTS/RVC instance generating a short line for a test profile.\n- UX tests ensuring voice cloning is only available on tiers that include it and clearly communicates processing times.",
+        "priority": "medium",
+        "dependencies": [
+          "281",
+          "278",
+          "279",
+          "273"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "289",
+        "title": "Lip-sync and full pipeline (image→video→audio→lipsync) orchestration",
+        "description": "Orchestrate the end-to-end content pipeline combining generated images, videos, cloned voice audio, and lip-sync models (e.g., Wav2Lip).",
+        "details": "Implementation steps:\n1) Design a `PipelineJob` concept in code for items that require all four stages; encode as an option on templates (pipeline=true).\n2) Worker flow per item:\n   - Generate base image(s) or video (via fal.ai or self-hosted).\n   - Generate corresponding audio using cloned voice and scripted text or LLM-written lines.\n   - Run lip-sync model (e.g., Wav2Lip) to sync mouth movement in video to audio.\n   - Save final video to R2 and mark item complete.\n3) Optimize GPU usage by chaining steps within a single GPU session where possible.\n4) Provide configuration for length (e.g., 5–10s), aspect ratio, and allow re-use of audio across variants when appropriate.\n5) Update pricing logic to treat full pipelines as 15–25 credits as per PRD.\n\nPseudo-code (workflow):\n```python\ndef run_full_pipeline(spec, profile):\n    base_vid = backend.generate_video(spec.prompt, opts)\n    audio = generate_voice_line(profile.id, spec.script)\n    synced = wav2lip_sync(base_vid, audio)\n    return synced\n```\n",
+        "testStrategy": "- Integration tests with small demo assets on dev GPU to ensure all four steps complete and artifacts are correctly stored.\n- Performance tests to estimate throughput and tune batch sizes.\n- Visual QA to confirm acceptable lip-sync quality and that identity is preserved across frames.",
+        "priority": "medium",
+        "dependencies": [
+          "279",
+          "280",
+          "281",
+          "288",
+          "278",
+          "273"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "290",
+        "title": "Content moderation pipeline for inputs and outputs",
+        "description": "Implement input and output moderation flows including age estimation, celebrity/CSAM checks, prompt filtering, and image moderation using third-party APIs.",
+        "details": "Implementation steps:\n1) Evaluate and integrate a moderation API (e.g., AWS Rekognition, Google Cloud Vision, or Azure Content Moderator) for:\n   - Nudity detection\n   - Violence\n   - CSAM-like indicators (along with PhotoDNA when approved).\n2) Input moderation:\n   - On face upload: run age estimation; block if estimated appearance <20.\n   - Run celebrity detection and reject known celebrities.\n   - Run CSAM hash check via PhotoDNA or equivalent where possible.\n   - For prompts: implement keyword blocklist matching and pattern detection for minors, bestiality, etc.\n3) Output moderation:\n   - After generation, run images/videos through moderation API; block storage/exposure of outputs that fail; optionally retry with adjusted prompt.\n   - Log moderation decisions and keep minimal evidence for legal compliance.\n4) Enforce content tiers (Standard vs Extreme) by mapping template categories and moderation scores, restricting CCBill-processed users from extreme outputs.\n\nPseudo-code:\n```python\ndef moderate_input_face(image_bytes):\n    result = vision_client.analyze(image_bytes)\n    if result.age < 20 or result.is_celebrity:\n        raise HTTPException(400, \"Face not allowed\")\n```\n",
+        "testStrategy": "- Unit tests for keyword blocklist and tier mapping logic.\n- Integration tests with moderation API sandbox to verify age and nudity detection behavior.\n- Red-team tests with synthetic prompts/images representing edge cases to confirm system blocks prohibited content and logs appropriately.",
+        "priority": "high",
+        "dependencies": [
+          "281",
+          "278",
+          "272"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "291",
+        "title": "Creator verification workflow for real-person content",
+        "description": "Implement KYC-style creator verification for users generating content of real people, including ID upload, selfie with ID, consent form, and manual review tools.",
+        "details": "Implementation steps:\n1) Extend User or ModelProfile with fields: verification_status (unverified|pending|approved|rejected), verification_documents (JSON), verified_face_embedding_id.\n2) Frontend: /verification page guiding users through steps:\n   - Upload government ID image(s).\n   - Upload selfie holding ID.\n   - Sign consent checkbox and capture digital signature (e-sign text + timestamp).\n3) Backend:\n   - Store documents in a dedicated R2 bucket with strict access control.\n   - Optionally integrate with a KYC provider for automated checks (Onfido, Persona) or keep manual review for MVP.\n   - Provide an internal admin UI/API listing pending verifications with side-by-side document views and an approve/reject action.\n4) Upon approval, compute and store a verified face embedding that is associated with that user; enforce that only this user can generate with that face profile.\n5) Tie verification status into template/category access rules where legally required.\n",
+        "testStrategy": "- Backend tests for state transitions (pending→approved, pending→rejected) and access control (only admins can change status).\n- UI tests ensuring users cannot access real-person templates without approved verification.\n- Security tests: ensure verified documents are never served directly to end users and are encrypted at rest.",
+        "priority": "medium",
+        "dependencies": [
+          "281",
+          "290",
+          "272",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "292",
+        "title": "GPU orchestration and VAST.ai scaling strategy implementation",
+        "description": "Implement job routing and GPU pool management for VAST.ai instances, aligning with phase-based scaling strategy.",
+        "details": "Implementation steps:\n1) Abstract a GPU pool manager service that knows about available VAST.ai instances (IPs, model availability, current load) stored in DB or config.\n2) Implement simple scheduling: assign generation tasks to least-loaded instance that has required model (Pony, Flux Dev, Bark, Wav2Lip).\n3) Integrate health checks: periodic ping to each GPU node; mark nodes unhealthy when checks fail and avoid routing jobs to them.\n4) Implement manual controls first (admin API to add/remove/update nodes); auto-scaling can come later by calling VAST.ai API for spin-up/down.\n5) Add observability: basic Prometheus metrics for GPU queue depth, per-model throughput, error rates.\n\nPseudo-code:\n```python\ndef route_task(model_type):\n    nodes = get_healthy_nodes(model_type)\n    node = min(nodes, key=lambda n: n.current_load)\n    return node\n```\n",
+        "testStrategy": "- Unit tests for routing logic to verify tasks are spread and that unhealthy nodes are skipped.\n- Integration tests with 1–2 dev GPU nodes running dummy endpoints to verify failover when one goes offline.\n- Load tests simulating real job volume to confirm no single node gets overloaded and that queue lengths stay within targets.",
+        "priority": "medium",
+        "dependencies": [
+          "279",
+          "273"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "293",
+        "title": "Security hardening, RBAC, and audit logging",
+        "description": "Implement role-based access control, API security best practices, and audit logging for sensitive operations and compliance.",
+        "details": "Implementation steps:\n1) Define roles: user, manager, admin, support; store in User.role and enforce via FastAPI dependencies.\n2) Create a decorator/helper for role checks, e.g., `require_roles(\"admin\")` for admin-only endpoints.\n3) Implement audit log table: id, user_id, action, resource_type, resource_id, ip, user_agent, created_at.\n4) Log key actions: login, failed login, template edits, verification approvals, payments, job deletions, manual credit adjustments.\n5) Configure HTTP security headers at reverse proxy (HSTS, X-Frame-Options, CSP tuned for Next.js, etc.).\n6) Regularize secrets management and rotate keys on schedule; restrict DB and Redis network access via firewall/security groups.\n\nPseudo-code:\n```python\ndef require_roles(*roles):\n    def wrapper(user=Depends(get_current_user)):\n        if user.role not in roles:\n            raise HTTPException(403)\n        return user\n    return wrapper\n```\n",
+        "testStrategy": "- Unit tests for RBAC helper ensuring unauthorized roles cannot access protected endpoints.\n- Tests verifying audit logs are written for all critical actions.\n- Security scanning with tools like Bandit for Python and dependency vulnerability checks (e.g., GitHub Dependabot).\n- Pen-test style checklist: verify no open admin endpoints, CORS restricted, and JWTs correctly validated.",
+        "priority": "high",
+        "dependencies": [
+          "272",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "294",
+        "title": "Content library and asset management UI",
+        "description": "Build a content library for users to browse, filter, and download generated assets, organized by template, date, and model profile.",
+        "details": "Implementation steps:\n1) Backend: implement /library endpoint returning paginated list of JobItems (or similar) with metadata: template_id, model_profile_id, created_at, type (image/video/carousel), thumbnail_url.\n2) Ensure thumbnails are generated for heavy assets (videos) via ffmpeg snapshots as a background task.\n3) Frontend: /library page with filters (date range, template category, model profile, content type) and grid/list views.\n4) Provide bulk download (e.g., select items → backend zips selected assets from R2 and returns a download link) and individual asset download.\n5) Expose quick actions: copy caption, view prompt details, regenerate variant.\n\nPseudo-code:\n```python\n@app.get(\"/library\")\nasync def list_assets(user=Depends(auth), page: int = 1):\n    return query_items(user.id).offset((page-1)*PAGE).limit(PAGE)\n```\n",
+        "testStrategy": "- API tests for library listing and filtering ensuring only owner’s assets are returned.\n- UI tests for pagination, filtering, and download flows.\n- Manual QA on different device sizes for usability, especially carousel and video previews.",
+        "priority": "medium",
+        "dependencies": [
+          "278",
+          "277",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "295",
+        "title": "MVP template set research, implementation, and tuning",
+        "description": "Research, implement, and refine the initial 10 core templates for MVP across social SFW, NSFW, and carousel use cases, focusing on reliable output quality.",
+        "details": "Implementation steps:\n1) Perform rapid research on top-performing OF-adjacent TikTok/IG content patterns (without storing user data) to refine prompts for:\n   - Cosplay thirst trap\n   - Gym/fitness\n   - GRWM\n   - POV scenarios\n   - Outfit transitions\n   - Lingerie photoshoot\n   - Implied nude tease\n   - Solo variations\n   - Simple carousel story progression\n2) For each template, define:\n   - base_prompt with variables\n   - variable enumerations\n   - 5–10 caption_templates\n   - recommended_model and video_model (where relevant)\n3) Implement a small internal script to generate 10+ samples per template using test profiles and automatically flag low-quality ones (e.g., via CLIP-based aesthetic scoring or manual QA).\n4) Iterate on prompt wording and parameters until quality and consistency reach acceptable baseline.\n5) Mark these templates as `featured` in DB and surface prominently in UI.\n",
+        "testStrategy": "- Quantitative: track success rate of generations without major artifacts across sample runs for each template.\n- Qualitative: manual review sessions, collecting notes on prompt effectiveness and adjusting variables.\n- Regression tests: once prompts are stable, snapshot them and detect accidental changes via tests or checksums.",
+        "priority": "medium",
+        "dependencies": [
+          "274",
+          "279",
+          "280",
+          "281"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "296",
+        "title": "Analytics and success metrics tracking",
+        "description": "Implement basic analytics to track platform KPIs such as generations count, active users, and MRR, aligned with PRD success metrics.",
+        "details": "Implementation steps:\n1) Define metrics events and schema: job_created, job_completed, asset_downloaded, user_signed_up, payment_succeeded.\n2) Implement an internal AnalyticsEvent table or push events to a warehouse (e.g., ClickHouse or Postgres timeseries).\n3) Create daily aggregation jobs to compute:\n   - number of generations per day\n   - active users (daily/weekly)\n   - total credits consumed\n   - estimated revenue/MRR from PaymentTransaction.\n4) Build a simple admin dashboard page showing key charts (e.g., use a chart library like Recharts or Chart.js in a protected /admin/analytics route).\n5) Ensure event logging is lightweight and does not block user-facing paths (fire-and-forget tasks or buffered writes).\n",
+        "testStrategy": "- Tests verifying events are recorded for key user actions (e.g., job creation, payment) with correct payloads.\n- Validate daily aggregations by comparing to raw logs in development.\n- Admin UI snapshot tests for graphs rendering with sample data.",
+        "priority": "low",
+        "dependencies": [
+          "273",
+          "286",
+          "287",
+          "275"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "297",
+        "title": "CI/CD pipeline and environment setup",
+        "description": "Set up automated testing and deployment pipelines for backend and frontend, including staging and production environments.",
+        "details": "Implementation steps:\n1) Use GitHub Actions (or GitLab CI) to define workflows:\n   - Backend: run unit/integration tests with pytest; build Docker image for FastAPI + workers; on main branch, deploy to VPS via SSH or container registry + pull.\n   - Frontend: run linting and tests; deploy to Vercel using preview and production environments.\n2) Configure environment-specific settings via env vars and secrets (DB_URL, REDIS_URL, API keys, R2 credentials).\n3) Implement database migrations auto-run step (Alembic) on deploy.\n4) Set up monitoring tools (e.g., Prometheus + Grafana, or a hosted solution like Sentry) for error tracking on both backend and frontend.\n5) Document deployment and rollback procedures in repo README/ops docs.\n",
+        "testStrategy": "- Validate CI workflows by triggering sample PRs and ensuring tests run and deployments succeed to staging.\n- Add a canary health check endpoint and confirm deployment scripts wait for green health before switching traffic.\n- Periodically run disaster-recovery drill restoring from DB/R2 backups in a test environment.",
+        "priority": "medium",
+        "dependencies": [
+          "272",
+          "273",
+          "275",
+          "279"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "298",
+        "title": "Implement ComfyUI image upload flow in vastai_client.py",
+        "description": "Add and wire a robust upload_image_to_comfyui() helper that downloads an image from a URL, streams it to ComfyUI’s /upload/image endpoint, and returns the filename for use in existing workflows.",
+        "details": "Implementation recommendations (Python):\n- Tech stack: Assume existing codebase uses Python 3.10+ and `requests` or `httpx` for HTTP.\n- Add config:\n  - Expose COMFYUI base URL via env or config (e.g. `COMFYUI_BASE_URL`), default `http://127.0.0.1:8188`.\n- Function signature (example):\n  ```python\n  # vastai_client.py\n  import io\n  import requests\n\n  def upload_image_to_comfyui(image_url: str, comfyui_base_url: str | None = None) -> str:\n      base_url = comfyui_base_url or os.getenv(\"COMFYUI_BASE_URL\", \"http://127.0.0.1:8188\")\n      # 1) download image to memory\n      resp = requests.get(image_url, timeout=30)\n      resp.raise_for_status()\n      content_type = resp.headers.get(\"Content-Type\", \"image/png\")\n      ext = {\n          \"image/jpeg\": \".jpg\",\n          \"image/jpg\": \".jpg\",\n          \"image/png\": \".png\",\n          \"image/webp\": \".webp\",\n      }.get(content_type.split(\";\")[0].lower(), \".png\")\n\n      fileobj = io.BytesIO(resp.content)\n      files = {\"image\": (f\"upload{ext}\", fileobj, content_type)}\n\n      # 2) upload to ComfyUI\n      upload_url = f\"{base_url.rstrip('/')}/upload/image\"\n      up = requests.post(upload_url, files=files, timeout=60)\n      up.raise_for_status()\n      data = up.json()\n      # ComfyUI returns {\"name\": \"xxx.png\"} or list depending on version; handle both\n      if isinstance(data, dict) and \"name\" in data:\n          return data[\"name\"]\n      if isinstance(data, list) and data and isinstance(data[0], dict) and \"name\" in data[0]:\n          return data[0][\"name\"]\n      raise RuntimeError(f\"Unexpected ComfyUI upload response: {data}\")\n  ```\n- Integrate with workflow execution layer:\n  - Wherever an external image URL is currently used directly, call `upload_image_to_comfyui(url)` first and inject returned filename into the relevant ComfyUI workflow JSON (usually under `images`, `image`, or loader node input).\n  - Ensure file path format matches ComfyUI expectations (often just the filename in `input` with internal path mapping; do not prepend `/opt/ComfyUI/input/` unless your ComfyUI instance is configured that way).\n- Robustness & observability:\n  - Add clear exception types for network errors, invalid content-type, non-image responses.\n  - Optionally limit max file size via `Content-Length` header check (e.g. 25–50MB) before reading body.\n  - Log full upload URL and HTTP status on failure, but not sensitive data.\n- Best practices (2025–2026):\n  - Use `httpx` with timeouts and retries in production; keep `requests` if that’s what the codebase already uses for consistency.\n  - Keep this helper pure/side-effect free aside from network I/O; no global mutation.\n",
+        "testStrategy": "- Unit tests (with pytest):\n  - Mock `requests.get` and `requests.post` (or httpx equivalent) to avoid real network I/O.\n  - Verify correct handling of content types (png, jpeg, webp) and fallback extension.\n  - Verify unexpected response structure from ComfyUI raises a RuntimeError.\n  - Verify timeouts and HTTP 4xx/5xx from either download or upload raise errors.\n- Integration tests (requires running ComfyUI test instance):\n  - Start ComfyUI in a lightweight container, enable `/upload/image`.\n  - Call `upload_image_to_comfyui()` with a known public test image URL and assert that:\n    - It returns a filename string.\n    - Subsequent workflow that references that filename runs successfully.\n- End-to-end test in existing pipeline:\n  - Exercise the full flow that was previously failing (URL → upload → workflow), confirming images are generated as expected.\n  - Test at least one failure mode (invalid URL or unreachable ComfyUI) to ensure graceful error propagation to caller.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T02:40:46.715Z"
+      },
+      {
+        "id": "299",
+        "title": "Model download and provisioning script for ComfyUI GPU instances",
+        "description": "Create a robust download_models.sh startup script that provisions required image and video models into the correct ComfyUI directories on vast.ai instances, with VRAM/disk checks and idempotent behavior.",
+        "details": "Implementation recommendations (Bash, Linux GPU instances on vast.ai):\n- Directory assumptions (from PRD):\n  - Base: `MODEL_DIR=/opt/ComfyUI/models`\n  - Checkpoints: `$MODEL_DIR/checkpoints/`\n  - VAE: `$MODEL_DIR/vae/`\n  - Video models: `$MODEL_DIR/diffusion_models/` (and custom node paths as needed)\n  - LoRA (user-provided): `/opt/ComfyUI/models/loras/`\n- Script skeleton:\n  ```bash\n  #!/usr/bin/env bash\n  set -euo pipefail\n\n  MODEL_DIR=\"/opt/ComfyUI/models\"\n  CHECKPOINTS_DIR=\"$MODEL_DIR/checkpoints\"\n  VAE_DIR=\"$MODEL_DIR/vae\"\n  VID_DIR=\"$MODEL_DIR/diffusion_models\"\n\n  mkdir -p \"$CHECKPOINTS_DIR\" \"$VAE_DIR\" \"$VID_DIR\" \"$MODEL_DIR/loras\"\n\n  HF_OPTS=\"--progress=dot:giga --retry-connrefused --tries=3\"\n\n  # Helper: download if missing\n  dl_if_missing() {\n    local url=\"$1\" dest_dir=\"$2\" fname\n    fname=$(basename \"${url%%\\?*}\")\n    if [ -f \"$dest_dir/$fname\" ]; then\n      echo \"[download_models] Exists: $dest_dir/$fname\" >&2\n      return 0\n    fi\n    echo \"[download_models] Downloading $fname to $dest_dir\" >&2\n    wget -nc -O \"$dest_dir/$fname\" $HF_OPTS \"$url\"\n  }\n\n  echo \"[download_models] Checking disk space...\" >&2\n  # Recommend at least 50GB as per PRD\n  AVAIL_GB=$(df -BG \"$MODEL_DIR\" | awk 'NR==2 {gsub(\"G\", \"\", $4); print $4}')\n  if [ \"$AVAIL_GB\" -lt 25 ]; then\n    echo \"[WARN] Less than 25GB free under $MODEL_DIR. Some models may fail to download.\" >&2\n  fi\n\n  echo \"[download_models] Downloading TIER 1 IMAGE MODELS\" >&2\n\n  # Pony Diffusion V6 XL (Hugging Face direct from PRD)\n  dl_if_missing \\\n    \"https://huggingface.co/AstraliteHeart/pony-diffusion-v6-xl/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors\" \\\n    \"$CHECKPOINTS_DIR\"\n\n  # Pony Realism V2.1 (CivitAI: user must provide direct URL via env or config)\n  if [ -n \"${PONY_REALISM_URL:-}\" ]; then\n    dl_if_missing \"$PONY_REALISM_URL\" \"$CHECKPOINTS_DIR\"\n  else\n    echo \"[INFO] PONY_REALISM_URL not set; skipping Pony Realism checkpoint\" >&2\n  fi\n\n  # SDXL Base 1.0\n  dl_if_missing \\\n    \"https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors\" \\\n    \"$CHECKPOINTS_DIR\"\n\n  # SDXL VAE\n  dl_if_missing \\\n    \"https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors\" \\\n    \"$VAE_DIR\"\n\n  echo \"[download_models] Downloading TIER 2 IMAGE MODELS (optional)\" >&2\n\n  if [ \"${ENABLE_TIER2_IMAGE:-1}\" -eq 1 ]; then\n    # RealVisXL V4.0\n    dl_if_missing \\\n      \"https://huggingface.co/SG161222/RealVisXL_V4.0/resolve/main/RealVisXL_V4.0.safetensors\" \\\n      \"$CHECKPOINTS_DIR\"\n\n    # Juggernaut XL V9\n    dl_if_missing \\\n      \"https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/resolve/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors\" \\\n      \"$CHECKPOINTS_DIR\"\n  fi\n\n  echo \"[download_models] Detecting GPU VRAM for video models...\" >&2\n  VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 || echo 0)\n\n  if [ \"$VRAM_MB\" -ge 24000 ]; then\n    echo \"[download_models] VRAM >= 24GB, enabling primary video models\" >&2\n\n    if [ \"${ENABLE_HUNYUANVIDEO:-1}\" -eq 1 ]; then\n      # HunyuanVideo core model + VAE; text encoders usually pulled via custom node repo\n      dl_if_missing \\\n        \"https://huggingface.co/tencent/HunyuanVideo/resolve/main/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors\" \\\n        \"$VID_DIR\"\n      dl_if_missing \\\n        \"https://huggingface.co/tencent/HunyuanVideo/resolve/main/hunyuan_video_vae_bf16.safetensors\" \\\n        \"$VID_DIR\"\n    fi\n\n    if [ \"${ENABLE_COGVIDEOX:-0}\" -eq 1 ]; then\n      # Example CogVideoX-5b safetensors pull (exact filenames may vary; keep configurable if needed)\n      dl_if_missing \\\n        \"https://huggingface.co/THUDM/CogVideoX-5b/resolve/main/model.safetensors\" \\\n        \"$VID_DIR\"\n    fi\n\n    if [ \"${ENABLE_WAN21:-0}\" -eq 1 ]; then\n      dl_if_missing \\\n        \"https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P/resolve/main/model.safetensors\" \\\n        \"$VID_DIR\"\n    fi\n  else\n    echo \"[download_models] VRAM < 24GB, using lighter video models if enabled\" >&2\n\n    if [ \"${ENABLE_ANIMATEDIFF:-1}\" -eq 1 ]; then\n      dl_if_missing \\\n        \"https://huggingface.co/guoyww/animatediff/resolve/main/mm_sd_v15_v2.ckpt\" \\\n        \"$VID_DIR\"\n    fi\n\n    if [ \"$VRAM_MB\" -ge 16000 ] && [ \"${ENABLE_SVD:-1}\" -eq 1 ]; then\n      dl_if_missing \\\n        \"https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/resolve/main/svd_xt.safetensors\" \\\n        \"$VID_DIR\"\n    fi\n  fi\n\n  echo \"[download_models] Completed\" >&2\n  ```\n- Attach the script to instance startup on vast.ai:\n  - Use vast.ai `onstart` or cloud-init–style mechanism, or bake into Docker entrypoint: `bash /opt/ComfyUI/download_models.sh &` early during boot.\n- Security & performance best practices:\n  - Parameterize all non-HF URLs (e.g. CivitAI links) via env vars so they can be rotated.\n  - Rely on `wget` HTTPS by default; allow setting `HF_TOKEN` and add `--header \"Authorization: Bearer $HF_TOKEN\"` if private repos are ever used.\n  - Keep it idempotent by checking files before downloading.\n",
+        "testStrategy": "- Static tests:\n  - Shellcheck the script to avoid typical Bash pitfalls.\n  - Dry-run locally (with `set -x`) to ensure URLs and paths are correct and no syntax errors occur.\n- Functional tests on a GPU instance:\n  - Start a fresh vast.ai instance with empty `/opt/ComfyUI/models` and run the script.\n  - Confirm the following files exist and sizes roughly match expectations:\n    - `checkpoints/ponyDiffusionV6XL_v6StartWithThisOne.safetensors` (~6.5GB)\n    - `checkpoints/sd_xl_base_1.0.safetensors` (~6.9GB)\n    - `vae/sdxl_vae.safetensors` (~335MB)\n  - Toggle env flags (`ENABLE_TIER2_IMAGE=0`, `ENABLE_HUNYUANVIDEO=0`, etc.) to ensure conditional paths respect flags.\n  - Simulate low-disk situation (quota or small volume) and confirm warnings are printed but script still executes until actual failure.\n- Integration tests:\n  - After script completes on a ComfyUI image, start ComfyUI and verify that all listed models appear in the UI and can generate images/videos.\n  - Measure cold-start time (instance boot + script completion) to confirm <5 minutes target on a typical 1 Gbps connection and recommended disk/GPU.",
+        "priority": "high",
+        "dependencies": [
+          "298"
+        ],
+        "status": "in-progress",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T02:40:46.833Z"
+      },
+      {
+        "id": "300",
+        "title": "Production Docker image for ComfyUI with pre-baked NSFW image & video models",
+        "description": "Build a custom ComfyUI Docker image that pre-downloads Tier 1/Tier 2 models and installs required custom video nodes (e.g., VideoHelperSuite, HunyuanVideoWrapper) to minimize cold start time on vast.ai.",
+        "details": "Implementation recommendations (Docker):\n- Base image:\n  - Use the PRD-specified base: `FROM ai-dock/comfyui:latest` (or specific tagged version for reproducibility, e.g. `:2025.11` if available).\n- Directory conventions:\n  - Maintain `/opt/ComfyUI/models/{checkpoints,vae,diffusion_models,loras}` layout so it matches the download script and existing workflows.\n- Example Dockerfile structure:\n  ```dockerfile\n  FROM ai-dock/comfyui:latest\n\n  ENV MODEL_DIR=/opt/ComfyUI/models \\\n      HF_HOME=/opt/.cache/huggingface\n\n  RUN mkdir -p \"$MODEL_DIR/checkpoints\" \"$MODEL_DIR/vae\" \"$MODEL_DIR/diffusion_models\" \"$MODEL_DIR/loras\" \"$HF_HOME\"\n\n  # Install minimal tooling\n  RUN apt-get update && apt-get install -y --no-install-recommends wget git ca-certificates \\\n      && rm -rf /var/lib/apt/lists/*\n\n  # Pre-download Tier 1 models at build time\n  RUN wget -P $MODEL_DIR/checkpoints/ \\\n        \"https://huggingface.co/AstraliteHeart/pony-diffusion-v6-xl/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors\" && \\\n      wget -P $MODEL_DIR/checkpoints/ \\\n        \"https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors\" && \\\n      wget -P $MODEL_DIR/vae/ \\\n        \"https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors\"\n\n  # Optional Tier 2 models (can be toggled via build args)\n  ARG ENABLE_TIER2_IMAGE=1\n  RUN if [ \"$ENABLE_TIER2_IMAGE\" = \"1\" ]; then \\\n        wget -P $MODEL_DIR/checkpoints/ \\\n          \"https://huggingface.co/SG161222/RealVisXL_V4.0/resolve/main/RealVisXL_V4.0.safetensors\" && \\\n        wget -P $MODEL_DIR/checkpoints/ \\\n          \"https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/resolve/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors\"; \\\n      fi\n\n  # Pre-bake HunyuanVideo model files (optionally)\n  ARG ENABLE_HUNYUANVIDEO=1\n  RUN if [ \"$ENABLE_HUNYUANVIDEO\" = \"1\" ]; then \\\n        wget -P $MODEL_DIR/diffusion_models/ \\\n          \"https://huggingface.co/tencent/HunyuanVideo/resolve/main/hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors\" && \\\n        wget -P $MODEL_DIR/diffusion_models/ \\\n          \"https://huggingface.co/tencent/HunyuanVideo/resolve/main/hunyuan_video_vae_bf16.safetensors\"; \\\n      fi\n\n  # Custom nodes for video workflows\n  WORKDIR /opt/ComfyUI/custom_nodes\n  RUN git clone --depth 1 https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \\\n      git clone --depth 1 https://github.com/kijai/ComfyUI-HunyuanVideoWrapper.git\n\n  # (Optional) Install python deps for these custom nodes if they are not already satisfied\n  # RUN pip install --no-cache-dir -r ComfyUI-VideoHelperSuite/requirements.txt \\\n  #     -r ComfyUI-HunyuanVideoWrapper/requirements.txt\n\n  WORKDIR /opt/ComfyUI\n  # Keep upstream entrypoint/cmd; just ensure any startup scripts (download_models.sh) are present\n  COPY download_models.sh /opt/ComfyUI/download_models.sh\n  RUN chmod +x /opt/ComfyUI/download_models.sh\n  ```\n- Build & push:\n  - Build with: `docker build --build-arg ENABLE_TIER2_IMAGE=1 --build-arg ENABLE_HUNYUANVIDEO=1 -t <registry>/comfyui-nsfw:latest .`\n  - Push to Docker Hub or private registry used by vast.ai.\n- Vast.ai integration:\n  - Configure templates to pull this image and optionally run `download_models.sh` on container start to catch new models/updates.\n- Best practices:\n  - Use shallow `git clone --depth 1` for custom nodes to minimize image size.\n  - Keep models in a volume if you plan to update them without rebuilding the image, otherwise pre-baking them honors the PRD’s cold-start constraints (<2 minutes).\n  - Pin commit hashes for custom nodes in production once stable.\n",
+        "testStrategy": "- Image build tests:\n  - Build the Dockerfile locally or in CI and confirm it completes without errors and the final image size is acceptable.\n  - Run `docker run --gpus all -it <image> nvidia-smi` to confirm GPU is visible in container.\n- Runtime verification:\n  - Start ComfyUI from this image on a GPU host and verify:\n    - Tier 1 models (Pony V6 XL, SDXL Base, SDXL VAE) are present and visible in UI.\n    - Tier 2 models appear when built with `ENABLE_TIER2_IMAGE=1`.\n  - Validate that custom video nodes (VideoHelperSuite, HunyuanVideoWrapper) show up in ComfyUI node list and can be used in a simple test workflow.\n- Performance tests:\n  - Measure container start time from `docker run` to first successful image generation.\n  - Confirm that with pre-baked models, cold start is <2 minutes on a representative vast.ai GPU instance with recommended storage.\n- Regression tests:\n  - On upgrades of base image or custom node repos, rebuild in CI and run a basic image + video generation smoke test before promoting the new image tag.",
+        "priority": "high",
+        "dependencies": [
+          "299"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "301",
+        "title": "ComfyUI workflows and executor integration for HunyuanVideo and fallback video models",
+        "description": "Design and implement ComfyUI workflows plus Python-side executors for video generation using HunyuanVideo as primary and fal.ai/Wan/SVD/AnimateDiff as configurable fallbacks.",
+        "details": "Implementation recommendations:\n- ComfyUI workflow definitions:\n  - Add new workflow JSON(s) in `comfyui_workflows.py` (or equivalent module) for:\n    - **Primary**: HunyuanVideo text-to-video or image-to-video workflow.\n    - **Fallback**: lighter video workflows (AnimateDiff + SDXL, SVD, or existing fal.ai API).\n  - Use node graphs compatible with:\n    - `ComfyUI-HunyuanVideoWrapper` nodes for loading the `hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors` and VAE.\n    - `VideoHelperSuite` nodes for frame assembly/export.\n  - Workflow JSON example (pseudo-structure):\n    ```python\n    HUNYUAN_VIDEO_WORKFLOW = {\n      \"nodes\": [\n        {\"id\": \"prompt\", \"type\": \"CLIPTextEncode\", ...},\n        {\"id\": \"loader\", \"type\": \"HunyuanVideoLoader\", \"inputs\": {\"model_name\": \"hunyuan_video_720_cfgdistill_fp8_e4m3fn.safetensors\"}},\n        {\"id\": \"vae\", \"type\": \"HunyuanVideoVAE\", \"inputs\": {\"vae_name\": \"hunyuan_video_vae_bf16.safetensors\"}},\n        {\"id\": \"sampler\", \"type\": \"HunyuanVideoSampler\", \"inputs\": {...}},\n        {\"id\": \"video_writer\", \"type\": \"VHS_VideoCombine\", \"inputs\": {\"fps\": 24, \"format\": \"mp4\"}},\n      ],\n      \"connections\": [...]\n    }\n    ```\n- Python executor:\n  - Implement `generate_video_hunyuan()` in the same style as existing image executor (e.g., sending JSON to ComfyUI’s `/prompt` API and polling `/history` or using websockets if already integrated).\n  - Accept parameters: prompt, negative_prompt, seed, num_frames, duration, resolution, cfg, sampler, model choice, etc.\n  - Illustration:\n    ```python\n    def generate_video_hunyuan(prompt: str, *, negative_prompt: str = \"\", seed: int | None = None, steps: int = 20,\n                               width: int = 720, height: int = 480, fps: int = 24, timeout: int = 600) -> str:\n        workflow = build_hunyuan_workflow(prompt=prompt, negative_prompt=negative_prompt,\n                                          seed=seed, steps=steps, width=width, height=height, fps=fps)\n        prompt_id = submit_comfyui_prompt(workflow)\n        result = wait_for_comfyui_result(prompt_id, timeout=timeout)\n        return extract_video_path(result)\n    ```\n- Fallback integration:\n  - Implement a small orchestrator (e.g., `generate_video()`):\n    - Try HunyuanVideo if `VRAM >= 24GB` or config flag `USE_HUNYUAN=true`.\n    - If ComfyUI returns OOM or model-missing errors, fall back to:\n      - Internal AnimateDiff/SVD workflow if VRAM is sufficient (12–16GB).\n      - External `fal.ai` API (preserving existing code) as ultimate fallback.\n  - Use exception handling and structured error types for retryable vs non-retryable issues.\n- Configuration:\n  - Expose video model selection and VRAM thresholds via config/env (e.g., `VIDEO_MODEL=hunyuan|animatediff|svd|fal`), but keep sensible PRD-aligned defaults (HunyuanVideo primary, AnimateDiff/SVD as lighter options).\n- Performance & reliability:\n  - Use batch size and frame counts tuned to 24GB GPUs for default profiles.\n  - Allow user to request shorter clips automatically if VRAM is low.\n",
+        "testStrategy": "- Unit tests:\n  - Test workflow builder functions to ensure required nodes and connections are present and parameterized correctly.\n  - Mock the ComfyUI HTTP client layer to simulate successful and error responses when calling `generate_video_hunyuan()`.\n  - Validate that the orchestrator selects the correct backend based on configuration and simulated VRAM values.\n- Integration tests (with real ComfyUI + custom nodes):\n  - Bring up ComfyUI with HunyuanVideo custom nodes using the production Docker image.\n  - Run `generate_video_hunyuan()` with a short prompt, limited frames/duration, and verify the MP4 (or other) file appears in the expected output directory and is non-empty.\n  - Simulate OOM or missing-model error (e.g., temporarily rename model file) and confirm the orchestrator falls back to the configured secondary backend.\n- Performance tests:\n  - Measure time from request to first frame and to final video file for a representative 24GB GPU.\n  - Adjust default steps/frames if generation is excessively slow while preserving quality.\n- Compatibility tests:\n  - Verify that video outputs integrate correctly with whatever pipeline currently uses the fal.ai video API (e.g., same resolution, codec, and container expectations where possible).",
+        "priority": "medium",
+        "dependencies": [
+          "298",
+          "299",
+          "300"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "302",
+        "title": "LoRA directory and dynamic loading support for user-provided NSFW LoRAs",
+        "description": "Ensure ComfyUI instances are configured to load LoRAs from /opt/ComfyUI/models/loras and expose a simple mechanism for users to provide CivitAI direct-download URLs that are fetched and used at runtime.",
+        "details": "Implementation recommendations:\n- Filesystem layout (per PRD):\n  - LoRA path: `/opt/ComfyUI/models/loras/`.\n  - Confirm that the ComfyUI config or environment variable for LoRA search paths includes this directory; otherwise, add or symlink.\n- Download helper script for LoRAs (Bash or Python):\n  ```bash\n  # /opt/ComfyUI/download_lora.sh\n  # Usage: LORA_URL=<direct_civitai_url> bash download_lora.sh\n  set -euo pipefail\n  LORA_DIR=\"/opt/ComfyUI/models/loras\"\n  mkdir -p \"$LORA_DIR\"\n  if [ -z \"${LORA_URL:-}\" ]; then\n    echo \"LORA_URL not provided\" >&2\n    exit 1\n  fi\n  fname=$(basename \"${LORA_URL%%\\?*}\")\n  if [ -f \"$LORA_DIR/$fname\" ]; then\n    echo \"LoRA already exists: $fname\" >&2\n    exit 0\n  fi\n  wget --progress=dot:giga --retry-connrefused --tries=3 -O \"$LORA_DIR/$fname\" \"$LORA_URL\"\n  ```\n- API-level dynamic loading:\n  - In the Python service layer that builds ComfyUI workflows, allow LoRA parameters in requests (e.g., list of `{name, strength}` pairs).\n  - When a LoRA name is specified:\n    - Confirm the corresponding file exists in `/opt/ComfyUI/models/loras/`.\n    - Add a `LoRA` node (or equivalent ComfyUI node type for LoRAs) to the workflow graph, connecting it between CLIP encoder and UNet according to ComfyUI’s recommended pattern for SDXL.\n  - Require that the user provides the already-downloaded filename or a friendly alias mapped to filenames in config.\n- Safety & correctness:\n  - Enforce a reasonable max number of LoRAs per generation (e.g., 3–4) and default strengths (e.g., 0.7–0.9) to avoid over-influencing the base model.\n  - Ensure LoRA file extensions match what ComfyUI expects (`.safetensors` preferred).\n- Documentation for users:\n  - Clearly specify how to gather direct CivitAI URLs (per PRD: click download, copy link) and how they will be loaded.\n  - Clarify that user provides links for:\n    - Pony Realism (if different version)\n    - Character/face, style, pose, NSFW-specific LoRAs.\n",
+        "testStrategy": "- Unit tests (Python):\n  - Test workflow builder logic that injects LoRA nodes to ensure:\n    - Correct node type for LoRA is used.\n    - LoRA node correctly references the file in `/opt/ComfyUI/models/loras/`.\n    - Node is wired into the graph in the right location (between encoders and UNet as required for SDXL/Pony).\n- Script tests:\n  - Run `download_lora.sh` with a small dummy file URL and verify it is placed into `/opt/ComfyUI/models/loras/` and is not re-downloaded if present.\n- Integration tests with ComfyUI:\n  - Start ComfyUI with at least one known LoRA installed.\n  - Run an image generation workflow that specifies this LoRA and confirm that:\n    - No runtime error occurs when loading the LoRA.\n    - Visual output clearly reflects LoRA influence versus a baseline generation.\n- User acceptance tests:\n  - Provide a sample NSFW style LoRA and verify that a user can supply its direct URL, download it, and then reference it by filename or alias in a request, with successful generation.",
+        "priority": "medium",
+        "dependencies": [
+          "299",
+          "300"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "303",
+        "title": "GPU & storage configuration, instance templates, and monitoring for vast.ai deployments",
+        "description": "Define and implement standard vast.ai instance templates, disk sizing, and basic health checks to meet VRAM and storage requirements for the specified models and success criteria.",
+        "details": "Implementation recommendations:\n- Instance profiles on vast.ai:\n  - Define at least two templates:\n    - **Image-only**: 12GB+ VRAM GPUs (e.g., RTX 3090/4090) with ≥50GB disk.\n      - Workload: SDXL, Pony V6 XL, Pony Realism, Tier 2 image models.\n    - **Video-capable**: 24GB+ VRAM GPUs (e.g., RTX 4090, A100) with ≥100GB disk.\n      - Workload: HunyuanVideo, CogVideoX, Wan 2.1, SVD/AnimateDiff.\n  - Use PRD recommendations directly:\n    - Image (SDXL/Pony): min 12GB VRAM.\n    - HunyuanVideo/CogVideoX/Wan2.1: 24GB VRAM.\n    - AnimateDiff: 12GB VRAM; SVD: 16GB VRAM.\n- Disk sizing:\n  - Guarantee at least 50GB effective storage for `/opt/ComfyUI/models` as per PRD’s full model set (~50GB) and allow extra for LoRAs and outputs (consider 80–100GB in templates to add buffer).\n- Startup orchestration:\n  - For each instance template, ensure the startup command:\n    - Pulls the custom Docker image built in task 300.\n    - Mounts a persistent volume for `/opt/ComfyUI/models` if you want to share models across restarts.\n    - Executes `download_models.sh` early in boot to fill in any missing models.\n- Health checks & monitoring:\n  - Implement a lightweight health endpoint in the service (if not already present) that checks:\n    - ComfyUI API is reachable.\n    - Required Tier 1 models are present on disk.\n  - Optionally, add a check script that:\n    - Runs `ls -lh` on key model files and confirms non-zero sizes.\n    - Verifies `nvidia-smi` output matches expected VRAM thresholds for profile.\n- Success criteria linkage:\n  - Use simple logging to measure cold start time from container start to completion of `download_models.sh` plus a test generation request, ensuring:\n    - `<5 minutes` with download script only.\n    - `<2 minutes` when using pre-baked Docker image on a typical connection.\n",
+        "testStrategy": "- Template validation:\n  - For each vast.ai template, spin up an instance and confirm:\n    - Reported VRAM meets or exceeds template definition using `nvidia-smi`.\n    - Disk space for `/opt` is at least the configured value with `df -h`.\n- Startup test:\n  - Repeatedly start and stop instances to ensure the startup script reliably runs, models are present, and ComfyUI is reachable afterward.\n- Health-check tests:\n  - Call the health endpoint periodically and confirm it returns success only when ComfyUI is fully ready and required models exist.\n- Performance tests:\n  - Record cold-start times for both image-only and video-capable profiles, with and without the Docker pre-baked models, and verify they meet PRD thresholds.\n- Failure-mode tests:\n  - Intentionally provision a smaller VRAM GPU or lower disk and confirm that monitoring detects the mismatch and logs clear diagnostics or prevents scheduling heavy video workloads there.",
+        "priority": "low",
+        "dependencies": [
+          "299",
+          "300",
+          "301",
+          "302"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "304",
+        "title": "Refactor vast.ai ComfyUI Docker image configuration",
+        "description": "Update the vast.ai client to use the official ai-dock ComfyUI Docker image and centralize image configuration for ComfyUI workloads.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Replace any existing ComfyUI image entries in DOCKER_IMAGES (or equivalent configuration map) with the exact value:\n  ```python\n  DOCKER_IMAGES[\"comfyui\"] = \"ghcr.io/ai-dock/comfyui:comfyui-latest-cuda\"\n  ```\n- If DOCKER_IMAGES does not exist or is scattered, introduce a single, well-documented constant, e.g.:\n  ```python\n  COMFYUI_DOCKER_IMAGE = \"ghcr.io/ai-dock/comfyui:comfyui-latest-cuda\"\n  ```\n  and ensure all instance-creation code for ComfyUI uses this constant.\n- Confirm that the image string exactly matches the ai-dock repository tag from the latest ai-dock ComfyUI documentation (comfyui-latest-cuda) to ensure CUDA-enabled builds suitable for GPU workloads.\n- Ensure any template or profile selection logic for vast.ai instances is compatible with this image name; if templates are encoded by ID or label, keep the template selection but override the image field with COMFYUI_DOCKER_IMAGE.\n- Avoid adding custom command or entrypoint overrides for this image; rely on the default defined by ai-dock which starts ComfyUI on port 8188 and configures auth and TLS.\n- Add an inline code comment referencing that this is the official ai-dock ComfyUI image pre-configured for vast.ai and must not be changed without verifying port and startup behavior.\n- Optional (defensive): introduce a very small image configuration helper for future-proofing, e.g.:\n  ```python\n  def get_comfyui_image() -> str:\n      return COMFYUI_DOCKER_IMAGE\n  ```\n  and use this helper wherever the image is needed.\n\nPseudocode:\n```python\nCOMFYUI_DOCKER_IMAGE = \"ghcr.io/ai-dock/comfyui:comfyui-latest-cuda\"  # ai-dock official ComfyUI image\n\nDOCKER_IMAGES = {\n    \"comfyui\": COMFYUI_DOCKER_IMAGE,\n    # ... other workloads\n}\n\ndef _build_instance_payload(..., workload: str):\n    image = DOCKER_IMAGES[workload]\n    payload[\"image\"] = image\n    return payload\n```\n\nSecurity / best practices:\n- Use only the trusted official image; do not pull arbitrary tags at runtime.\n- If your code allows user selection of image, gate ComfyUI workflows to this specific image only to avoid unknown ports or incompatible startup behavior.\n- For reproducibility, optionally pin to a specific digest later once validated, but start with the latest tag per PRD.\n",
+        "testStrategy": "Validation steps:\n- Unit test: Add a small test that imports vastai_client and asserts that DOCKER_IMAGES['comfyui'] (or the constant) equals 'ghcr.io/ai-dock/comfyui:comfyui-latest-cuda'.\n- Integration smoke test (no GPU needed): In a dry-run or mocked create_instance call, assert that the payload sent to vast.ai contains the correct image string and does not include custom entrypoint/command overrides.\n- Regression check: Verify that any previous code paths that constructed custom images for ComfyUI are no longer used by searching for old image names and ensuring they are removed or deprecated.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:33:07.381Z"
+      },
+      {
+        "id": "305",
+        "title": "Implement robust port parsing helper for Vast.ai instances",
+        "description": "Introduce a shared helper function in vastai_client to parse external API ports from Vast.ai instance port mappings, prioritizing 8188/tcp with fallback to 8080/tcp and extracting HostPort.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Add a dedicated helper to extract the external port for ComfyUI from the Vast.ai instance description object returned by the API.\n- The helper should:\n  1) Accept the raw instance dict or the ports mapping.\n  2) Prefer internal port '8188/tcp' (default for ai-dock ComfyUI).\n  3) Fallback to '8080/tcp' if 8188 is not present (for older or alternate images).\n  4) Return the HostPort value (external mapped port) as an int (or str consistently), not the internal port.\n  5) Gracefully raise a clear error if neither port is present.\n\nPseudocode:\n```python\ndef _extract_comfyui_port(instance: dict) -> int:\n    ports = instance.get(\"ports\") or {}\n\n    def _get_host_port(key: str) -> int | None:\n        entries = ports.get(key) or []\n        if not entries:\n            return None\n        # Vast.ai returns [{\"HostPort\": \"33526\"}, ...]\n        host_port = entries[0].get(\"HostPort\")\n        if host_port is None:\n            return None\n        return int(host_port)\n\n    port = _get_host_port(\"8188/tcp\")\n    if port is None:\n        port = _get_host_port(\"8080/tcp\")\n\n    if port is None:\n        raise RuntimeError(\n            f\"No ComfyUI port mapping found in Vast.ai ports: {list(ports.keys())}\"\n        )\n\n    return port\n```\n- Ensure the helper is used wherever API port calculation is needed, rather than duplicating logic.\n- Document in the helper’s docstring that it returns the external mapped port (HostPort) suitable for building `http://{ssh_host}:{api_port}` URLs.\n- Consider making the returned type str if the rest of the code works with strings, but be consistent across the client.\n- Add logging at debug level to log the internal mapping and the resolved HostPort for troubleshooting.\n\nBest practices:\n- Avoid hard-coding 8080 anywhere else—centralize the default ports in one place.\n- Make the function tolerant of missing or malformed port entries, raising controlled errors instead of generic KeyErrors.\n",
+        "testStrategy": "Validation steps:\n- Unit tests for _extract_comfyui_port:\n  - Case 1: ports = {\"8188/tcp\": [{\"HostPort\": \"33526\"}]} -> returns 33526.\n  - Case 2: 8188 missing, 8080 present -> returns 8080 HostPort.\n  - Case 3: both 8188 and 8080 present -> prefer 8188.\n  - Case 4: ports dict empty or missing required keys -> raises RuntimeError.\n  - Case 5: HostPort missing or non-numeric -> raises or logs and fails predictably.\n- Mock end-to-end: using a fake instance dict shaped like the PRD’s example JSON to verify the helper returns the expected port.\n- Optionally add a small regression test asserting that the function does not look up '8080/tcp' first.",
+        "priority": "high",
+        "dependencies": [
+          "304"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:34:02.652Z"
+      },
+      {
+        "id": "306",
+        "title": "Fix port parsing in _wait_for_instance using shared helper",
+        "description": "Update the _wait_for_instance method to use the new port parsing helper, ensuring it resolves the correct external HostPort for ComfyUI instances.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Locate the `_wait_for_instance` method that polls the Vast.ai API until an instance transitions from loading to running.\n- Replace any existing direct port parsing logic, especially any code referencing '8080/tcp', with a call to the new `_extract_comfyui_port` helper.\n\nPseudocode:\n```python\ndef _wait_for_instance(self, instance_id: int, timeout: float = 300.0) -> dict:\n    start = time.monotonic()\n    while True:\n        inst = self._api.get_instance(instance_id)\n        status = inst.get(\"actual_status\")\n        if status == \"running\":\n            try:\n                api_port = _extract_comfyui_port(inst)\n            except RuntimeError as e:\n                logger.error(\"Failed to parse ComfyUI port for instance %s: %s\", instance_id, e)\n                raise\n            inst[\"api_port\"] = api_port\n            return inst\n\n        if time.monotonic() - start > timeout:\n            raise TimeoutError(f\"Instance {instance_id} did not reach running within {timeout}s\")\n\n        time.sleep(5)\n```\n- Ensure the method stores the resolved external port in a consistent field, e.g. `inst[\"api_port\"]`, which downstream code will use for URL construction.\n- Confirm that `_wait_for_instance` uses the `ssh_host` (public IP) field from the instance response and does not try to derive it from the ports mapping.\n- Add logging when the instance transitions to running, including the resolved `ssh_host` and `api_port`.\n\nBest practices:\n- Use a bounded timeout (e.g., 3–5 minutes) consistent with Vast.ai guidance that workers may take several minutes to become ready.[1][4]\n- Sleep with a sensible backoff (e.g., 3–5 seconds) between polls to avoid hammering the API.\n",
+        "testStrategy": "Validation steps:\n- Unit/integration test with mocked API client:\n  - Simulate _api.get_instance returning 'loading' for the first few calls, then 'running' with a ports mapping.\n  - Verify that `_wait_for_instance` returns only when status is 'running' and that `api_port` equals the HostPort from '8188/tcp' (or 8080 fallback).\n- Timeout test: configure the mock never to return 'running' and assert that `_wait_for_instance` raises TimeoutError after the configured timeout.\n- Regression test: assert that `_wait_for_instance` no longer references '8080/tcp' directly and always uses `_extract_comfyui_port`.\n- If test_gpu_pipeline.py calls `_wait_for_instance` indirectly, add assertions that the resulting instance object includes `api_port` and is used to build the ComfyUI URL.",
+        "priority": "high",
+        "dependencies": [
+          "305"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:34:47.849Z"
+      },
+      {
+        "id": "307",
+        "title": "Fix port parsing in get_instance to expose external ComfyUI port",
+        "description": "Update get_instance in vastai_client to use the shared port parsing helper and expose the external ComfyUI HostPort for already-running instances.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Locate the `get_instance` method that retrieves a single Vast.ai instance by ID (or other identifier).\n- Ensure this method mirrors the port parsing logic in `_wait_for_instance` by delegating to `_extract_comfyui_port`.\n\nPseudocode:\n```python\ndef get_instance(self, instance_id: int) -> dict:\n    inst = self._api.get_instance(instance_id)\n\n    status = inst.get(\"actual_status\")\n    if status == \"running\":\n        try:\n            api_port = _extract_comfyui_port(inst)\n        except RuntimeError as e:\n            logger.warning(\"Instance %s is running but ComfyUI port not found: %s\", instance_id, e)\n            api_port = None\n    else:\n        api_port = None\n\n    inst[\"api_port\"] = api_port\n    return inst\n```\n- Decide whether to attempt port parsing only for running instances; this is usually sufficient and avoids confusion when ports mapping is incomplete in non-running states.\n- Ensure the returned instance object exposes both `ssh_host` and `api_port` so calling code can construct `http://{ssh_host}:{api_port}` URLs.\n- Do not hard-code '8080/tcp' here; rely exclusively on `_extract_comfyui_port` for future compatibility.\n\nBest practices:\n- Keep this logic DRY: _wait_for_instance and get_instance must stay in sync by using the same helper.\n- Log at debug level the resolved port when available.\n",
+        "testStrategy": "Validation steps:\n- Unit test with mocked _api.get_instance:\n  - Case 1: instance running with 8188 mapping -> get_instance returns dict with api_port set to HostPort of 8188/tcp.\n  - Case 2: instance running without 8188 but with 8080 -> api_port from 8080/tcp.\n  - Case 3: instance not running -> api_port is None (or absent by design), and no exception is raised.\n  - Case 4: malformed ports mapping -> api_port None and warning logged, or a predictable exception according to chosen behavior.\n- Regression test: assert that no direct dictionary access to '8080/tcp' or '8188/tcp' exists in get_instance; only the helper is used.\n- If any external callers expect the old shape, adapt them and add tests that verify they now rely on `api_port` instead of re-parsing ports on their own.",
+        "priority": "high",
+        "dependencies": [
+          "305",
+          "306"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:34:47.852Z"
+      },
+      {
+        "id": "308",
+        "title": "Remove or minimize conflicting onstart scripts for ai-dock ComfyUI image",
+        "description": "Ensure instance creation for ComfyUI does not inject custom onstart scripts that conflict with the ai-dock ComfyUI image entrypoint, allowing the container to manage its own startup.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Identify the code path that builds the Vast.ai `create_instance` payload, particularly fields like `onstart`, `onstart_cmd`, or any equivalent script/command overrides.\n- For ComfyUI workloads using the ai-dock image, set `onstart`/`onstart_cmd` to an empty string or omit them entirely so the container uses its default entrypoint.\n\nPseudocode:\n```python\ndef _build_instance_payload_for_comfyui(...):\n    payload = {\n        \"image\": COMFYUI_DOCKER_IMAGE,\n        # ... other required Vast.ai fields\n    }\n\n    # Do NOT override the entrypoint / startup for ai-dock ComfyUI\n    payload.pop(\"onstart\", None)\n    payload.pop(\"onstart_cmd\", None)\n\n    return payload\n```\n- If your code currently injects a generic onstart script (e.g., installing dependencies, downloading models), refactor that so non-ComfyUI workloads may still use it, but ComfyUI explicitly opts out.\n- Only allow additional scripts in the future if explicitly verified to be compatible with the ai-dock image (e.g., simple environment setup that does not touch ComfyUI startup or port configuration).\n- Document in comments that the ai-dock image already handles:\n  - ComfyUI installation and startup\n  - Port exposure on 8188\n  - Authentication and TLS\n  - Model directory setup\n  and must not be overridden.\n\nBest practices:\n- Favor image-level configuration (env vars, volumes) over ad-hoc onstart scripts where possible.[8]\n- If model downloads are required, prefer using the image’s documented mechanisms (e.g., expected model directories) rather than re-implementing startup logic.\n",
+        "testStrategy": "Validation steps:\n- Unit test for payload builder:\n  - When workload == 'comfyui', assert that the constructed create_instance payload has no `onstart` or equivalent custom startup fields, or that they are empty.\n  - For other workloads, ensure behavior is unchanged.\n- Integration test (against a real or mocked Vast.ai API):\n  - Create a ComfyUI instance and inspect its configuration via the API or logs to verify the default ai-dock entrypoint is used (e.g., startup logs show standard ComfyUI startup without extra commands).\n- Manual confirmation (once):\n  - Start a test instance; confirm ComfyUI comes up without errors that could stem from duplicate or conflicting startup scripts.",
+        "priority": "high",
+        "dependencies": [
+          "304",
+          "305",
+          "306",
+          "307"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:35:31.669Z"
+      },
+      {
+        "id": "309",
+        "title": "Review and correct Vast.ai create_instance parameters for ComfyUI",
+        "description": "Adjust create_instance parameters to ensure compatible runtype, sufficient disk allocation, and non-conflicting environment variables for the ai-dock ComfyUI image.",
+        "details": "Implementation details:\n- File: app/services/vastai_client.py\n- Locate the `create_instance` method that prepares and sends the Vast.ai instance creation request.\n- Confirm and adjust the following aspects for ComfyUI instances:\n\n1) Runtype / instance mode\n- Ensure the runtype (e.g., 'on-demand', 'bid', or specific Vast.ai runtype codes) used for ComfyUI is supported for interactive HTTP workloads.\n- Prefer runtype settings that maintain a persistent container suitable for running a web UI/API (as opposed to one-off jobs).\n\n2) Disk space\n- Enforce a minimum disk allocation of **50GB** for ComfyUI models and workflows, as per PRD and Vast.ai PyTorch best practices that recommend at least 50GB for datasets/checkpoints.[2]\n- Implement a guard in create_instance:\n  ```python\n  min_disk_gb = 50\n  if requested_disk_gb < min_disk_gb:\n      requested_disk_gb = min_disk_gb\n  payload[\"disk\"] = requested_disk_gb\n  ```\n\n3) Environment variables\n- Inspect any existing environment variables the client sets (e.g., PORT, COMFYUI_PORT, or custom auth vars).\n- Remove or avoid variables that conflict with ai-dock defaults, such as overriding the internal port from 8188 to something else.\n- Allow image-documented env vars if needed, e.g., COMFYUI_PORT_HOST to override host port mapping, but prefer defaults initially to keep behavior simple.\n- Ensure VAST_* variables are not overwritten; Vast.ai sets values like VAST_TCP_PORT_8188 automatically based on port mappings.[6][8]\n\n4) Networking / ports\n- Confirm that the ports configuration for the instance allows external access to the container’s 8188/tcp (and optionally 8080/tcp) via random external mapping; typically this is automatic if the template or image exposes the port.\n- Do not hard-code external ports; rely on Vast.ai’s random HostPort assignment and the parsing logic implemented earlier.\n\nPseudocode (sketch):\n```python\ndef create_instance(self, ..., workload: str = \"comfyui\", disk_gb: int | None = None, **kwargs):\n    if workload == \"comfyui\":\n        disk_gb = max(disk_gb or 0, 50)\n\n    payload = {\n        \"image\": DOCKER_IMAGES[workload],\n        \"disk\": disk_gb,\n        # \"runtype\": appropriate_value,\n        # ... other Vast.ai fields\n    }\n\n    if workload == \"comfyui\":\n        # Do not override internal ports or entrypoint\n        payload.pop(\"onstart\", None)\n        payload.pop(\"env\", None)  # or filter env for safe vars\n\n    resp = self._api.create_instance(payload)\n    return resp\n```\n\nBest practices:\n- Keep ComfyUI-specific logic isolated so other workloads can evolve independently.\n- Document any non-obvious defaults (like forced disk minimum) in comments or docstrings.\n",
+        "testStrategy": "Validation steps:\n- Unit tests:\n  - When calling create_instance for workload='comfyui' with disk_gb < 50, assert that payload['disk'] is 50.\n  - When disk_gb >= 50, assert the same value is preserved.\n  - Assert runtype field is set to the expected value for interactive workloads.\n  - Assert no conflicting env vars (like PORT=8080) are present for ComfyUI.\n- Integration test:\n  - Create a ComfyUI instance on a test Vast.ai account and verify via the Vast.ai dashboard/API that:\n    - Disk allocation is at least 50GB.\n    - The image is the ai-dock ComfyUI image.\n    - The instance runs and exposes the expected ports.\n- Regression: ensure non-ComfyUI workloads’ create_instance behavior is unchanged (existing tests should continue to pass).",
+        "priority": "high",
+        "dependencies": [
+          "304",
+          "308"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:35:31.673Z"
+      },
+      {
+        "id": "310",
+        "title": "Construct correct ComfyUI API URL using ssh_host and external HostPort",
+        "description": "Ensure all ComfyUI-related code constructs the API base URL using the instance ssh_host and the externally mapped api_port from the Vast.ai ports mapping.",
+        "details": "Implementation details:\n- Files: app/services/vastai_client.py (and any other module responsible for building ComfyUI URLs).\n- Identify all places where the ComfyUI API URL or web UI URL is constructed.\n- Replace any usage of static or internal ports (e.g., 8188 or 8080) with the resolved external port stored as `api_port` on the instance object.\n\nPseudocode:\n```python\ndef build_comfyui_url(instance: dict, scheme: str = \"http\") -> str:\n    ssh_host = instance.get(\"ssh_host\")\n    api_port = instance.get(\"api_port\")\n    if not ssh_host or not api_port:\n        raise ValueError(\"Instance missing ssh_host or api_port for ComfyUI URL\")\n    return f\"{scheme}://{ssh_host}:{api_port}\"\n\n# Usage\ninst = client._wait_for_instance(instance_id)\nbase_url = build_comfyui_url(inst)  # e.g., http://65.130.162.74:33526\n```\n- Centralize URL construction in a helper like `build_comfyui_url` to avoid duplication.\n- Maintain HTTP as the default scheme unless the ai-dock docs explicitly require HTTPS for API access; the PRD specifies plain HTTP, so follow that.\n- Ensure that higher-level API calls (e.g., methods that call `/system_stats` or `/object_info`) all use this base URL.\n\nBest practices:\n- Avoid mixing concerns: instance retrieval (and port parsing) should be separate from URL building, but both should operate on the same instance object shape.\n- If authentication tokens or basic auth are required by the ai-dock image, add them as headers or URL auth segments in the same helper for consistency.\n",
+        "testStrategy": "Validation steps:\n- Unit tests for build_comfyui_url:\n  - Valid instance with ssh_host and api_port -> returns the correct URL string.\n  - Missing ssh_host or api_port -> raises ValueError.\n- Integration tests:\n  - After creating and waiting for a ComfyUI instance, call build_comfyui_url and issue a simple HTTP GET to `/system_stats` using the built URL, verifying that the request reaches the container.\n- Regression test: search for any direct use of internal ports (8188/8080) in HTTP URLs and ensure they have been removed or replaced with `api_port` usage.",
+        "priority": "high",
+        "dependencies": [
+          "306",
+          "307"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T04:35:52.649Z"
+      },
+      {
+        "id": "311",
+        "title": "Update and extend GPU pipeline tests for Vast.ai ComfyUI instances",
+        "description": "Adapt test_gpu_pipeline.py and related tests to match the corrected image, port parsing behavior, and instance lifecycle expectations, including status transitions.",
+        "details": "Implementation details:\n- File: test_gpu_pipeline.py (and any other GPU pipeline tests).\n- Review current assumptions in the tests regarding:\n  - Docker image name for ComfyUI.\n  - Fixed port numbers (e.g., assuming 8080 instead of dynamic HostPort).\n  - Instance status values and timing.\n- Update tests to:\n  1) Use the new ComfyUI image constant or DOCKER_IMAGES['comfyui'].\n  2) Depend on the `api_port` field provided by vastai_client (and `build_comfyui_url`) instead of hard-coded ports.\n  3) Assert that instance status progresses from 'loading' to 'running' within a configured timeout (e.g., 3–5 minutes), consistent with Vast.ai guidelines.[1][4]\n  4) Verify that port mappings are parsed correctly and that `api_port` matches the instance’s HostPort mapping in mocked or live responses.\n\nPseudocode (test adjustment):\n```python\ndef test_instance_creation_and_port_mapping(vast_client):\n    inst_id = vast_client.create_comfyui_instance(...)\n    inst = vast_client.wait_for_instance(inst_id)\n\n    assert inst[\"actual_status\"] == \"running\"\n    assert isinstance(inst[\"api_port\"], int)\n\n    url = build_comfyui_url(inst)\n    assert url.startswith(\"http://\")\n```\n- Use mocking for Vast.ai API calls where feasible to keep tests fast and deterministic.\n- For end-to-end tests hitting real Vast.ai, mark them as slower/integration and isolate credentials via environment variables.\n\nBest practices:\n- Design tests to be robust to random external port assignments by never assuming a specific port value.\n- Keep timeouts generous enough for first-time image pulls and model loads, as Vast.ai workers may take several minutes to become ready.[1]\n",
+        "testStrategy": "Validation steps:\n- Run the full GPU test suite locally and in CI to ensure updated tests pass with mocked Vast.ai responses.\n- For integration tests (optional but recommended):\n  - Provision a temporary Vast.ai instance via test code using the real API.\n  - Wait for it to become running, confirm `api_port` is set, and then tear it down.\n- Regression: verify that tests fail if ports are misparsed (e.g., deliberately returning the internal port instead of HostPort in a mock), ensuring the tests meaningfully validate the new logic.",
+        "priority": "medium",
+        "dependencies": [
+          "304",
+          "305",
+          "306",
+          "307",
+          "309",
+          "310"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T06:48:51.544Z"
+      },
+      {
+        "id": "312",
+        "title": "Implement ComfyUI API health checks (/system_stats and /object_info)",
+        "description": "Ensure ComfyUI API access functions correctly by implementing and/or updating client methods that call /system_stats and /object_info using the constructed Vast.ai instance URL.",
+        "details": "Implementation details:\n- Files: app/services/vastai_client.py (or a higher-level ComfyUI service module).\n- Implement minimal helper methods to verify basic ComfyUI API health:\n\nPseudocode:\n```python\nimport requests\n\nclass VastAIClient:\n    ...\n    def get_comfyui_system_stats(self, instance: dict) -> dict:\n        base_url = build_comfyui_url(instance)\n        url = f\"{base_url}/system_stats\"\n        resp = requests.get(url, timeout=10)\n        resp.raise_for_status()\n        return resp.json()\n\n    def get_comfyui_object_info(self, instance: dict) -> dict:\n        base_url = build_comfyui_url(instance)\n        url = f\"{base_url}/object_info\"\n        resp = requests.get(url, timeout=10)\n        resp.raise_for_status()\n        return resp.json()\n```\n- Ensure these methods are used by tests and higher-level pipeline code to validate connectivity and model discovery.\n- If the ai-dock image enforces authentication, integrate auth handling:\n  - Support basic auth or token-based headers if documented.\n  - Read credentials from configuration or environment.\n- Add appropriate timeouts and minimal retry logic (e.g., a short retry loop if the service is still warming up after the instance enters running state).\n\nBest practices:\n- Keep HTTP client usage simple and explicit; use requests or your project’s common HTTP wrapper.\n- Encode all assumptions (paths, auth) in a single place so they are easy to update if the image changes.\n",
+        "testStrategy": "Validation steps:\n- Unit tests:\n  - Mock requests.get to return sample JSON for /system_stats and /object_info and assert that the client methods parse and return the JSON correctly.\n  - Verify that an HTTP 4xx/5xx status causes an exception via raise_for_status.\n- Integration tests (optional):\n  - After creating and waiting for a real ComfyUI Vast.ai instance, call get_comfyui_system_stats and get_comfyui_object_info and assert that the responses contain expected keys (e.g., GPU stats, model list).\n- Regression tests: ensure these methods always use build_comfyui_url and thus depend on the correct external HostPort.",
+        "priority": "medium",
+        "dependencies": [
+          "310"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "313",
+        "title": "Implement end-to-end image generation test through Vast.ai ComfyUI",
+        "description": "Create or update an end-to-end test that exercises the full ComfyUI image generation pipeline via a Vast.ai GPU instance, from upload and workflow submission to result retrieval.",
+        "details": "Implementation details:\n- File: test_gpu_pipeline.py (or a dedicated e2e test file).\n- The test should:\n  1) Create a ComfyUI Vast.ai instance using the updated vastai_client.\n  2) Wait for it to reach running state and obtain `ssh_host` and `api_port`.\n  3) Build the ComfyUI base URL and verify API health via /system_stats.\n  4) Upload an input image or assets if required by the workflow (depending on your existing pipeline design).\n  5) Submit a ComfyUI workflow JSON for image generation via the appropriate API endpoint.\n  6) Poll the workflow status until completion.\n  7) Download / retrieve the generated image and assert basic properties (e.g., non-empty bytes, valid image format).\n  8) Tear down the instance at the end of the test to avoid resource leaks.\n\nPseudocode (high-level):\n```python\ndef test_comfyui_image_generation_e2e(vast_client):\n    inst_id = vast_client.create_comfyui_instance(disk_gb=50)\n    inst = vast_client.wait_for_instance(inst_id)\n\n    stats = vast_client.get_comfyui_system_stats(inst)\n    assert \"gpu\" in stats\n\n    base_url = build_comfyui_url(inst)\n\n    # Upload image / assets if your API requires it\n    # resp = requests.post(f\"{base_url}/upload\", files={\"image\": open(\"tests/fixtures/input.png\", \"rb\")})\n\n    # Submit workflow\n    workflow = load_sample_workflow()\n    submit_resp = requests.post(f\"{base_url}/prompt\", json=workflow, timeout=30)\n    submit_resp.raise_for_status()\n    prompt_id = submit_resp.json()[\"prompt_id\"]\n\n    # Poll for completion\n    result = wait_for_comfyui_result(base_url, prompt_id)\n    image_bytes = download_image_from_result(result)\n    assert len(image_bytes) > 0\n\n    vast_client.destroy_instance(inst_id)\n```\n- Reuse existing helper functions for ComfyUI upload and workflow handling, adapting only the base URL and port usage.\n- Mark this test as slow/integration; it may take several minutes due to image pull and model load.\n\nBest practices:\n- Isolate credentials and Vast.ai API keys via environment variables, not hard-coded in tests.\n- Make the test idempotent and resilient to transient failures (basic retries on HTTP timeouts).\n",
+        "testStrategy": "Validation steps:\n- Manual run in a non-CI environment with access to a Vast.ai account to confirm that:\n  - Instance creation works.\n  - ComfyUI API endpoints respond.\n  - A simple workflow produces an output image.\n- In CI, optionally run this test behind a feature flag or nightly job due to cost and runtime.\n- Add assertions that would fail if the wrong internal port were used (e.g., distinguish connection-refused vs. HTTP 200 responses) to ensure the test truly validates correct HostPort usage.",
+        "priority": "medium",
+        "dependencies": [
+          "304",
+          "305",
+          "306",
+          "307",
+          "308",
+          "309",
+          "310",
+          "312"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "314",
+        "title": "Instance cleanup, documentation updates, and regression guardrails",
+        "description": "Add robust cleanup logic for Vast.ai test instances, update documentation to reflect the fixed integration, and add small guardrail tests to prevent regressions.",
+        "details": "Implementation details:\n- Files:\n  - app/services/vastai_client.py\n  - test_gpu_pipeline.py\n  - Project docs (e.g., README, GPU integration docs) referencing Vast.ai/ComfyUI.\n\n1) Cleanup utilities\n- Implement or improve a `destroy_instance` helper on vastai_client that safely stops and destroys instances used for testing.\n- In tests, wrap instance-using logic in try/finally blocks to guarantee cleanup even when assertions fail.\n\nPseudocode:\n```python\ndef destroy_instance(self, instance_id: int) -> None:\n    try:\n        self._api.destroy_instance(instance_id)\n    except Exception as e:\n        logger.warning(\"Failed to destroy Vast.ai instance %s: %s\", instance_id, e)\n```\n\n2) Documentation updates\n- Update internal documentation to state clearly:\n  - The required ComfyUI Docker image: ghcr.io/ai-dock/comfyui:comfyui-latest-cuda.\n  - The networking model: internal 8188 -> random external HostPort; clients must parse `ports[\"8188/tcp\"][0][\"HostPort\"]` (with 8080 fallback).\n  - The correct access URL: `http://{ssh_host}:{api_port}`.\n  - Minimum disk requirement (50GB) and any relevant Vast.ai best practices.\n\n3) Regression guardrails\n- Add a fast unit test that fails if someone reintroduces assumptions about fixed ports or wrong image, e.g.:\n  - Assert that DOCKER_IMAGES['comfyui'] equals the official image string.\n  - Assert that `_extract_comfyui_port` prefers 8188 over 8080.\n  - Assert there is no direct string '8080/tcp' used anywhere except in the port helper fallback.\n\nBest practices:\n- Ensure docs live near the code (docstrings, comments) and in central developer docs to reduce future misconfigurations.\n- Keep cleanup logic simple and reliable; avoid leaving GPU instances running after tests complete.\n",
+        "testStrategy": "Validation steps:\n- Run tests that intentionally raise midway and confirm via Vast.ai dashboard/API that instances are still destroyed by teardown logic.\n- Run the new guardrail unit tests in CI and verify they fail if the ComfyUI image or port parsing assumptions are changed.\n- Manually review documentation changes with the team to confirm they accurately describe the fixed integration and are easy to follow for future maintainers.",
+        "priority": "medium",
+        "dependencies": [
+          "304",
+          "305",
+          "306",
+          "307",
+          "308",
+          "309",
+          "310",
+          "311",
+          "312",
+          "313"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "315",
+        "title": "Verify vast.ai instance creation with official ComfyUI image",
+        "description": "Run end-to-end test to verify that instances created with vastai/comfy:cuda-12.6-auto reach 'running' status within 5 minutes and have correct port mappings.",
+        "details": "Execute test_gpu_pipeline.py and verify:\n\n1. Instance Creation:\n```python\n# Run test\npython test_gpu_pipeline.py\n```\n\n2. Expected behaviors to validate:\n   - Instance status transitions: loading -> running\n   - Time to running status < 5 minutes\n   - ports dict contains '8188/tcp' mapping\n   - public_ipaddr is populated (not None)\n   - api_port is correctly extracted from HostPort\n\n3. Log verification:\n   - Check logs show: 'Instance ready', 'public_ip=X.X.X.X', 'api_port=NNNNN'\n   - No 'port not found' warnings\n\n4. If test fails:\n   - Check vast.ai dashboard for instance status\n   - Verify VASTAI_API_KEY is set correctly\n   - Check vast.ai balance/credits\n   - Review error logs for API response details\n\nNote: This is a critical validation step - the code implementation is complete but needs real-world testing.",
+        "testStrategy": "1. Run test_gpu_pipeline.py with valid VASTAI_API_KEY\n2. Verify instance reaches 'running' within 5 minutes\n3. Confirm api_port and public_ip are populated\n4. Check vast.ai dashboard shows instance with correct Docker image",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "316",
+        "title": "Validate ComfyUI API accessibility via public_ip",
+        "description": "Test that ComfyUI API at http://{public_ip}:{external_port} responds correctly to health checks and system stats queries.",
+        "details": "After instance is running, verify ComfyUI accessibility:\n\n1. Health Check Endpoint:\n```python\nimport httpx\n\nasync def verify_comfyui_api(public_ip: str, port: int):\n    url = f'http://{public_ip}:{port}'\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        # Test system_stats endpoint\n        resp = await client.get(f'{url}/system_stats')\n        assert resp.status_code == 200\n        stats = resp.json()\n        assert 'devices' in stats\n        \n        # Test queue endpoint\n        resp = await client.get(f'{url}/queue')\n        assert resp.status_code == 200\n```\n\n2. Common failure scenarios to handle:\n   - Connection refused: ComfyUI still starting (wait 30-60s)\n   - Timeout: Firewall or port not exposed properly\n   - 404: Wrong endpoint (check ComfyUI version)\n\n3. Retry logic:\n   - If connection fails, retry every 10s for up to 2 minutes\n   - ComfyUI may take 30-60s to fully start after container is 'running'\n\nThe test_gpu_pipeline.py step [5] already tests this - verify it passes.",
+        "testStrategy": "1. GET /system_stats returns 200 with valid JSON\n2. Response contains 'devices' array with GPU info\n3. GET /queue returns 200\n4. Response latency < 5 seconds",
+        "priority": "high",
+        "dependencies": [
+          "315"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "317",
+        "title": "Test image upload to ComfyUI input folder",
+        "description": "Verify that upload_image_to_comfyui() successfully downloads external images and uploads them to ComfyUI's /input folder.",
+        "details": "Test the image upload pipeline:\n\n1. Test with various image sources:\n```python\nfrom app.services.vastai_client import upload_image_to_comfyui\n\n# Test URLs\ntest_urls = [\n    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=512',  # JPEG\n    'https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png',  # PNG\n]\n\nfor url in test_urls:\n    filename = await upload_image_to_comfyui(\n        image_url=url,\n        comfyui_base_url=f'http://{instance.public_ip}:{instance.api_port}'\n    )\n    print(f'Uploaded: {filename}')\n    # Verify filename format: upload_XXXXXXXX.{ext}\n    assert filename.startswith('upload_')\n```\n\n2. Verify upload succeeded:\n   - Response contains 'name' field\n   - File is accessible: GET /view?filename={name}&type=input\n\n3. Error handling tests:\n   - Invalid URL (404)\n   - Too large image (>50MB)\n   - Unsupported format\n\nThe test_gpu_pipeline.py step [7] tests this.",
+        "testStrategy": "1. upload_image_to_comfyui returns valid filename\n2. Uploaded file accessible via /view endpoint\n3. Multiple image formats work (JPEG, PNG, WebP)\n4. Error handling works for invalid URLs",
+        "priority": "high",
+        "dependencies": [
+          "316"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "318",
+        "title": "Add ComfyUI startup wait with health polling",
+        "description": "Implement a robust startup wait mechanism that polls ComfyUI API until it's ready, rather than just waiting for vast.ai 'running' status.",
+        "details": "The vast.ai 'running' status means the container started, but ComfyUI may still be initializing. Add explicit API polling:\n\n```python\n# In vastai_client.py, add after _wait_for_instance:\n\nasync def _wait_for_comfyui_ready(\n    self,\n    instance: VastInstance,\n    timeout: int = 120,\n    poll_interval: int = 10,\n) -> bool:\n    \"\"\"Wait for ComfyUI API to be responsive.\n    \n    The container may be 'running' but ComfyUI takes 30-60s to fully start.\n    This polls the /system_stats endpoint until it responds.\n    \"\"\"\n    if not instance.public_ip or not instance.api_port:\n        return False\n    \n    url = f'http://{instance.public_ip}:{instance.api_port}/system_stats'\n    client = await self._get_client()\n    start = asyncio.get_event_loop().time()\n    \n    while asyncio.get_event_loop().time() - start < timeout:\n        try:\n            resp = await client.get(url, timeout=10.0)\n            if resp.status_code == 200:\n                logger.info('ComfyUI API ready', url=url)\n                return True\n        except (httpx.ConnectError, httpx.TimeoutException):\n            pass\n        \n        logger.debug('Waiting for ComfyUI...', elapsed=int(asyncio.get_event_loop().time() - start))\n        await asyncio.sleep(poll_interval)\n    \n    logger.error('ComfyUI startup timeout', url=url)\n    return False\n```\n\nIntegrate into get_or_create_instance() and create_instance() flows.",
+        "testStrategy": "1. New instances have _wait_for_comfyui_ready called\n2. Method returns True when API responds\n3. Method returns False after timeout\n4. Logs show polling progress",
+        "priority": "high",
+        "dependencies": [
+          "315"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "319",
+        "title": "Test workflow submission and result retrieval",
+        "description": "Verify submit_comfyui_job() can queue workflows, poll for completion, and retrieve output images/videos.",
+        "details": "Test the complete workflow submission pipeline:\n\n1. Build a minimal test workflow:\n```python\n# Simple workflow that just echoes an image through VAE encode/decode\ntest_workflow = {\n    '1': {\n        'class_type': 'LoadImage',\n        'inputs': {'image': uploaded_filename}  # From upload step\n    },\n    '2': {\n        'class_type': 'PreviewImage',\n        'inputs': {'images': ['1', 0]}\n    }\n}\n```\n\n2. Submit and verify:\n```python\nresult = await client.submit_comfyui_job(instance, test_workflow, timeout=60)\nassert result is not None\nassert 'images' in result or 'videos' in result\n```\n\n3. Test failure scenarios:\n   - Invalid workflow (missing nodes)\n   - Timeout (job takes too long)\n   - Missing model checkpoints\n\n4. Verify R2 caching:\n   - Output URLs should be cached to R2 if configured\n   - Fallback to direct ComfyUI URLs if R2 unavailable\n\nThe test_gpu_pipeline.py step [8] tests generation via nsfw_image_executor.",
+        "testStrategy": "1. submit_comfyui_job returns result dict\n2. Result contains output URLs\n3. Output URLs are accessible\n4. Timeout handling works correctly",
+        "priority": "high",
+        "dependencies": [
+          "317",
+          "318"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "320",
+        "title": "Add instance ready state validation helper",
+        "description": "Create a helper method to validate that an instance has all required fields (public_ip, api_port, status='running') before attempting API calls.",
+        "details": "Add validation helper to prevent operations on incomplete instances:\n\n```python\n# In vastai_client.py, add to VastInstance class:\n\n@dataclass\nclass VastInstance:\n    # ... existing fields ...\n    \n    def is_api_ready(self) -> bool:\n        \"\"\"Check if instance is ready for API calls.\"\"\"\n        return (\n            self.status == 'running' and\n            self.public_ip is not None and\n            self.api_port is not None\n        )\n    \n    def get_api_url(self) -> str:\n        \"\"\"Get ComfyUI API base URL.\n        \n        Raises:\n            ValueError: If instance not ready\n        \"\"\"\n        if not self.is_api_ready():\n            raise ValueError(\n                f'Instance {self.id} not ready: '\n                f'status={self.status}, public_ip={self.public_ip}, api_port={self.api_port}'\n            )\n        return f'http://{self.public_ip}:{self.api_port}'\n```\n\nUpdate submit_comfyui_job to use is_api_ready() check instead of manual field checks.\n\nThis provides clearer error messages and centralizes the readiness logic.",
+        "testStrategy": "1. is_api_ready returns True for complete instances\n2. is_api_ready returns False if any field missing\n3. get_api_url raises ValueError with helpful message\n4. submit_comfyui_job uses the helper",
+        "priority": "medium",
+        "dependencies": [
+          "315"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "321",
+        "title": "Implement idle instance auto-shutdown",
+        "description": "Complete the shutdown_idle_instances() method to track last job time and destroy instances that have been idle for too long.",
+        "details": "The current implementation is a placeholder (TODO at line 799). Implement proper idle tracking:\n\n```python\n# Add to VastAIClient class:\n\nfrom datetime import datetime, timedelta\n\nclass VastAIClient:\n    def __init__(self):\n        # ... existing code ...\n        self._last_job_times: dict[int, datetime] = {}  # instance_id -> last job time\n    \n    async def submit_comfyui_job(self, instance, workflow, timeout):\n        # ... existing code ...\n        # Add at start of method:\n        self._last_job_times[instance.id] = datetime.now()\n        # ... rest of method ...\n    \n    async def shutdown_idle_instances(self, idle_minutes: int = 15) -> int:\n        \"\"\"Destroy instances that have been idle for too long.\"\"\"\n        destroyed = 0\n        cutoff = datetime.now() - timedelta(minutes=idle_minutes)\n        \n        instances = await self.list_instances()\n        for instance in instances:\n            if instance.status != 'running':\n                continue\n            \n            last_job = self._last_job_times.get(instance.id)\n            if last_job is None or last_job < cutoff:\n                logger.info('Destroying idle instance',\n                           instance_id=instance.id,\n                           idle_minutes=idle_minutes)\n                if await self.destroy_instance(instance.id):\n                    destroyed += 1\n                    self._last_job_times.pop(instance.id, None)\n        \n        return destroyed\n```\n\nConsiderations:\n- Track across process restarts (use Redis or file-based storage for production)\n- Don't destroy instances created very recently (grace period)\n- Log destructions for cost tracking",
+        "testStrategy": "1. Job submission updates last_job_times\n2. Idle instances detected after threshold\n3. Instances destroyed and count returned\n4. Non-idle instances preserved",
+        "priority": "medium",
+        "dependencies": [
+          "319"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "322",
+        "title": "Add fallback to ai-dock image with auth disabled",
+        "description": "Implement fallback logic to use ai-dock/comfyui image with WEB_ENABLE_AUTH=false if vastai/comfy image fails or is unavailable.",
+        "details": "PRD Task 7 mentions handling ai-dock image authentication. Add fallback support:\n\n```python\n# Update DOCKER_IMAGES dict:\nDOCKER_IMAGES = {\n    'comfyui': COMFYUI_DOCKER_IMAGE,\n    'comfyui-aidock': 'ghcr.io/ai-dock/comfyui:cuda-12.1.0-runtime-ubuntu22.04',\n    # ... existing entries ...\n}\n\n# In create_instance, add env vars for ai-dock:\nasync def create_instance(\n    self,\n    offer_id: int,\n    docker_image: str | None = None,\n    # ...\n) -> VastInstance | None:\n    # ...\n    \n    # Detect if using ai-dock image and add auth disable\n    if docker_image and 'ai-dock' in docker_image:\n        default_env['WEB_ENABLE_AUTH'] = 'false'\n        default_env['WEB_USER'] = ''  # Empty to disable\n        default_env['WEB_PASSWORD'] = ''\n    \n    # ... rest of method ...\n```\n\nAlternatively, add to get_or_create_instance with retry logic:\n1. Try vastai/comfy first\n2. If fails, retry with ai-dock image\n3. Log which image was used",
+        "testStrategy": "1. ai-dock image works with auth disabled\n2. Environment variables correctly set\n3. Fallback triggers on primary image failure\n4. Both images can access ComfyUI API",
+        "priority": "medium",
+        "dependencies": [
+          "315"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "323",
+        "title": "Add comprehensive error logging for vast.ai API failures",
+        "description": "Enhance error logging throughout vastai_client.py to capture full API response details for debugging instance creation and API access failures.",
+        "details": "Current error handling logs basic error strings. Add detailed response logging:\n\n```python\n# Update error handling pattern throughout:\n\nasync def create_instance(self, ...):\n    try:\n        response = await client.put(...)\n        response.raise_for_status()\n        # ...\n    except httpx.HTTPStatusError as e:\n        logger.error(\n            'vast.ai API error',\n            method='PUT',\n            url=str(e.request.url),\n            status_code=e.response.status_code,\n            response_text=e.response.text[:500],  # Limit length\n            request_payload=payload,\n        )\n        raise\n    except httpx.RequestError as e:\n        logger.error(\n            'vast.ai request failed',\n            method='PUT',\n            url=str(e.request.url),\n            error_type=type(e).__name__,\n            error=str(e),\n        )\n        raise\n\n# Similarly update:\n# - search_offers\n# - _wait_for_instance\n# - get_instance\n# - destroy_instance\n# - submit_comfyui_job\n```\n\nBenefits:\n- Faster debugging of API issues\n- Better monitoring/alerting integration\n- Historical tracking of failure patterns",
+        "testStrategy": "1. API errors logged with full context\n2. Request payloads included (sensitive data redacted)\n3. Response text captured\n4. Logs searchable by instance_id",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "324",
+        "title": "Create integration test suite for vast.ai GPU pipeline",
+        "description": "Create a comprehensive integration test file that can be run manually or in CI (with appropriate flags) to validate the entire vast.ai integration.",
+        "details": "Create tests/test_vastai_integration.py:\n\n```python\n\"\"\"Integration tests for vast.ai GPU pipeline.\n\nThese tests require:\n- VASTAI_API_KEY environment variable\n- Sufficient vast.ai balance\n- Network access to vast.ai API\n\nRun with: pytest tests/test_vastai_integration.py -v --run-integration\n\"\"\"\n\nimport pytest\nimport asyncio\nfrom app.services.vastai_client import get_vastai_client, VastInstance\n\npytestmark = pytest.mark.integration\n\n@pytest.fixture\nasync def vastai_client():\n    client = get_vastai_client()\n    yield client\n    await client.close()\n\nclass TestVastAIIntegration:\n    async def test_search_offers(self, vastai_client):\n        offers = await vastai_client.search_offers(\n            gpu_ram_min=12,\n            max_price=0.50\n        )\n        assert len(offers) > 0\n        assert all('gpu_name' in o for o in offers)\n    \n    async def test_instance_lifecycle(self, vastai_client):\n        # This test costs money - skip in CI without explicit flag\n        instance = await vastai_client.get_or_create_instance(\n            workload='image',\n            max_price=0.30\n        )\n        try:\n            assert instance is not None\n            assert instance.status == 'running'\n            assert instance.public_ip is not None\n            assert instance.api_port is not None\n        finally:\n            if instance:\n                await vastai_client.destroy_instance(instance.id)\n```\n\nAdd pytest marker and conftest setup for --run-integration flag.",
+        "testStrategy": "1. Tests marked with @pytest.mark.integration\n2. Tests skipped without --run-integration flag\n3. Full lifecycle tested: create -> verify -> destroy\n4. Cost warnings in test documentation",
+        "priority": "low",
+        "dependencies": [
+          "319"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "325",
+        "title": "Deploy ComfyUI on Vast.ai GPU instance with modern Docker image and secure API access",
+        "description": "Provision and document a 2025/2026-ready ComfyUI deployment on Vast.ai using a current GPU-optimized Docker image, with correct environment variables, startup behavior, API exposure, and authentication suitable for programmatic access from our vastai_client integration.",
+        "details": "Implementation plan:\n\n1) Choose a 2025/2026-appropriate Docker image\n- Prefer a **maintained, cloud-focused ComfyUI image with authentication and API support** over ad-hoc images.\n- Evaluate at least these options against Vast.ai’s GPU offerings and our needs:\n  - **ai-dock/comfyui**: cloud-first, supports Vast.ai templates, built-in auth and OpenAPI wrapper, many CUDA-tagged variants.[4]\n  - **mmartial/comfyui-nvidia-docker**: CUDA-versioned tags (e.g. `ubuntu24_cuda12.6.3-latest`, `ubuntu24_cuda12.9-latest`, `ubuntu24_cuda13.0-latest`) suitable through 2026.[2][3]\n  - Optionally compare with yanwk/comfyui-boot and other images for model layout compatibility.[8]\n- Select a tag that:\n  - Uses **Ubuntu 24.x + CUDA 12.5+** (or newer) to match mid-2020s NVIDIA drivers and future Vast.ai GPU fleets.[2][3]\n  - Has clear update cadence and versioned tags (avoid unpinned `latest` where possible).\n- Document the selected default image and tag (e.g. `robballantyne/comfyui:latest-cuda` Vast.ai template or `ai-dock/comfyui:cuda-12.5.1-runtime-ubuntu24.04`).[4]\n\n2) Define Vast.ai template / launch configuration\n- Create or update a Vast.ai template JSON (or launch config builder in code) that:\n  - Uses the chosen **Docker image** and sets the **internal ComfyUI port** to 8188 (or the image’s documented default).\n  - Maps Vast.ai external port → container port using their ports spec, ensuring `api_port` in our code references the externally mapped host port, not 8188 directly (consistent with Task 310).\n  - Mounts persistent storage for:\n    - `/workspace` or equivalent workdir (as required by the chosen image).[4]\n    - ComfyUI models directory (e.g. `/comfyui/models`, `/models`, or as documented).[5]\n  - Sets a **non-root user** or uses image defaults if they already follow least-privilege.\n- Ensure the template can be created either via Vast.ai web UI or API, but codify its parameters (image name, ports, volumes, env vars) in our repo (YAML/JSON) for reproducibility.\n\n3) Environment variables and configuration\n- For the chosen image, research and document the key env vars and how we will use them:\n  - For **ai-dock/comfyui**:[4]\n    - `COMFYUI_PORT_HOST`: internal ComfyUI port (keep at 8188 to match our existing tooling where possible).[4]\n    - `COMFYUI_ARGS`: additional CLI args; consider `--gpu-only --highvram` or similar depending on GPUs.[4]\n    - `COMFYUI_URL`: override the base URL if needed; usually unnecessary when using our existing public_ip/api_port logic.[4]\n    - `HF_TOKEN`, `CIVITAI_TOKEN`: configure for gated model downloads where required.[4]\n    - `AUTO_UPDATE`, `COMFYUI_REF`: plan policy for auto-updates vs pinned refs to avoid unexpected breaking changes.[4]\n  - For mmartial/ComfyUI-Nvidia-Docker, document any ports and custom node/model directories if that image is selected.[3]\n- Define our **authentication-related env vars** (see section 5) and incorporate them into the Vast.ai template.\n- Document defaults and how they’re overridden from our application config (e.g., `COMFYUI_VAST_IMAGE`, `COMFYUI_HF_TOKEN`, etc.).\n\n4) API access method and URL construction\n- Align with Task 310’s `build_comfyui_url(instance)` and Task 320’s `VastInstance.get_api_url()` so that this deployment:\n  - Listens on container port 8188 (or equivalent) and exposes it via a **single external TCP port**.\n  - Does not rely on internal Docker networking assumptions; everything is reachable via `http://{public_ip}:{external_port}`.\n- If using ai-dock’s **API wrapper**:[4]\n  - ComfyUI UI/API runs on `/` (port 8188), while the wrapper is available at `/ai-dock/api/` with an OpenAPI spec at `/ai-dock/api/docs`.[4]\n  - Decide whether our client will call **native ComfyUI endpoints** (`/system_stats`, `/object_info`, `/queue`) directly on `:{external_port}` or use `/ai-dock/api/*` routes.\n  - For compatibility with Tasks 312 and 316, ensure native endpoints remain exposed and reachable via the same base URL used in those tasks.\n- Update or add deployment documentation to explicitly state:\n  - “The base ComfyUI URL is `http://{ssh_host}:{api_port}`; do not assume port 8188 on the host.”\n\n5) Authentication and security model\n- For ai-dock/comfyui, **all services are password protected by default**; identify the relevant environment variables and config for:\n  - Setting a deterministic **admin username and password** (or API key) at container start.[4]\n  - Enabling/disabling password protection, with a strong recommendation to keep it enabled for public_ip deployments.\n- Choose an authentication scheme for our application integration:\n  - Preferred: **Bearer token or API key** passed as `Authorization: Bearer <token>` header or similar, if the image supports it.\n  - Fallback: **Basic auth** or cookie-based login, with our vastai_client handling login and cookie persistence.\n- Implement a small auth helper in `vastai_client.py` (or a new `comfyui_auth.py`) that:\n  - Reads credentials/token from secure config.\n  - Adds the correct headers to all ComfyUI API calls (including existing `/system_stats`, `/object_info`, queue submission, and upload endpoints).\n  - Fails fast with clear error messages on 401/403 and suggests checking credentials.\n- Document security best practices for Vast.ai:\n  - Avoid exposing ComfyUI to the entire internet without auth.\n  - Optionally restrict IPs using Vast.ai’s firewall or by running behind a reverse proxy if needed.\n\n6) Startup behavior and startup time measurement\n- Integrate with Task 318’s `_wait_for_comfyui_ready`:\n  - Confirm the chosen image’s **expected startup latency** on a representative GPU (e.g., 30–120 seconds depending on first model downloads).[4][5]\n  - Measure **cold start** (no models cached) vs **warm start** and record typical times.\n- If ai-dock’s API wrapper or other services add extra startup steps, include them in readiness detection:\n  - Continue to use `/system_stats` as the primary health endpoint, as planned in Task 318.\n  - Optionally add a second check to confirm `/object_info` and `/queue` are reachable to ensure the full pipeline is ready.\n- Add a small doc section/headline like “Expected ComfyUI startup time and retries” and recommend default timeout and poll interval suitable for 2025/2026 hardware.\n\n7) Integration points with existing code\n- Ensure the new deployment conventions fit **without changes** to:\n  - `build_comfyui_url` and `VastInstance.get_api_url` (Task 310 and 320).\n  - API health checks (Task 312) that call `/system_stats` and `/object_info`.\n  - Public IP validation and API reachability tests (Task 316).\n  - Image upload helper (Task 298, used in Task 317) which posts to `/upload/image` using the base URL.\n- Where the chosen Docker image expects different pathing (e.g., non-default upload endpoints or different `input` folder mapping), either:\n  - Configure the image to use standard ComfyUI endpoints; or\n  - Add a thin configuration layer in our client that knows which endpoint paths to use for the selected image.\n\n8) Documentation and reproducibility\n- Add a dedicated document (e.g., `docs/vast_comfyui_deployment.md`) that covers:\n  - Exact Docker image name and tag.\n  - Required Vast.ai launch parameters (GPU type hints, disk size, RAM, ports, volumes, env vars).\n  - Authentication configuration (env vars, header formats, example curl/httpx calls).\n  - Expected startup times and troubleshooting steps if readiness checks fail.\n- Provide a **minimal example** (Python or shell) showing how to:\n  - Launch an instance with the template.\n  - Wait for it to become `running`.\n  - Poll `_wait_for_comfyui_ready`.\n  - Call `/system_stats` and `/object_info` with authentication headers.\n\n9) Future-proofing for 2026+\n- Pin image tags to **explicit CUDA + Ubuntu combinations** that have a documented deprecation schedule (e.g., mmartial’s tags indicate 2026 deprecation for Ubuntu 22-based images, so prefer newer Ubuntu 24 tags).[2]\n- Capture a section in docs for **image refresh**:\n  - How to test and roll out a newer tag (staging Vast.ai instance, regression tests for health checks, workflows, and uploads).\n  - Criteria for switching the default image in production.\n- Optionally add a config flag (e.g., `COMFYUI_VAST_IMAGE_TAG`) to allow testing alternative tags without code changes.\n",
+        "testStrategy": "1) Configuration and launch validation\n- Create a Vast.ai instance using the documented template/image and confirm that:\n  - The container pulls the expected Docker image and tag.\n  - The mapped external port corresponds to the container’s ComfyUI port (check `docker ps` inside the host or Vast.ai logs).\n  - Volumes are mounted correctly and survive container restarts (models and workflows persist).\n\n2) API reachability and URL correctness\n- Using the existing `build_comfyui_url`/`VastInstance.get_api_url`, call:\n  - `GET {base_url}/system_stats` and verify HTTP 200 and that a `devices` array with GPU info is present.\n  - `GET {base_url}/object_info` and verify HTTP 200 and non-empty node metadata.\n  - `GET {base_url}/queue` and verify HTTP 200 and valid JSON.\n- Confirm that using the internal port (e.g., 8188) from outside the host fails, proving we must use the external mapped port.\n\n3) Authentication behavior\n- With authentication enabled:\n  - Call `/system_stats` without credentials and assert 401/403.\n  - Call `/system_stats` with the configured header (Bearer token or basic auth) and assert HTTP 200.\n  - Repeat for `/object_info`, `/queue`, and `/upload/image`.\n- Rotate the auth token/password via environment variables and verify that old credentials no longer work and new ones do.\n\n4) Startup and readiness checks\n- From a cold start (no cached models):\n  - Start a new Vast.ai instance and record the time until `_wait_for_comfyui_ready` succeeds.\n  - Confirm readiness requires `/system_stats` to return 200.\n- From a warm start (models cached):\n  - Restart the container and repeat measurements; verify that readiness occurs significantly faster.\n- Intentionally set a short timeout (e.g., 10 seconds) and verify `_wait_for_comfyui_ready` times out with a clear error path and does not hang indefinitely.\n\n5) End-to-end integration with existing helpers\n- Use the documented deployment plus our existing `upload_image_to_comfyui` to:\n  - Upload a test image and verify the returned filename.\n  - Access the uploaded file via `/view` or equivalent, ensuring paths match the chosen image’s layout.\n- Run the ComfyUI API health-check methods (from Task 312) and public IP checks (Task 316) against this deployment and ensure all pass without code changes beyond auth handling.\n\n6) Regression and documentation checks\n- Add or update automated tests that:\n  - Confirm that the base URL construction and auth headers are used for all ComfyUI API requests.\n  - Fail if the configured Docker image name or tag is missing or malformed in our deployment configuration.\n- Peer-review the new deployment documentation to ensure another engineer can recreate the setup on Vast.ai without additional guidance.\n",
+        "status": "pending",
+        "dependencies": [
+          "310",
+          "312",
+          "316",
+          "318",
+          "320"
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": "326",
+        "title": "Create Wan 2.2 I2V Workflow Builder Function",
+        "description": "Implement `build_wan22_i2v_workflow()` function in `app/services/comfyui_workflows.py` that generates a ComfyUI workflow JSON for Wan 2.2 image-to-video generation using GGUF models and LightX2V LoRAs.",
+        "details": "Create the workflow builder function that constructs a ComfyUI-compatible workflow JSON:\n\n```python\ndef build_wan22_i2v_workflow(\n    image_filename: str,\n    prompt: str,\n    negative_prompt: str = \"\",\n    num_frames: int = 81,\n    steps: int = 4,\n    cfg_scale: float = 1.0,\n    seed: int = -1,\n    noise_level: Literal[\"high\", \"low\"] = \"high\",\n) -> dict:\n```\n\n**Node structure (following ComfyUI node IDs):**\n1. `UnetLoaderGGUF` (node 1) - Load the Wan2.2 GGUF unet model based on noise_level:\n   - High: `unet/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf`\n   - Low: `unet/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf`\n\n2. `CLIPLoader` (node 2) - Load text encoder:\n   - `clip_name`: `text_encoders/nsfw_wan_umt5-xxl_fp8_scaled.safetensors`\n   - `type`: `wan`\n\n3. `VAELoader` (node 3) - Load VAE:\n   - `vae_name`: `vae/wan_2.1_vae.safetensors`\n\n4. `LoraLoaderModelOnly` (node 4) - Load LightX2V 4-step LoRA based on noise_level:\n   - High: `loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`\n   - Low: `loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`\n   - `strength_model`: 1.0\n\n5. `LoadImage` (node 5) - Load input image:\n   - `image`: image_filename (must be uploaded to ComfyUI first)\n\n6. `CLIPTextEncode` (node 6 & 7) - Encode prompts:\n   - Positive prompt encoding\n   - Negative prompt encoding\n\n7. `WanImageToVideo` (node 8) - Main I2V sampling:\n   - Connect model from LoRA loader\n   - Connect conditioning from CLIP encoders\n   - Connect VAE and image\n   - Parameters: num_frames, steps (4 for LightX2V), cfg_scale, seed\n\n8. `VHS_VideoCombine` (node 9) - Combine frames to video:\n   - `frame_rate`: 24\n   - `format`: \"video/h264-mp4\"\n   - `filename_prefix`: \"wan22_i2v_output\"\n\n**Implementation notes:**\n- Handle random seed generation if seed == -1\n- Match existing workflow patterns from `build_animatediff_workflow()` and `build_svd_workflow()`\n- Use string node IDs like existing workflows\n- Return complete workflow dict compatible with ComfyUI `/prompt` API",
+        "testStrategy": "1. Unit test workflow output structure matches ComfyUI expected format\n2. Validate all node connections are correct (node ID references exist)\n3. Test parameter variations (high/low noise, different frame counts)\n4. Test seed randomization when seed=-1\n5. Integration test: submit generated workflow to a test ComfyUI instance and verify it parses without node_errors",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T10:21:09.648Z"
+      },
+      {
+        "id": "327",
+        "title": "Add WAN_MODELS Configuration and Model Path Constants",
+        "description": "Define the Wan 2.2 model configuration constants in `app/services/vastai_client.py` including model paths, HuggingFace URLs, and expected file sizes for verification.",
+        "details": "Add model configuration at module level in `vastai_client.py`:\n\n```python\n# Wan 2.2 I2V Model Configuration\nWAN22_MODELS = {\n    \"unet_high_noise\": {\n        \"path\": \"/workspace/ComfyUI/models/unet/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf\",\n        \"url\": \"https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf\",\n        \"size_gb\": 8.2,  # Approximate size for verification\n    },\n    \"unet_low_noise\": {\n        \"path\": \"/workspace/ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf\",\n        \"url\": \"https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf\",\n        \"size_gb\": 8.2,\n    },\n    \"text_encoder\": {\n        \"path\": \"/workspace/ComfyUI/models/text_encoders/nsfw_wan_umt5-xxl_fp8_scaled.safetensors\",\n        \"url\": \"https://huggingface.co/NSFW-API/NSFW-Wan-UMT5-XXL/resolve/main/nsfw_wan_umt5-xxl_fp8_scaled.safetensors\",\n        \"size_gb\": 9.8,\n    },\n    \"vae\": {\n        \"path\": \"/workspace/ComfyUI/models/vae/wan_2.1_vae.safetensors\",\n        \"url\": \"https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors\",\n        \"size_gb\": 0.3,\n    },\n    \"lora_high_noise\": {\n        \"path\": \"/workspace/ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors\",\n        \"url\": \"https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors\",\n        \"size_gb\": 0.8,\n    },\n    \"lora_low_noise\": {\n        \"path\": \"/workspace/ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors\",\n        \"url\": \"https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors\",\n        \"size_gb\": 0.8,\n    },\n}\n\n# Required models for each noise level\nWAN22_REQUIRED_MODELS = {\n    \"high\": [\"unet_high_noise\", \"text_encoder\", \"vae\", \"lora_high_noise\"],\n    \"low\": [\"unet_low_noise\", \"text_encoder\", \"vae\", \"lora_low_noise\"],\n    \"all\": list(WAN22_MODELS.keys()),  # For downloading all models\n}\n```\n\n**Also update MIN_SPECS:**\n```python\nMIN_SPECS = {\n    \"image\": {\"gpu_ram\": 12, \"disk_space\": 50},\n    \"video\": {\"gpu_ram\": 24, \"disk_space\": 80},\n    \"wan22_video\": {\"gpu_ram\": 24, \"disk_space\": 100},  # Wan models need more space\n    \"lora\": {\"gpu_ram\": 24, \"disk_space\": 100},\n}\n```",
+        "testStrategy": "1. Verify all URLs are accessible (HEAD request returns 200)\n2. Validate model paths follow ComfyUI expected directory structure\n3. Ensure required model lists contain valid keys\n4. Test size_gb values are reasonable approximations",
+        "priority": "high",
+        "dependencies": [
+          "326"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "328",
+        "title": "Implement Model Download Helper Function",
+        "description": "Create `ensure_wan_models()` async function to check for and download missing Wan 2.2 models on a vast.ai instance via ComfyUI's model management or direct download endpoints.",
+        "details": "Implement the model verification and download function in `vastai_client.py`:\n\n```python\nasync def ensure_wan_models(\n    instance: VastInstance,\n    noise_level: Literal[\"high\", \"low\"] = \"high\",\n    timeout: int = 600,\n) -> bool:\n    \"\"\"\n    Ensure Wan 2.2 models are present on the vast.ai instance.\n    \n    Downloads missing models from HuggingFace if not present.\n    Uses ComfyUI's /upload/file endpoint or falls back to SSH/exec.\n    \n    Args:\n        instance: Running VastInstance with api_port and jupyter_token\n        noise_level: Which model set to ensure (\"high\" or \"low\")\n        timeout: Max time in seconds to wait for downloads\n    \n    Returns:\n        True if all required models are present, False otherwise\n    \"\"\"\n```\n\n**Implementation approach:**\n\n1. **Check existing models via ComfyUI API:**\n   - Query `/object_info/UnetLoaderGGUF` to see available GGUF models\n   - Query `/object_info/CLIPLoader` for text encoders\n   - Query `/object_info/VAELoader` for VAE files\n   - Query `/object_info/LoraLoaderModelOnly` for LoRAs\n\n2. **For missing models, use vast.ai execute API:**\n   ```python\n   # vast.ai provides an execute endpoint for running commands\n   async def _execute_on_instance(instance: VastInstance, command: str) -> str:\n       \"\"\"Execute a command on the vast.ai instance via API.\"\"\"\n       client = await self._get_client()\n       response = await client.put(\n           f\"{VASTAI_API_URL}/instances/{instance.id}/\",\n           headers=self._headers(),\n           json={\"command\": command}\n       )\n       return response.json()\n   ```\n\n3. **Download command construction:**\n   ```bash\n   mkdir -p /workspace/ComfyUI/models/unet && \\\n   wget -q --show-progress -O /workspace/ComfyUI/models/unet/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf \\\n       \"https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf\"\n   ```\n\n4. **Progress tracking:**\n   - Log download progress\n   - Poll for completion\n   - Verify file exists after download\n\n5. **Error handling:**\n   - Timeout handling for large downloads (8GB+ files)\n   - Network error retry logic\n   - Partial download cleanup",
+        "testStrategy": "1. Unit test model presence checking logic with mocked API responses\n2. Test download command generation produces valid wget commands\n3. Integration test: on a running instance, verify model detection works\n4. Test timeout behavior with slow/failed downloads\n5. Test idempotency - calling twice should not re-download existing models",
+        "priority": "high",
+        "dependencies": [
+          "327"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T10:22:50.770Z"
+      },
+      {
+        "id": "329",
+        "title": "Add VideoGenerateRequest Pydantic Model",
+        "description": "Create the `VideoGenerateRequest` Pydantic model in `app/routers/vastai.py` for validating video generation API requests.",
+        "details": "Add the request model for the video generation endpoint:\n\n```python\nfrom pydantic import BaseModel, Field\nfrom typing import Literal\n\nclass VideoGenerateRequest(BaseModel):\n    \"\"\"Request model for Wan 2.2 I2V video generation.\"\"\"\n    \n    image_url: str = Field(\n        ...,\n        description=\"URL of the source image to animate\",\n        examples=[\"https://example.com/image.jpg\"]\n    )\n    prompt: str = Field(\n        ...,\n        description=\"Text prompt describing the desired motion/animation\",\n        examples=[\"woman walking forward, hair blowing in wind\"]\n    )\n    negative_prompt: str = Field(\n        default=\"\",\n        description=\"Negative prompt for things to avoid\"\n    )\n    num_frames: int = Field(\n        default=81,\n        ge=17,\n        le=145,\n        description=\"Number of frames to generate (81 frames ≈ 3.4 seconds at 24fps)\"\n    )\n    steps: int = Field(\n        default=4,\n        ge=1,\n        le=20,\n        description=\"Sampling steps (4 is optimal for LightX2V LoRA)\"\n    )\n    cfg_scale: float = Field(\n        default=1.0,\n        ge=0.0,\n        le=10.0,\n        description=\"CFG scale (1.0 recommended for Wan 2.2 with LightX2V)\"\n    )\n    seed: int = Field(\n        default=-1,\n        ge=-1,\n        description=\"Random seed (-1 for random)\"\n    )\n    noise_level: Literal[\"high\", \"low\"] = Field(\n        default=\"high\",\n        description=\"High noise for more motion, low noise for subtle animation\"\n    )\n    max_price: float = Field(\n        default=0.50,\n        ge=0.10,\n        le=2.00,\n        description=\"Maximum GPU rental price per hour in USD\"\n    )\n\n\nclass VideoGenerateResponse(BaseModel):\n    \"\"\"Response model for video generation.\"\"\"\n    \n    status: Literal[\"completed\", \"failed\", \"processing\"]\n    video_url: str | None = None\n    thumbnail_url: str | None = None  # First frame as image\n    instance_id: int\n    gpu_used: str\n    generation_time_seconds: float | None = None\n    error: str | None = None\n```\n\n**Validation notes:**\n- num_frames: Wan 2.2 works best with specific frame counts (17, 33, 49, 65, 81, 97, 113, 129, 145)\n- steps: LightX2V is optimized for 4 steps\n- cfg_scale: Wan 2.2 with flow matching works best at 1.0",
+        "testStrategy": "1. Test Pydantic validation with valid inputs\n2. Test validation errors for out-of-range values\n3. Test default value assignment\n4. Test JSON serialization/deserialization\n5. Test OpenAPI schema generation",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T10:22:57.327Z"
+      },
+      {
+        "id": "330",
+        "title": "Implement /vastai/generate-video Endpoint",
+        "description": "Create the main video generation endpoint that orchestrates the full pipeline: instance management, model verification, image upload, workflow submission, and result caching.",
+        "details": "Implement the video generation endpoint in `app/routers/vastai.py`:\n\n```python\n@router.post(\"/generate-video\", response_model=VideoGenerateResponse)\nasync def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse:\n    \"\"\"\n    Generate video from image using Wan 2.2 I2V on vast.ai.\n    \n    Pipeline:\n    1. Get or create GPU instance (24GB+ VRAM)\n    2. Ensure Wan 2.2 models are downloaded\n    3. Upload input image to ComfyUI\n    4. Build and submit Wan 2.2 workflow\n    5. Wait for completion and cache to R2\n    6. Return video URL\n    \"\"\"\n    import time\n    start_time = time.time()\n    \n    client = get_vastai_client()\n    \n    # Step 1: Get or create instance with sufficient VRAM\n    instance = await client.get_or_create_instance(\n        workload=\"wan22_video\",  # Uses 24GB VRAM, 100GB disk\n        max_price=request.max_price,\n    )\n    \n    if not instance:\n        raise HTTPException(\n            status_code=503,\n            detail=\"No suitable GPU available. Try increasing max_price or try again later.\"\n        )\n    \n    # Step 2: Ensure models are present\n    models_ready = await ensure_wan_models(\n        instance,\n        noise_level=request.noise_level,\n        timeout=600,  # 10 min timeout for model downloads\n    )\n    \n    if not models_ready:\n        raise HTTPException(\n            status_code=503,\n            detail=\"Failed to prepare Wan 2.2 models on GPU instance\"\n        )\n    \n    # Step 3: Upload input image to ComfyUI\n    api_url = build_comfyui_url(instance)\n    try:\n        image_filename = await upload_image_to_comfyui(\n            request.image_url,\n            api_url,\n        )\n    except RuntimeError as e:\n        raise HTTPException(status_code=400, detail=f\"Failed to upload image: {e}\")\n    \n    # Step 4: Build workflow\n    workflow = build_wan22_i2v_workflow(\n        image_filename=image_filename,\n        prompt=request.prompt,\n        negative_prompt=request.negative_prompt,\n        num_frames=request.num_frames,\n        steps=request.steps,\n        cfg_scale=request.cfg_scale,\n        seed=request.seed,\n        noise_level=request.noise_level,\n    )\n    \n    # Step 5: Submit job (timeout based on frame count)\n    timeout = max(300, request.num_frames * 3)  # ~3 sec per frame + buffer\n    result = await client.submit_comfyui_job(\n        instance,\n        workflow,\n        timeout=timeout,\n    )\n    \n    if not result:\n        raise HTTPException(status_code=500, detail=\"Video generation failed\")\n    \n    # Step 6: Return result\n    generation_time = time.time() - start_time\n    videos = result.get(\"videos\", [])\n    images = result.get(\"images\", [])  # May include thumbnail\n    \n    return VideoGenerateResponse(\n        status=\"completed\",\n        video_url=videos[0] if videos else None,\n        thumbnail_url=images[0] if images else None,\n        instance_id=instance.id,\n        gpu_used=instance.gpu_name,\n        generation_time_seconds=generation_time,\n    )\n```\n\n**Import additions:**\n```python\nfrom app.services.comfyui_workflows import build_wan22_i2v_workflow\nfrom app.services.vastai_client import (\n    get_vastai_client,\n    VastInstance,\n    build_comfyui_url,\n    upload_image_to_comfyui,\n    ensure_wan_models,\n)\n```",
+        "testStrategy": "1. Unit test with mocked VastAIClient - verify correct calls in sequence\n2. Test error handling for each failure mode (no GPU, model download fail, upload fail, generation fail)\n3. Test timeout calculation based on frame count\n4. Integration test with real vast.ai instance (manual)\n5. Test response model serialization",
+        "priority": "high",
+        "dependencies": [
+          "326",
+          "328",
+          "329"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-01-09T10:23:03.661Z"
+      },
+      {
+        "id": "331",
+        "title": "Add ComfyUI Session Authentication to Image Upload",
+        "description": "Update `upload_image_to_comfyui()` to support session-based authentication using the instance's jupyter_token, matching the pattern used in `submit_comfyui_job()`.",
+        "details": "The existing `upload_image_to_comfyui()` function doesn't handle vast.ai's session-based authentication. Update it to accept an optional session cookie or jupyter_token:\n\n```python\nasync def upload_image_to_comfyui(\n    image_url: str,\n    comfyui_base_url: str,\n    http_client: httpx.AsyncClient | None = None,\n    jupyter_token: str | None = None,\n) -> str:\n    \"\"\"\n    Download an image from a URL and upload it to ComfyUI's input folder.\n    \n    Args:\n        image_url: URL of the image to download\n        comfyui_base_url: Base URL of ComfyUI API (e.g., http://host:8188)\n        http_client: Optional httpx client to reuse (with existing session)\n        jupyter_token: Optional jupyter token for vast.ai session auth\n    \n    Returns:\n        Filename as returned by ComfyUI\n    \"\"\"\n    # Create client with cookie support if using session auth\n    if http_client is None:\n        client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)\n        should_close = True\n    else:\n        client = http_client\n        should_close = False\n    \n    try:\n        # Establish session if jupyter_token provided\n        if jupyter_token:\n            logger.debug(\"Establishing ComfyUI session for upload\")\n            session_resp = await client.get(\n                f\"{comfyui_base_url}/?token={jupyter_token}\"\n            )\n            if session_resp.status_code != 200:\n                raise RuntimeError(f\"Failed to establish session: HTTP {session_resp.status_code}\")\n        \n        # ... rest of existing upload logic ...\n```\n\n**Alternative approach:** Create a helper that wraps uploads with auth:\n\n```python\nasync def upload_image_with_auth(\n    instance: VastInstance,\n    image_url: str,\n) -> str:\n    \"\"\"Upload image to ComfyUI with proper session authentication.\"\"\"\n    api_url = build_comfyui_url(instance)\n    \n    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:\n        # Establish session\n        session_resp = await client.get(\n            f\"{api_url}/?token={instance.jupyter_token}\"\n        )\n        session_resp.raise_for_status()\n        \n        # Now upload with session cookie\n        return await upload_image_to_comfyui(\n            image_url,\n            api_url,\n            http_client=client,\n        )\n```",
+        "testStrategy": "1. Test upload works with jupyter_token on vast.ai instance\n2. Test upload still works without token (for non-vast.ai ComfyUI)\n3. Test session establishment failure handling\n4. Test cookie persistence across requests",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "332",
+        "title": "Handle Video Output Processing in ComfyUI Results",
+        "description": "Ensure `_process_comfyui_outputs()` correctly handles VHS_VideoCombine output format and caches video files to R2 with proper content types.",
+        "details": "The existing `_process_comfyui_outputs()` already handles videos via the `gifs` key, but we should verify it works with VHS_VideoCombine's output format:\n\n**VHS_VideoCombine output structure:**\n```json\n{\n  \"node_id\": {\n    \"gifs\": [\n      {\n        \"filename\": \"wan22_i2v_output_00001.mp4\",\n        \"subfolder\": \"\",\n        \"type\": \"output\",\n        \"format\": \"video/h264-mp4\"\n      }\n    ]\n  }\n}\n```\n\n**Updates needed:**\n\n1. Add content type detection based on filename:\n```python\ndef _get_video_content_type(filename: str) -> str:\n    \"\"\"Determine content type from video filename.\"\"\"\n    if filename.endswith('.mp4'):\n        return 'video/mp4'\n    elif filename.endswith('.webm'):\n        return 'video/webm'\n    elif filename.endswith('.gif'):\n        return 'image/gif'\n    return 'video/mp4'  # Default\n```\n\n2. Update cache_video call to use detected content type:\n```python\ncontent_type = _get_video_content_type(filename)\ncached_url = await cache_video(\n    vid_url,\n    video_bytes=vid_response.content,\n    content_type=content_type,\n)\n```\n\n3. Increase timeout for large video downloads:\n```python\nvid_response = await client.get(vid_url, timeout=300.0)  # 5 min for large videos\n```\n\n4. Add progress logging for large files:\n```python\nlogger.info(\n    \"Downloading video from ComfyUI\",\n    filename=filename,\n    url=vid_url[:60],\n)\n```",
+        "testStrategy": "1. Test output parsing with sample VHS_VideoCombine response\n2. Test content type detection for mp4, webm, gif\n3. Test R2 caching with video bytes\n4. Test large video handling (timeout, progress logging)\n5. Integration test: generate video and verify cached URL is accessible",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "333",
+        "title": "Add Model Status Endpoint for Debugging",
+        "description": "Create `/vastai/instances/{instance_id}/models/wan22` endpoint to check Wan 2.2 model status on a running instance.",
+        "details": "Add a debugging/status endpoint to check model availability:\n\n```python\nclass Wan22ModelStatus(BaseModel):\n    \"\"\"Status of Wan 2.2 models on an instance.\"\"\"\n    all_ready: bool\n    models: dict[str, dict]  # model_name -> {present: bool, path: str, size_gb: float}\n    missing: list[str]\n    download_in_progress: bool\n\n\n@router.get(\"/instances/{instance_id}/models/wan22\")\nasync def check_wan22_models(\n    instance_id: int,\n    noise_level: Literal[\"high\", \"low\", \"all\"] = \"all\",\n) -> Wan22ModelStatus:\n    \"\"\"\n    Check Wan 2.2 model status on an instance.\n    \n    Useful for debugging model download issues.\n    \"\"\"\n    client = get_vastai_client()\n    instance = await client.get_instance(instance_id)\n    \n    if not instance:\n        raise HTTPException(status_code=404, detail=\"Instance not found\")\n    \n    if instance.status != \"running\":\n        raise HTTPException(\n            status_code=400,\n            detail=f\"Instance not running (status: {instance.status})\"\n        )\n    \n    # Query ComfyUI for available models\n    api_url = build_comfyui_url(instance)\n    \n    async with httpx.AsyncClient(timeout=30.0) as http_client:\n        # Establish session\n        await http_client.get(f\"{api_url}/?token={instance.jupyter_token}\")\n        \n        # Check each model type\n        models_status = {}\n        missing = []\n        \n        required = WAN22_REQUIRED_MODELS.get(noise_level, WAN22_REQUIRED_MODELS[\"all\"])\n        \n        for model_key in required:\n            model_info = WAN22_MODELS[model_key]\n            # Query appropriate ComfyUI endpoint based on model type\n            # ... implementation details ...\n            \n    return Wan22ModelStatus(\n        all_ready=len(missing) == 0,\n        models=models_status,\n        missing=missing,\n        download_in_progress=False,  # TODO: track active downloads\n    )\n```\n\n**ComfyUI model query endpoints:**\n- `/object_info/UnetLoaderGGUF` - GGUF models\n- `/object_info/CLIPLoader` - Text encoders  \n- `/object_info/VAELoader` - VAE models\n- `/object_info/LoraLoaderModelOnly` - LoRA models",
+        "testStrategy": "1. Test endpoint returns correct status for instance with all models\n2. Test endpoint returns correct status for instance with missing models\n3. Test error handling for non-running instances\n4. Test noise_level filtering",
+        "priority": "low",
+        "dependencies": [
+          "327",
+          "328"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "334",
+        "title": "Create End-to-End Test Script",
+        "description": "Create a test script similar to `test_vast_comfy_template.py` that tests the complete Wan 2.2 I2V pipeline.",
+        "details": "Create `test_wan22_i2v.py` in project root:\n\n```python\n#!/usr/bin/env python3\n\"\"\"\nEnd-to-end test for Wan 2.2 I2V video generation on vast.ai.\n\nTests the complete pipeline:\n1. Create/get GPU instance (24GB+ VRAM)\n2. Download Wan 2.2 models\n3. Upload test image\n4. Generate video\n5. Verify output\n6. Cleanup\n\nUsage:\n    python test_wan22_i2v.py\n\nEnvironment:\n    VASTAI_API_KEY - vast.ai API key\n    R2_* - R2 credentials for caching\n\"\"\"\n\nimport asyncio\nimport os\nimport sys\nimport httpx\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nsys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n\n# Test image URL (small test image)\nTEST_IMAGE_URL = \"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/320px-Camponotus_flavomarginatus_ant.jpg\"\n\nTEST_PROMPT = \"ant walking forward, antenna moving, high quality\"\n\n\nasync def test_full_pipeline():\n    \"\"\"Test complete video generation pipeline.\"\"\"\n    from app.services.vastai_client import (\n        VastAIClient,\n        ensure_wan_models,\n        build_comfyui_url,\n        upload_image_to_comfyui,\n    )\n    from app.services.comfyui_workflows import build_wan22_i2v_workflow\n    \n    print(\"=\" * 60)\n    print(\"Wan 2.2 I2V End-to-End Test\")\n    print(\"=\" * 60)\n    \n    client = VastAIClient()\n    \n    # Step 1: Get instance\n    print(\"\\n[1/5] Getting GPU instance...\")\n    instance = await client.get_or_create_instance(\n        workload=\"video\",\n        max_price=0.50,\n    )\n    \n    if not instance:\n        print(\"ERROR: No GPU available\")\n        return False\n    \n    print(f\"  Instance: {instance.id}\")\n    print(f\"  GPU: {instance.gpu_name}\")\n    print(f\"  URL: {build_comfyui_url(instance)}\")\n    \n    # Step 2: Ensure models\n    print(\"\\n[2/5] Checking Wan 2.2 models...\")\n    models_ok = await ensure_wan_models(instance, noise_level=\"high\")\n    if not models_ok:\n        print(\"ERROR: Models not ready\")\n        return False\n    print(\"  Models ready\")\n    \n    # Step 3: Upload image\n    print(\"\\n[3/5] Uploading test image...\")\n    api_url = build_comfyui_url(instance)\n    filename = await upload_image_to_comfyui(\n        TEST_IMAGE_URL,\n        api_url,\n        jupyter_token=instance.jupyter_token,\n    )\n    print(f\"  Uploaded: {filename}\")\n    \n    # Step 4: Generate video\n    print(\"\\n[4/5] Generating video (this may take several minutes)...\")\n    workflow = build_wan22_i2v_workflow(\n        image_filename=filename,\n        prompt=TEST_PROMPT,\n        num_frames=33,  # Short test video\n        steps=4,\n    )\n    \n    result = await client.submit_comfyui_job(\n        instance,\n        workflow,\n        timeout=300,\n    )\n    \n    if not result:\n        print(\"ERROR: Video generation failed\")\n        return False\n    \n    # Step 5: Check results\n    print(\"\\n[5/5] Checking results...\")\n    videos = result.get(\"videos\", [])\n    if videos:\n        print(f\"  SUCCESS! Video URL: {videos[0]}\")\n        return True\n    else:\n        print(\"  ERROR: No video in output\")\n        return False\n\n\nasync def main():\n    # ... menu similar to test_vast_comfy_template.py ...\n    pass\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())\n```",
+        "testStrategy": "1. Run test script on real vast.ai infrastructure\n2. Verify video URL is accessible and valid video\n3. Verify R2 caching worked\n4. Measure generation time\n5. Test cleanup destroys instance",
+        "priority": "medium",
+        "dependencies": [
+          "330"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "335",
+        "title": "Document API and Update README",
+        "description": "Add API documentation for the new video generation endpoint and update any existing documentation about vast.ai features.",
+        "details": "Update documentation to cover Wan 2.2 video generation:\n\n**1. Add docstrings to all new functions** (if not already added)\n\n**2. Add OpenAPI examples:**\n```python\n@router.post(\n    \"/generate-video\",\n    response_model=VideoGenerateResponse,\n    summary=\"Generate video from image using Wan 2.2\",\n    description=\"\"\"\n    Generate an animated video from a static image using the Wan 2.2 I2V model.\n    \n    This endpoint:\n    1. Automatically provisions a GPU instance on vast.ai (24GB+ VRAM)\n    2. Downloads required Wan 2.2 models if not present\n    3. Generates video using LightX2V for fast 4-step generation\n    4. Caches output to R2 and returns public URL\n    \n    Typical generation time: 1-2 minutes for 81 frames.\n    Cost: ~$0.30-0.50 per generation (GPU rental).\n    \"\"\",\n    responses={\n        200: {\n            \"description\": \"Video generated successfully\",\n            \"content\": {\n                \"application/json\": {\n                    \"example\": {\n                        \"status\": \"completed\",\n                        \"video_url\": \"https://r2.example.com/videos/abc123.mp4\",\n                        \"instance_id\": 12345,\n                        \"gpu_used\": \"RTX 4090\",\n                        \"generation_time_seconds\": 95.4\n                    }\n                }\n            }\n        },\n        503: {\"description\": \"No GPU available\"},\n    }\n)\n```\n\n**3. Update CLAUDE.md or project README** (if exists) with:\n- New endpoint documentation\n- Model requirements and disk space\n- Pricing estimates\n- Example curl commands\n\n**4. Add example API calls:**\n```bash\n# Generate video from image\ncurl -X POST \"http://localhost:8000/vastai/generate-video\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"image_url\": \"https://example.com/my-image.jpg\",\n    \"prompt\": \"person walking forward, natural motion\",\n    \"num_frames\": 81,\n    \"noise_level\": \"high\"\n  }'\n```",
+        "testStrategy": "1. Verify OpenAPI docs render correctly at /docs\n2. Test example requests from documentation work\n3. Review documentation for accuracy and completeness",
+        "priority": "low",
+        "dependencies": [
+          "330",
+          "334"
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-01-09T10:23:03.663Z",
+      "taskCount": 64,
+      "completedCount": 17,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}

@@ -1,0 +1,69 @@
+# Custom ComfyUI Docker image with performance optimizations
+# Base: vast.ai official ComfyUI image
+FROM vastai/comfy:cuda-12.6-auto
+
+LABEL maintainer="i2v-app"
+LABEL description="ComfyUI with SageAttention, xformers, and video generation nodes"
+
+# Set environment variables for performance
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ENV CUDA_MODULE_LOADING=LAZY
+ENV TORCH_CUDNN_V8_API_ENABLED=1
+ENV CUDNN_V8_API_ENABLED=1
+
+# Install performance packages
+RUN pip install --no-cache-dir \
+    triton \
+    xformers \
+    accelerate \
+    && pip install --no-cache-dir sageattention || \
+    pip install --no-cache-dir git+https://github.com/thu-ml/SageAttention.git
+
+# Install Flash Attention 2 (if compatible)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash Attention not available for this CUDA version"
+
+# Create model directories
+RUN mkdir -p /workspace/ComfyUI/models/unet \
+    && mkdir -p /workspace/ComfyUI/models/text_encoders \
+    && mkdir -p /workspace/ComfyUI/models/vae \
+    && mkdir -p /workspace/ComfyUI/models/loras \
+    && mkdir -p /workspace/ComfyUI/models/checkpoints \
+    && mkdir -p /workspace/ComfyUI/models/clip
+
+# Install ComfyUI custom nodes for video generation
+WORKDIR /workspace/ComfyUI/custom_nodes
+
+# ComfyUI Manager - install other nodes easily
+RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git \
+    && cd ComfyUI-Manager && pip install -r requirements.txt || true
+
+# Video Helper Suite - video I/O
+RUN git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git \
+    && cd ComfyUI-VideoHelperSuite && pip install -r requirements.txt || true
+
+# GGUF support - for quantized models
+RUN git clone https://github.com/city96/ComfyUI-GGUF.git \
+    && cd ComfyUI-GGUF && pip install -r requirements.txt || true
+
+# Wan Video Wrapper - Wan 2.1/2.2 support
+RUN git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \
+    && cd ComfyUI-WanVideoWrapper && pip install -r requirements.txt || true
+
+# Advanced ControlNet - for image-to-video conditioning
+RUN git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git \
+    && cd ComfyUI-Advanced-ControlNet && pip install -r requirements.txt || true
+
+# KJNodes - utility nodes
+RUN git clone https://github.com/kijai/ComfyUI-KJNodes.git \
+    && cd ComfyUI-KJNodes && pip install -r requirements.txt || true
+
+# Back to workspace
+WORKDIR /workspace/ComfyUI
+
+# Verify installations
+RUN python -c "import sageattention; print(f'SageAttention installed')" || echo "SageAttention verification failed"
+RUN python -c "import xformers; print(f'xformers {xformers.__version__} installed')" || echo "xformers verification failed"
+RUN python -c "import triton; print(f'Triton installed')" || echo "Triton verification failed"
+
+# Set default command (inherited from base image, but explicit)
+CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]

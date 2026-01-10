@@ -143,4 +143,101 @@ export async function cancelPipeline(id: number): Promise<void> {
   await api.post(`/pipelines/${id}/cancel`)
 }
 
+// vast.ai GPU video generation (ComfyUI-based)
+export interface GPUVideoRequest {
+  image_url: string
+  prompt: string
+  negative_prompt?: string
+  num_frames?: number
+  steps?: number
+  cfg_scale?: number
+  seed?: number
+  width?: number
+  height?: number
+}
+
+export interface GPUVideoResponse {
+  status: string
+  videos: string[]
+  images?: string[]
+  instance_id: number | null
+  gpu_used: string
+  params: {
+    num_frames: number
+    steps: number
+    seed: number
+  }
+}
+
+// ComfyUI-based generation (recommended for vast.ai instances)
+export async function generateGPUVideo(request: GPUVideoRequest): Promise<GPUVideoResponse> {
+  const { data } = await api.post<GPUVideoResponse>('/vastai/generate-video', request)
+  return data
+}
+
+// SwarmUI (vast.ai GPU) video generation - for SwarmUI-based instances
+export interface SwarmUIVideoRequest {
+  image_url: string
+  prompt: string
+  negative_prompt?: string
+  num_frames?: number
+  fps?: number
+  steps?: number
+  cfg_scale?: number
+  seed?: number
+}
+
+export interface SwarmUIVideoResponse {
+  status: string
+  video_url: string
+  seed: number
+  model: string
+  frames: number
+  instance_id: number | null
+  gpu_used: string
+}
+
+export async function generateSwarmUIVideo(request: SwarmUIVideoRequest): Promise<SwarmUIVideoResponse> {
+  const { data } = await api.post<SwarmUIVideoResponse>('/vastai/swarmui/generate-video', request)
+  return data
+}
+
+// GPU configuration
+export interface GPUConfigRequest {
+  comfyui_url?: string
+  swarmui_url?: string
+  gpu_provider?: 'none' | 'local' | 'vastai'
+  vastai_instance_id?: number
+}
+
+export interface GPUConfigResponse {
+  comfyui_url: string
+  comfyui_available: boolean
+  swarmui_url: string
+  swarmui_available: boolean
+  gpu_provider: string
+  vastai_instance_id: number | null
+}
+
+export async function getGPUConfig(): Promise<GPUConfigResponse> {
+  const { data } = await api.get<GPUConfigResponse>('/gpu/config')
+  return data
+}
+
+export async function setGPUConfig(config: GPUConfigRequest): Promise<GPUConfigResponse> {
+  const { data } = await api.post<GPUConfigResponse>('/gpu/config', config)
+  return data
+}
+
+export async function checkSwarmUIHealth(instanceId: number): Promise<{
+  instance_id: number
+  status: string
+  swarmui_url?: string
+  gpu?: string
+  error?: string
+}> {
+  const { data } = await api.get(`/vastai/swarmui/instances/${instanceId}/health`)
+  return data
+}
+
 export { api }

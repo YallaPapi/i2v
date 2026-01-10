@@ -655,3 +655,161 @@ NSFW_PRESETS = {
         "sampler": "dpmpp_2m",
     },
 }
+
+
+# =============================================================================
+# WAN 2.2 IMAGE-TO-VIDEO WORKFLOWS
+# =============================================================================
+
+# Wan 2.2 model configuration
+WAN_MODELS = {
+    "unet_high": "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+    "unet_low": "Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+    "text_encoder": "nsfw_wan_umt5-xxl_fp8_scaled.safetensors",
+    "vae": "wan_2.1_vae.safetensors",
+    "lora_high": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_low": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+}
+
+WAN_MODEL_URLS = {
+    "unet_high": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+    "unet_low": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+    "text_encoder": "https://huggingface.co/NSFW-API/NSFW-Wan-UMT5-XXL/resolve/main/nsfw_wan_umt5-xxl_fp8_scaled.safetensors",
+    "vae": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+    "lora_high": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_low": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+}
+
+# Model paths on vast.ai instance (relative to /workspace/ComfyUI/models/)
+WAN_MODEL_PATHS = {
+    "unet_high": "unet/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+    "unet_low": "unet/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+    "text_encoder": "text_encoders/nsfw_wan_umt5-xxl_fp8_scaled.safetensors",
+    "vae": "vae/wan_2.1_vae.safetensors",
+    "lora_high": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_low": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+}
+
+
+def build_wan22_i2v_workflow(
+    image_filename: str,
+    prompt: str,
+    negative_prompt: str = "",
+    num_frames: int = 81,
+    steps: int = 4,
+    cfg_scale: float = 1.0,
+    seed: int = -1,
+    width: int = 832,
+    height: int = 480,
+) -> dict:
+    """
+    Build a ComfyUI workflow for Wan 2.2 image-to-video generation.
+
+    Uses GGUF quantized models and LightX2V LoRAs for fast 4-step generation.
+
+    Args:
+        image_filename: Name of image file already uploaded to ComfyUI input folder
+        prompt: Text prompt describing the desired video motion/content
+        negative_prompt: Negative prompt (what to avoid)
+        num_frames: Number of frames to generate (81 = ~3.4s at 24fps)
+        steps: Number of sampling steps (4 for LightX2V, can use more for quality)
+        cfg_scale: Classifier-free guidance scale (1.0 recommended for LightX2V)
+        seed: Random seed (-1 for random)
+        width: Output video width
+        height: Output video height
+
+    Returns:
+        ComfyUI workflow dict ready to submit to /prompt API
+    """
+    import random as rand_module
+    if seed == -1:
+        seed = rand_module.randint(0, 2**32 - 1)
+
+    workflow = {
+        # Node 1: Load GGUF UNet model (high noise variant for I2V)
+        "1": {
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {
+                "unet_name": WAN_MODELS["unet_high"],
+            },
+        },
+        # Node 2: Load text encoder (CLIP for Wan)
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": WAN_MODELS["text_encoder"],
+                "type": "wan",
+            },
+        },
+        # Node 3: Load VAE
+        "3": {
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": WAN_MODELS["vae"],
+            },
+        },
+        # Node 4: Load LightX2V LoRA (model only, no CLIP)
+        "4": {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "lora_name": WAN_MODELS["lora_high"],
+                "strength_model": 1.0,
+                "model": ["1", 0],  # Connect to UNet loader output
+            },
+        },
+        # Node 5: Load input image
+        "5": {
+            "class_type": "LoadImage",
+            "inputs": {
+                "image": image_filename,
+            },
+        },
+        # Node 6: Encode positive prompt
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": prompt,
+                "clip": ["2", 0],  # Connect to CLIP loader
+            },
+        },
+        # Node 7: Encode negative prompt
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": negative_prompt or "blurry, low quality, distorted, watermark",
+                "clip": ["2", 0],  # Connect to CLIP loader
+            },
+        },
+        # Node 8: Wan Image to Video sampler
+        "8": {
+            "class_type": "WanImageToVideo",
+            "inputs": {
+                "model": ["4", 0],  # Connect to LoRA-applied model
+                "positive": ["6", 0],  # Positive conditioning
+                "negative": ["7", 0],  # Negative conditioning
+                "vae": ["3", 0],  # VAE
+                "image": ["5", 0],  # Input image
+                "width": width,
+                "height": height,
+                "num_frames": num_frames,
+                "steps": steps,
+                "cfg": cfg_scale,
+                "seed": seed,
+            },
+        },
+        # Node 9: Combine frames to video
+        "9": {
+            "class_type": "VHS_VideoCombine",
+            "inputs": {
+                "images": ["8", 0],  # Frames from sampler
+                "frame_rate": 24,
+                "loop_count": 0,
+                "filename_prefix": "wan22_i2v",
+                "format": "video/h264-mp4",
+                "pingpong": False,
+                "save_output": True,
+            },
+        },
+    }
+
+    return workflow

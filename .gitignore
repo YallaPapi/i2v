@@ -61,3 +61,7 @@ Thumbs.db
 
 # MCP config (contains API keys)
 .mcp.json
+epicrealismXL_pureFix.safetensors
+*.safetensors
+*.gguf
+templates.json

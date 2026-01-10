@@ -113,31 +113,39 @@ async def upload_image_to_comfyui(
 VASTAI_API_URL = "https://console.vast.ai/api/v0"
 
 # =============================================================================
-# DOCKER IMAGE CONFIGURATION (Researched 2025/2026)
+# VAST.AI TEMPLATE CONFIGURATION
 # =============================================================================
-# Use ai-dock ComfyUI image which has:
-# - ComfyUI pre-installed and auto-starts via supervisord
-# - Built-in auth (disable with WEB_ENABLE_AUTH=false for API access)
-# - Startup time: 30-120 seconds depending on model downloads
+# ComfyUI Template (legacy)
+#   Hash: 2188dfd3e0a0b83691bb468ddae0a4e5
+#   Port: 8188
 #
-# IMPORTANT: Vast.ai env is plain KEY=VALUE pairs, NOT docker CLI flags!
-# Port exposure requires direct_port_start/direct_port_end in payload.
+# SwarmUI Template (preferred for video generation)
+#   Hash: 8e5e6ab1fceb9db3f813e815907b3390
+#   Port: 7801
+#   Includes ComfyUI backend automatically
 # =============================================================================
+
+# SwarmUI template (preferred)
+SWARMUI_TEMPLATE_HASH = os.getenv(
+    "SWARMUI_TEMPLATE_HASH",
+    "7a42a1fc4f8062a63bbcdbbc9cd65b42"  # Official Vast.ai SwarmUI template (correct hash_id)
+)
+SWARMUI_PORT = 7801
+
+# ComfyUI template (legacy fallback)
+COMFYUI_TEMPLATE_HASH = os.getenv(
+    "COMFYUI_TEMPLATE_HASH",
+    "2188dfd3e0a0b83691bb468ddae0a4e5"  # Official Vast.ai ComfyUI template
+)
+COMFYUI_PORT = 8188
+
+# Fallback: Direct image configuration (only used if template fails)
 COMFYUI_DOCKER_IMAGE = os.getenv(
     "COMFYUI_DOCKER_IMAGE",
-    "ghcr.io/ai-dock/comfyui:v2-cuda-12.1.1-base-22.04-v0.2.7"  # Verified tag
+    "vastai/comfy:cuda-12.6-auto"  # Official vastai/comfy image
 )
 
-# Environment variables for ai-dock ComfyUI
-# These are plain KEY=VALUE pairs passed to the container
-# Using port 8080 because jupyter_direc already exposes it on Vast.ai
-COMFYUI_ENV_VARS = {
-    "WEB_ENABLE_AUTH": "false",      # Disable auth for API access
-    "COMFYUI_PORT_HOST": "8080",     # Use 8080 since jupyter_direc exposes it
-    "PYTHONUNBUFFERED": "1",
-}
-
-# Docker images for different workloads
+# Docker images for different workloads (fallback only)
 DOCKER_IMAGES = {
     "comfyui": COMFYUI_DOCKER_IMAGE,
     "a1111": "ghcr.io/ai-dock/stable-diffusion-webui:latest",
@@ -145,13 +153,90 @@ DOCKER_IMAGES = {
 }
 
 
-def get_comfyui_image() -> str:
-    """Get the ComfyUI Docker image to use for vast.ai instances.
+def get_comfyui_template_hash() -> str:
+    """Get the official Vast.ai ComfyUI template hash.
 
-    Returns the official vast.ai ComfyUI image which is pre-configured
-    with proper port exposure (8188) and startup behavior.
+    This is the recommended way to create ComfyUI instances on Vast.ai.
+    Using a template hash ensures correct configuration of ports, env vars,
+    and startup scripts.
+    """
+    return COMFYUI_TEMPLATE_HASH
+
+
+def get_comfyui_image() -> str:
+    """Get the ComfyUI Docker image (fallback, prefer template_hash).
+
+    Returns the official vast.ai ComfyUI image. However, using
+    create_instance_from_template() with the template hash is preferred.
     """
     return COMFYUI_DOCKER_IMAGE
+
+
+def get_swarmui_template_hash() -> str:
+    """Get the official Vast.ai SwarmUI template hash.
+
+    SwarmUI is preferred for video generation as it provides:
+    - Better UI for debugging
+    - Built-in ComfyUI backend
+    - Easier model management
+    """
+    return SWARMUI_TEMPLATE_HASH
+
+
+def _extract_swarmui_port(instance_or_ports: dict) -> int:
+    """Extract the external SwarmUI port (7801) from vast.ai instance data.
+
+    Similar to _extract_comfyui_port but looks for port 7801.
+    """
+    if "ports" in instance_or_ports:
+        ports = instance_or_ports.get("ports") or {}
+    else:
+        ports = instance_or_ports
+
+    if not isinstance(ports, dict):
+        raise RuntimeError(f"Invalid ports data type: {type(ports)}")
+
+    def _get_host_port(key: str) -> int | None:
+        entries = ports.get(key)
+        if not entries or not isinstance(entries, list) or not entries:
+            return None
+        host_port = entries[0].get("HostPort")
+        if host_port is None:
+            return None
+        try:
+            return int(host_port)
+        except (ValueError, TypeError):
+            return None
+
+    # Try SwarmUI port 7801
+    port = _get_host_port("7801/tcp")
+    if port is not None:
+        logger.debug(f"Found SwarmUI port on 7801/tcp -> external port {port}")
+        return port
+
+    available_ports = list(ports.keys()) if ports else []
+    raise RuntimeError(
+        f"No SwarmUI port mapping found (tried 7801/tcp). "
+        f"Available ports: {available_ports}"
+    )
+
+
+def build_swarmui_url(instance: "VastInstance", scheme: str = "http") -> str:
+    """Build the SwarmUI base URL from a VastInstance.
+
+    Args:
+        instance: VastInstance with public_ip and swarmui_port populated
+        scheme: URL scheme (http or https), defaults to http
+
+    Returns:
+        Base URL string like "http://78.83.187.54:17533"
+    """
+    if not instance.public_ip:
+        raise ValueError("Instance missing public_ip for SwarmUI URL")
+    if not instance.swarmui_port:
+        raise ValueError("Instance missing swarmui_port for SwarmUI URL")
+
+    return f"{scheme}://{instance.public_ip}:{instance.swarmui_port}"
 
 
 # Minimum specs for different workloads
@@ -216,17 +301,17 @@ def _extract_comfyui_port(instance_or_ports: dict) -> int:
             logger.warning(f"Invalid HostPort value for {key}: {host_port}")
             return None
 
-    # Try 8080 first (exposed by jupyter_direc on Vast.ai)
-    # We configure COMFYUI_PORT_HOST=8080 to use this port
-    port = _get_host_port("8080/tcp")
-    if port is not None:
-        logger.debug(f"Found ComfyUI port on 8080/tcp -> external port {port}")
-        return port
-
-    # Fallback to 8188 (standard ComfyUI port, requires direct port exposure)
+    # Try 8188 first - this is the standard ComfyUI API port
+    # The official vastai/comfy template exposes this port
     port = _get_host_port("8188/tcp")
     if port is not None:
-        logger.debug(f"Found ComfyUI port on 8188/tcp (fallback) -> external port {port}")
+        logger.debug(f"Found ComfyUI port on 8188/tcp -> external port {port}")
+        return port
+
+    # Fallback to 8080 (jupyter_direc port, for legacy configurations)
+    port = _get_host_port("8080/tcp")
+    if port is not None:
+        logger.debug(f"Found ComfyUI port on 8080/tcp (fallback) -> external port {port}")
         return port
 
     # No port found
@@ -284,7 +369,10 @@ class VastInstance:
     ssh_host: str | None = None
     ssh_port: int | None = None
     api_port: int | None = None  # ComfyUI API port (external mapped port)
+    swarmui_port: int | None = None  # SwarmUI API port (7801 external mapped)
     public_ip: str | None = None  # Direct public IP for HTTP connections
+    jupyter_token: str | None = None  # Auth token for API
+    template_type: str = "comfyui"  # "comfyui" or "swarmui"
 
 
 class VastAIClient:
@@ -378,71 +466,66 @@ class VastAIClient:
         )
         return offers[0] if offers else None
 
-    async def create_instance(
+    async def create_instance_from_template(
         self,
         offer_id: int,
-        docker_image: str | None = None,
+        template_hash: str | None = None,
         disk_space: int = 50,
-        env_vars: dict | None = None,
-        onstart_script: str | None = None,
-        workload: Literal["image", "video", "lora"] = "image",
     ) -> VastInstance | None:
         """
-        Rent a GPU instance from vast.ai.
+        Create a vast.ai instance using the official ComfyUI template.
+
+        This is the RECOMMENDED method for creating ComfyUI instances.
+        Using a template hash tells Vast.ai to clone the exact configuration
+        from their official template, including:
+        - Correct Docker image (vastai/comfy:@vastai-automatic-tag)
+        - Proper port exposure (8188 for ComfyUI API)
+        - Correct startup script (entrypoint.sh)
+        - All required environment variables
 
         Args:
             offer_id: The offer ID to rent
-            docker_image: Docker image to run (defaults to vastai/comfy)
-            disk_space: Disk space in GB (minimum 50GB for ComfyUI models)
-            env_vars: Environment variables for the container
-            onstart_script: Script to run on startup (empty for official image)
-            workload: Workload type for selecting appropriate image
+            template_hash: Template hash (defaults to official ComfyUI template)
+            disk_space: Disk space in GB (minimum 50GB for models)
 
         Returns:
             VastInstance if successful, None otherwise
-
-        Note:
-            For ComfyUI workloads, we use the official vastai/comfy image which
-            handles its own startup on port 8188. Do NOT pass custom onstart
-            scripts as they may conflict with the image's entrypoint.
         """
         if not self.api_key:
             return None
 
         client = await self._get_client()
 
-        # Use default ComfyUI image if not specified
-        if docker_image is None:
-            docker_image = get_comfyui_image()
+        # Use the official ComfyUI template hash
+        if template_hash is None:
+            template_hash = COMFYUI_TEMPLATE_HASH
 
-        # Enforce minimum disk space for model storage
-        MIN_DISK_GB = 50
+        # Enforce minimum disk space for video models
+        MIN_DISK_GB = 80
         if disk_space < MIN_DISK_GB:
             logger.info(f"Increasing disk space from {disk_space}GB to {MIN_DISK_GB}GB minimum")
             disk_space = MIN_DISK_GB
 
-        # For ai-dock ComfyUI image, we let supervisord handle startup
-        if onstart_script is None:
-            onstart_script = ""
+        # Generate onstart script for model downloads and SageAttention
+        onstart_script = self._get_comfyui_onstart_script()
 
-        # Environment configuration - plain KEY=VALUE pairs only!
-        # NO docker CLI flags like -p or -e - Vast.ai doesn't parse those
-        default_env = dict(COMFYUI_ENV_VARS)
-        if env_vars:
-            default_env.update(env_vars)
-
-        # Use jupyter_direc which exposes port 8080
-        # ai-dock is configured via COMFYUI_PORT_HOST=8080 to use this port
         payload = {
             "client_id": "i2v-app",
-            "image": docker_image,
+            "template_hash_id": template_hash,
             "disk": disk_space,
-            "runtype": "jupyter_direc ssh_direc ssh_proxy",  # jupyter_direc exposes 8080
-            "onstart": onstart_script,
-            "env": default_env,
-            "python_utf8": True,
-            "lang_utf8": True,
         }
+
+        # Add onstart script for model downloads
+        if onstart_script:
+            payload["onstart"] = onstart_script
+            logger.info("Added ComfyUI model download script to instance startup")
+
+        logger.info(
+            "Creating instance from template",
+            offer_id=offer_id,
+            template_hash=template_hash,
+            disk_space=disk_space,
+        )
 
         try:
             response = await client.put(
@@ -455,24 +538,37 @@ class VastAIClient:
 
             instance_id = data.get("new_contract")
             if not instance_id:
-                logger.error("Failed to create instance", response=data)
+                logger.error("Failed to create instance from template", response=data)
                 return None
 
-            logger.info("Created vast.ai instance", instance_id=instance_id)
+            logger.info("Created vast.ai instance from template", instance_id=instance_id)
 
             # Wait for instance to be ready
             instance = await self._wait_for_instance(instance_id)
             self._active_instance = instance
             return instance
 
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "HTTP error creating instance from template",
+                status_code=e.response.status_code,
+                response_text=e.response.text[:500] if e.response.text else None,
+            )
+            return None
         except Exception as e:
-            logger.error("Failed to create vast.ai instance", error=str(e))
+            logger.error("Failed to create vast.ai instance from template", error=str(e))
             return None
 
     async def _wait_for_instance(
-        self, instance_id: int, timeout: int = 300
+        self, instance_id: int, timeout: int = 300, template_type: str = "comfyui"
     ) -> VastInstance | None:
-        """Wait for an instance to be ready."""
+        """Wait for an instance to be ready.
+
+        Args:
+            instance_id: The instance ID to wait for
+            timeout: Max seconds to wait
+            template_type: "comfyui" or "swarmui" - determines which port to extract
+        """
         client = await self._get_client()
         start = asyncio.get_event_loop().time()
 
@@ -491,12 +587,20 @@ class VastAIClient:
 
                 status = data.get("actual_status", "unknown")
                 if status == "running":
-                    # Extract ComfyUI port using shared helper
-                    try:
-                        api_port = _extract_comfyui_port(data)
-                    except RuntimeError as e:
-                        logger.warning("Instance running but port not found", error=str(e))
-                        api_port = None
+                    # Extract ports based on template type
+                    api_port = None
+                    swarmui_port = None
+
+                    if template_type == "swarmui":
+                        try:
+                            swarmui_port = _extract_swarmui_port(data)
+                        except RuntimeError as e:
+                            logger.warning("SwarmUI port not found", error=str(e))
+                    else:
+                        try:
+                            api_port = _extract_comfyui_port(data)
+                        except RuntimeError as e:
+                            logger.warning("ComfyUI port not found", error=str(e))
 
                     ssh_host = data.get("ssh_host")
                     public_ip = data.get("public_ipaddr")
@@ -505,6 +609,8 @@ class VastAIClient:
                         instance_id=instance_id,
                         public_ip=public_ip,
                         api_port=api_port,
+                        swarmui_port=swarmui_port,
+                        template_type=template_type,
                     )
 
                     return VastInstance(
@@ -519,7 +625,10 @@ class VastAIClient:
                         ssh_host=ssh_host,
                         ssh_port=data.get("ssh_port"),
                         api_port=api_port,
+                        swarmui_port=swarmui_port,
                         public_ip=public_ip,
+                        jupyter_token=data.get("jupyter_token"),
+                        template_type=template_type,
                     )
                 elif status in ("exited", "error"):
                     logger.error("Instance failed to start", status=status, msg=data.get("status_msg"))
@@ -577,6 +686,7 @@ class VastAIClient:
                 ssh_port=data.get("ssh_port"),
                 api_port=api_port,
                 public_ip=data.get("public_ipaddr"),
+                jupyter_token=data.get("jupyter_token"),
             )
         except Exception as e:
             logger.error("Failed to get instance", instance_id=instance_id, error=str(e))
@@ -621,6 +731,7 @@ class VastAIClient:
                     ssh_port=inst.get("ssh_port"),
                     api_port=api_port,
                     public_ip=inst.get("public_ipaddr"),
+                    jupyter_token=inst.get("jupyter_token"),
                 ))
             return instances
         except Exception as e:
@@ -658,6 +769,10 @@ class VastAIClient:
         """
         Submit a ComfyUI workflow to a running instance.
 
+        Uses session-based authentication: First establishes a session by
+        hitting the root URL with the jupyter_token, then uses the session
+        cookie for API requests.
+
         Args:
             instance: The VastInstance to run on
             workflow: ComfyUI workflow JSON
@@ -670,59 +785,88 @@ class VastAIClient:
             logger.error("Instance not ready for API calls (missing public_ip or api_port)")
             return None
 
-        # Use build_comfyui_url helper which correctly uses public_ip (not ssh_host)
+        if not instance.jupyter_token:
+            logger.error("Instance missing jupyter_token for authentication")
+            return None
+
         api_url = build_comfyui_url(instance)
-        client = await self._get_client()
 
-        try:
-            # Queue the prompt
-            response = await client.post(
-                f"{api_url}/prompt",
-                json={"prompt": workflow},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-            prompt_id = data.get("prompt_id")
+        # Create a new client with cookie support for session-based auth
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            try:
+                # Step 1: Establish session by hitting root with token
+                logger.debug("Establishing ComfyUI session", url=api_url)
+                session_response = await client.get(
+                    f"{api_url}/?token={instance.jupyter_token}"
+                )
+                if session_response.status_code != 200:
+                    logger.error("Failed to establish session", status=session_response.status_code)
+                    return None
 
-            if not prompt_id:
-                logger.error("No prompt_id in response", response=data)
+                # Step 2: Submit workflow (session cookie is automatically used)
+                response = await client.post(
+                    f"{api_url}/prompt",
+                    json={"prompt": workflow},
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                data = response.json()
+                prompt_id = data.get("prompt_id")
+
+                if not prompt_id:
+                    # Check for node_errors in response
+                    node_errors = data.get("node_errors", {})
+                    if node_errors:
+                        logger.error("Workflow validation errors", errors=node_errors)
+                    else:
+                        logger.error("No prompt_id in response", response=data)
+                    return None
+
+                logger.info("Submitted ComfyUI job", prompt_id=prompt_id)
+
+                # Step 3: Poll for completion
+                start = asyncio.get_event_loop().time()
+                while asyncio.get_event_loop().time() - start < timeout:
+                    history_response = await client.get(
+                        f"{api_url}/history/{prompt_id}",
+                        timeout=10.0,
+                    )
+                    history = history_response.json()
+
+                    if prompt_id in history:
+                        # Check for execution errors
+                        status_info = history[prompt_id].get("status", {})
+                        if status_info.get("status_str") == "error":
+                            logger.error("ComfyUI execution error", status=status_info)
+                            return None
+
+                        outputs = history[prompt_id].get("outputs", {})
+                        if outputs:
+                            # Extract output images/videos (pass client for auth)
+                            result = await self._process_comfyui_outputs(
+                                api_url, outputs, client
+                            )
+                            return result
+
+                    await asyncio.sleep(2)
+
+                logger.error("ComfyUI job timeout", prompt_id=prompt_id)
                 return None
 
-            logger.info("Submitted ComfyUI job", prompt_id=prompt_id)
-
-            # Poll for completion
-            start = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - start < timeout:
-                history_response = await client.get(
-                    f"{api_url}/history/{prompt_id}",
-                    timeout=10.0,
-                )
-                history = history_response.json()
-
-                if prompt_id in history:
-                    outputs = history[prompt_id].get("outputs", {})
-                    if outputs:
-                        # Extract output images/videos
-                        result = await self._process_comfyui_outputs(
-                            api_url, outputs
-                        )
-                        return result
-
-                await asyncio.sleep(2)
-
-            logger.error("ComfyUI job timeout", prompt_id=prompt_id)
-            return None
-
-        except Exception as e:
-            logger.error("ComfyUI job failed", error=str(e))
-            return None
+            except Exception as e:
+                logger.error("ComfyUI job failed", error=str(e))
+                return None
 
     async def _process_comfyui_outputs(
-        self, api_url: str, outputs: dict
+        self, api_url: str, outputs: dict, client: httpx.AsyncClient
     ) -> dict:
-        """Process ComfyUI outputs and cache to R2."""
-        client = await self._get_client()
+        """Process ComfyUI outputs and cache to R2.
+
+        Args:
+            api_url: ComfyUI API base URL
+            outputs: ComfyUI outputs dict from history
+            client: Authenticated httpx client with session cookie
+        """
         result = {"images": [], "videos": []}
 
         for node_id, node_output in outputs.items():
@@ -732,11 +876,22 @@ class VastAIClient:
                 subfolder = img.get("subfolder", "")
                 img_url = f"{api_url}/view?filename={filename}&subfolder={subfolder}&type=output"
 
-                # Cache to R2
-                cached_url = await cache_image(img_url, prefix="vast-outputs")
-                if cached_url:
-                    result["images"].append(cached_url)
-                else:
+                # Download using authenticated client, then cache to R2
+                try:
+                    img_response = await client.get(img_url, timeout=60.0)
+                    img_response.raise_for_status()
+                    # Cache to R2 using the downloaded bytes
+                    cached_url = await cache_image(
+                        img_url,
+                        prefix="vast-outputs",
+                        image_bytes=img_response.content
+                    )
+                    if cached_url:
+                        result["images"].append(cached_url)
+                    else:
+                        result["images"].append(img_url)
+                except Exception as e:
+                    logger.error("Failed to fetch/cache image", url=img_url, error=str(e))
                     result["images"].append(img_url)
 
             # Handle videos/gifs
@@ -745,11 +900,18 @@ class VastAIClient:
                 subfolder = vid.get("subfolder", "")
                 vid_url = f"{api_url}/view?filename={filename}&subfolder={subfolder}&type=output"
 
-                # Cache to R2
-                cached_url = await cache_video(vid_url)
-                if cached_url:
-                    result["videos"].append(cached_url)
-                else:
+                # Download using authenticated client, then cache to R2
+                try:
+                    vid_response = await client.get(vid_url, timeout=120.0)
+                    vid_response.raise_for_status()
+                    # Cache to R2 using the downloaded bytes
+                    cached_url = await cache_video(vid_url, video_bytes=vid_response.content)
+                    if cached_url:
+                        result["videos"].append(cached_url)
+                    else:
+                        result["videos"].append(vid_url)
+                except Exception as e:
+                    logger.error("Failed to fetch/cache video", url=vid_url, error=str(e))
                     result["videos"].append(vid_url)
 
         return result
@@ -763,6 +925,14 @@ class VastAIClient:
         Get an existing instance or create a new one if needed.
 
         This is the main entry point for getting a GPU for generation.
+        Always uses the official Vast.ai ComfyUI template for reliability.
+
+        Args:
+            workload: Type of workload (affects GPU RAM and disk requirements)
+            max_price: Maximum price per hour in USD
+
+        Returns:
+            VastInstance if successful, None otherwise
         """
         # Check for existing running instance
         instances = await self.list_instances()
@@ -786,17 +956,276 @@ class VastAIClient:
             price=offer.get("dph_total"),
         )
 
-        # Use the ComfyUI Docker image
-        docker_image = DOCKER_IMAGES["comfyui"]
-        # The startup script is set in create_instance
-        onstart_script = None
+        disk_space = MIN_SPECS[workload]["disk_space"]
 
-        return await self.create_instance(
+        # Use official Vast.ai ComfyUI template
+        return await self.create_instance_from_template(
             offer_id=offer["id"],
-            docker_image=docker_image,
-            disk_space=MIN_SPECS[workload]["disk_space"],
-            onstart_script=onstart_script,
+            disk_space=disk_space,
         )
+
+    async def get_or_create_swarmui_instance(
+        self,
+        max_price: float = 1.50,
+        gpu_name: str = "RTX 5090",
+    ) -> VastInstance | None:
+        """
+        Get an existing SwarmUI instance or create a new one.
+
+        This is the main entry point for SwarmUI video generation on vast.ai.
+        Uses the official Vast.ai SwarmUI template which includes:
+        - SwarmUI with ComfyUI backend
+        - Proper port exposure (7801)
+        - Pre-configured for video generation
+
+        Args:
+            max_price: Maximum price per hour in USD
+            gpu_name: GPU to use (default RTX 5090 for speed)
+
+        Returns:
+            VastInstance with swarmui_port populated if successful
+        """
+        # Check for existing running SwarmUI instance
+        instances = await self.list_instances()
+        running_swarmui = [
+            i for i in instances
+            if i.status == "running" and i.template_type == "swarmui"
+        ]
+
+        if running_swarmui:
+            logger.info("Using existing SwarmUI instance", instance_id=running_swarmui[0].id)
+            self._active_instance = running_swarmui[0]
+            return running_swarmui[0]
+
+        # Find RTX 5090 offer (fastest for video gen)
+        offers = await self.search_offers(
+            gpu_ram_min=32,  # 5090 has 32GB
+            disk_space_min=80,
+            max_price=max_price,
+            gpu_name=gpu_name,
+        )
+
+        if not offers:
+            logger.error("No suitable GPU offers found for SwarmUI", max_price=max_price)
+            return None
+
+        offer = offers[0]
+        logger.info(
+            "Creating SwarmUI instance",
+            offer_id=offer["id"],
+            gpu=offer.get("gpu_name"),
+            price=offer.get("dph_total"),
+        )
+
+        # Create instance with SwarmUI template
+        return await self.create_swarmui_instance(
+            offer_id=offer["id"],
+            disk_space=80,
+        )
+
+    def _get_comfyui_onstart_script(self) -> str:
+        """Generate startup script for ComfyUI instances.
+
+        This script:
+        1. Downloads Wan 2.2 models from R2 (faster than CivitAI)
+        2. Installs SageAttention for faster inference
+        3. Installs any missing ComfyUI custom nodes
+        """
+        script = """#!/bin/bash
+set -e
+echo "===== i2v ComfyUI Instance Setup ====="
+
+# Create ComfyUI model directories
+mkdir -p /workspace/ComfyUI/models/unet
+mkdir -p /workspace/ComfyUI/models/text_encoders
+mkdir -p /workspace/ComfyUI/models/vae
+mkdir -p /workspace/ComfyUI/models/loras
+mkdir -p /workspace/ComfyUI/models/checkpoints
+
+echo "===== Installing SageAttention 2 ====="
+# Install SageAttention for faster attention (2-3x speedup)
+pip install triton --quiet
+pip install sageattention --quiet || {
+    echo "SageAttention pip install failed, trying from source..."
+    pip install git+https://github.com/thu-ml/SageAttention.git --quiet
+}
+python -c "import sageattention; print(f'SageAttention {sageattention.__version__} installed')" 2>/dev/null || echo "SageAttention install verification failed, continuing..."
+
+echo "===== Downloading Wan 2.2 models from R2 ====="
+
+# Download models in parallel for speed
+echo "Starting parallel model downloads..."
+
+# Download Wan 2.2 GGUF (9.6GB)
+GGUF_PATH="/workspace/ComfyUI/models/unet/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+if [ ! -f "$GGUF_PATH" ]; then
+    wget -q -O "$GGUF_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf" &
+    PID1=$!
+    echo "Downloading Wan 2.2 GGUF (9.6GB)..."
+else
+    echo "Wan 2.2 GGUF already exists"
+    PID1=""
+fi
+
+# Download NSFW GGUF (15.4GB)
+NSFW_PATH="/workspace/ComfyUI/models/unet/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+if [ ! -f "$NSFW_PATH" ]; then
+    wget -q -O "$NSFW_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf" &
+    PID2=$!
+    echo "Downloading NSFW GGUF (15.4GB)..."
+else
+    echo "NSFW GGUF already exists"
+    PID2=""
+fi
+
+# Download LightX2V LoRA (1.2GB)
+LORA_PATH="/workspace/ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+if [ ! -f "$LORA_PATH" ]; then
+    wget -q -O "$LORA_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors" &
+    PID3=$!
+    echo "Downloading LightX2V LoRA (1.2GB)..."
+else
+    echo "LightX2V LoRA already exists"
+    PID3=""
+fi
+
+# Wait for all downloads
+[ -n "$PID1" ] && wait $PID1 && echo "Wan 2.2 GGUF download complete"
+[ -n "$PID2" ] && wait $PID2 && echo "NSFW GGUF download complete"
+[ -n "$PID3" ] && wait $PID3 && echo "LightX2V LoRA download complete"
+
+echo "===== Model downloads complete! ====="
+ls -la /workspace/ComfyUI/models/unet/
+ls -la /workspace/ComfyUI/models/loras/
+
+echo "===== i2v ComfyUI setup complete! ====="
+"""
+        return script
+
+    def _get_model_download_script(self) -> str:
+        """Generate startup script to download Wan 2.2 models from R2 (SwarmUI)."""
+        script = """#!/bin/bash
+set -e
+echo "Downloading Wan 2.2 models from R2..."
+
+# Create SwarmUI model directories
+mkdir -p /workspace/SwarmUI/Models/diffusion_models
+mkdir -p /workspace/SwarmUI/Models/Lora
+
+# Download Wan 2.2 GGUF (9.6GB)
+GGUF_PATH="/workspace/SwarmUI/Models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+if [ ! -f "$GGUF_PATH" ]; then
+    echo "Downloading Wan 2.2 GGUF..."
+    wget -q --show-progress -O "$GGUF_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+else
+    echo "Wan 2.2 GGUF already exists"
+fi
+
+# Download NSFW GGUF (15.4GB)
+NSFW_PATH="/workspace/SwarmUI/Models/diffusion_models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+if [ ! -f "$NSFW_PATH" ]; then
+    echo "Downloading NSFW GGUF..."
+    wget -q --show-progress -O "$NSFW_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+else
+    echo "NSFW GGUF already exists"
+fi
+
+# Download LightX2V LoRA (1.2GB)
+LORA_PATH="/workspace/SwarmUI/Models/Lora/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+if [ ! -f "$LORA_PATH" ]; then
+    echo "Downloading LightX2V LoRA..."
+    wget -q --show-progress -O "$LORA_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+else
+    echo "LightX2V LoRA already exists"
+fi
+
+echo "Model download complete!"
+"""
+        return script
+
+    async def create_swarmui_instance(
+        self,
+        offer_id: int,
+        disk_space: int = 80,
+    ) -> VastInstance | None:
+        """
+        Create a vast.ai instance using the official SwarmUI template.
+
+        Args:
+            offer_id: The offer ID to rent
+            disk_space: Disk space in GB (80GB minimum for video models)
+
+        Returns:
+            VastInstance with swarmui_port if successful
+        """
+        if not self.api_key:
+            return None
+
+        client = await self._get_client()
+
+        # Use official SwarmUI template
+        template_hash = SWARMUI_TEMPLATE_HASH
+
+        # Enforce minimum disk space for video models
+        MIN_DISK_GB = 80
+        if disk_space < MIN_DISK_GB:
+            logger.info(f"Increasing disk space to {MIN_DISK_GB}GB for video models")
+            disk_space = MIN_DISK_GB
+
+        # Get model download script
+        onstart_script = self._get_model_download_script()
+
+        payload = {
+            "client_id": "i2v-swarmui",
+            "template_hash_id": template_hash,
+            "disk": disk_space,
+        }
+
+        # Add onstart script if we have R2 URLs configured
+        if onstart_script:
+            payload["onstart"] = onstart_script
+            logger.info("Added model download script to instance startup")
+
+        logger.info(
+            "Creating SwarmUI instance from template",
+            offer_id=offer_id,
+            template_hash=template_hash,
+            disk_space=disk_space,
+        )
+
+        try:
+            response = await client.put(
+                f"{VASTAI_API_URL}/asks/{offer_id}/",
+                headers=self._headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            instance_id = data.get("new_contract")
+            if not instance_id:
+                logger.error("Failed to create SwarmUI instance", response=data)
+                return None
+
+            logger.info("Created SwarmUI instance", instance_id=instance_id)
+
+            # Wait for instance with SwarmUI template type
+            instance = await self._wait_for_instance(
+                instance_id, template_type="swarmui"
+            )
+            self._active_instance = instance
+            return instance
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "HTTP error creating SwarmUI instance",
+                status_code=e.response.status_code,
+                response_text=e.response.text[:500] if e.response.text else None,
+            )
+            return None
+        except Exception as e:
+            logger.error("Failed to create SwarmUI instance", error=str(e))
+            return None
 
     async def shutdown_idle_instances(self, idle_minutes: int = 15) -> int:
         """Destroy instances that have been idle for too long."""
@@ -809,6 +1238,132 @@ class VastAIClient:
         #         await self.destroy_instance(instance.id)
         #         destroyed += 1
         return destroyed
+
+    async def sync_model_to_instance(
+        self,
+        instance: VastInstance,
+        r2_url: str,
+        destination_path: str,
+    ) -> bool:
+        """
+        Download a model from R2 directly to a running instance via SSH.
+
+        This allows adding models dynamically without restarting the instance.
+
+        Args:
+            instance: Running VastInstance with SSH access
+            r2_url: Public R2 URL for the model
+            destination_path: Full path on instance (e.g., /workspace/SwarmUI/Models/diffusion_models/model.safetensors)
+
+        Returns:
+            True if successful
+        """
+        if not instance.ssh_host or not instance.ssh_port:
+            logger.error("Instance missing SSH info")
+            return False
+
+        # Build wget command to run on instance
+        wget_cmd = f'wget -q -O "{destination_path}" "{r2_url}"'
+        mkdir_cmd = f'mkdir -p "$(dirname {destination_path})"'
+        full_cmd = f'{mkdir_cmd} && {wget_cmd}'
+
+        logger.info(
+            "Syncing model to instance",
+            r2_url=r2_url[:60],
+            destination=destination_path,
+            instance_id=instance.id,
+        )
+
+        # Use vast.ai execute endpoint (no SSH key needed)
+        client = await self._get_client()
+        try:
+            response = await client.put(
+                f"{VASTAI_API_URL}/instances/{instance.id}/",
+                headers=self._headers(),
+                json={"remote_cmd": full_cmd},
+                timeout=300.0,  # Long timeout for large model downloads
+            )
+            response.raise_for_status()
+            logger.info("Model sync command sent", instance_id=instance.id)
+            return True
+        except Exception as e:
+            logger.error("Failed to sync model", error=str(e))
+            return False
+
+    async def add_model_from_url(
+        self,
+        source_url: str,
+        model_name: str,
+        model_type: str = "diffusion_models",
+        instance: VastInstance | None = None,
+    ) -> str | None:
+        """
+        Download a model from any URL, upload to R2, and sync to running instance.
+
+        Args:
+            source_url: URL to download from (CivitAI, HuggingFace, etc.)
+            model_name: Filename to use (e.g., "my_model.safetensors")
+            model_type: "diffusion_models" or "Lora" (SwarmUI folder)
+            instance: Optional running instance to sync to
+
+        Returns:
+            R2 URL if successful
+        """
+        from app.services.r2_cache import get_s3_client, get_public_url, get_bucket
+
+        client = get_s3_client()
+        public_url = get_public_url()
+        bucket = get_bucket()
+
+        if not client or not public_url:
+            logger.error("R2 not configured")
+            return None
+
+        key = f"models/{model_name}"
+
+        # Check if already in R2
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+            r2_url = f"{public_url}/{key}"
+            logger.info("Model already in R2", key=key)
+        except Exception:
+            # Download and upload to R2
+            logger.info("Downloading model from source", url=source_url[:80])
+
+            http = await self._get_client()
+            try:
+                # Stream download for large files
+                async with http.stream("GET", source_url, timeout=600.0, follow_redirects=True) as response:
+                    response.raise_for_status()
+                    chunks = []
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        chunks.append(chunk)
+                    model_data = b"".join(chunks)
+
+                # Upload to R2
+                logger.info("Uploading to R2", size_mb=len(model_data) / (1024 * 1024))
+                client.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=model_data,
+                    ContentType="application/octet-stream",
+                )
+                r2_url = f"{public_url}/{key}"
+                logger.info("Model uploaded to R2", url=r2_url)
+            except Exception as e:
+                logger.error("Failed to download/upload model", error=str(e))
+                return None
+
+        # Sync to running instance if provided
+        if instance:
+            if model_type == "Lora":
+                dest_path = f"/workspace/SwarmUI/Models/Lora/{model_name}"
+            else:
+                dest_path = f"/workspace/SwarmUI/Models/diffusion_models/{model_name}"
+
+            await self.sync_model_to_instance(instance, r2_url, dest_path)
+
+        return r2_url
 
     async def close(self):
         """Close the HTTP client."""

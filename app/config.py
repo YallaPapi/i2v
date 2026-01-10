@@ -66,6 +66,24 @@ class Settings(BaseSettings):
     default_resolution: str = "1080p"
     default_duration_sec: int = 5
 
+    # SwarmUI settings
+    swarmui_url: str = "http://localhost:7801"
+    swarmui_model: str = "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+    swarmui_lora: Optional[str] = None  # e.g., "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise"
+    swarmui_lora_strength: float = 1.0
+    swarmui_default_steps: int = 4
+    swarmui_default_cfg: float = 1.0
+    swarmui_default_frames: int = 81
+    swarmui_default_fps: int = 24
+
+    # ComfyUI settings (for vast.ai GPU)
+    comfyui_url: str = "http://localhost:8188"  # Set to vast.ai Cloudflare tunnel URL
+    comfyui_token: Optional[str] = None  # Jupyter token for auth (from vast.ai)
+
+    # GPU provider settings
+    gpu_provider: str = "none"  # "none", "local", "vastai"
+    vastai_instance_id: Optional[int] = None  # Active vast.ai instance ID
+
     def ensure_download_dir(self) -> Path:
         """Ensure download directory exists and return Path."""
         path = Path(self.auto_download_dir)

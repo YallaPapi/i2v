@@ -26,6 +26,7 @@ export interface CreateVideoJobRequest {
 
 export type VideoModel =
   | 'wan' | 'wan21' | 'wan22' | 'wan-pro' | 'wan26'
+  | 'wan22-gpu'  // Self-hosted Wan 2.2 on vast.ai GPU
   | 'kling' | 'kling-master' | 'kling-standard' | 'kling26-pro'
   | 'veo2' | 'veo31-fast' | 'veo31' | 'veo31-flf' | 'veo31-fast-flf'
   | 'sora-2' | 'sora-2-pro'
@@ -208,7 +209,10 @@ export interface HealthResponse {
 }
 
 // Video model info for display - fal.ai January 2026 pricing (per-second)
-export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string }[] = [
+export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string; selfHosted?: boolean }[] = [
+  // Self-hosted GPU models (vast.ai) - pay per hour, unlimited generations
+  { value: 'wan22-gpu', label: 'Wan 2.2 (GPU)', pricing: '~$1.50/hr', selfHosted: true },
+  // Cloud models (fal.ai) - pay per generation
   { value: 'wan', label: 'Wan 2.5', pricing: '$0.05-0.15/s' },
   { value: 'wan21', label: 'Wan 2.1', pricing: '$0.20-0.40/vid' },
   { value: 'wan22', label: 'Wan 2.2', pricing: '$0.04-0.08/s' },
@@ -230,6 +234,11 @@ export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string }
   { value: 'cogvideox', label: 'CogVideoX-5B', pricing: '$0.20/vid' },
   { value: 'stable-video', label: 'Stable Video Diffusion', pricing: '$0.075/vid' },
 ]
+
+// Helper to check if model is self-hosted (vast.ai GPU)
+export const isSelfHostedModel = (model: string): boolean => {
+  return model === 'wan22-gpu'
+}
 
 export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string; nsfw?: boolean }[] = [
   { value: 'gpt-image-1.5', label: 'GPT Image 1.5', pricing: '$0.009-0.20/image' },
