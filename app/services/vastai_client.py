@@ -121,16 +121,19 @@ VASTAI_API_URL = "https://console.vast.ai/api/v0"
 #
 # SwarmUI Template (preferred for video generation)
 #   Hash: 8e5e6ab1fceb9db3f813e815907b3390
-#   Port: 7801
+#   External Port: 7865 (internal: 17865)
+#   Docs: docs/VASTAI_SWARMUI_TEMPLATE.md
 #   Includes ComfyUI backend automatically
 # =============================================================================
 
-# SwarmUI template (preferred)
-SWARMUI_TEMPLATE_HASH = os.getenv(
-    "SWARMUI_TEMPLATE_HASH",
-    "7a42a1fc4f8062a63bbcdbbc9cd65b42"  # Official Vast.ai SwarmUI template (correct hash_id)
+# SwarmUI Docker image (VERIFIED WORKING)
+# Note: Template hash doesn't work ("not accessible by user")
+# Must use direct Docker image with runtype="jupyter_direct" for port exposure
+SWARMUI_DOCKER_IMAGE = os.getenv(
+    "SWARMUI_DOCKER_IMAGE",
+    "vastai/swarmui:v0.9.4.0-Beta-cuda-12.1-pytorch-2.5.1-py311"
 )
-SWARMUI_PORT = 7801
+SWARMUI_PORT = 7865  # Internal port (mapped to dynamic external port)
 
 # ComfyUI template (legacy fallback)
 COMFYUI_TEMPLATE_HASH = os.getenv(
@@ -184,9 +187,12 @@ def get_swarmui_template_hash() -> str:
 
 
 def _extract_swarmui_port(instance_or_ports: dict) -> int:
-    """Extract the external SwarmUI port (7801) from vast.ai instance data.
+    """Extract the external SwarmUI port from vast.ai instance data.
 
-    Similar to _extract_comfyui_port but looks for port 7801.
+    Vast.ai SwarmUI template uses:
+    - Internal port: 17865
+    - External port: 7865
+    See: docs/VASTAI_SWARMUI_TEMPLATE.md
     """
     if "ports" in instance_or_ports:
         ports = instance_or_ports.get("ports") or {}
@@ -208,15 +214,21 @@ def _extract_swarmui_port(instance_or_ports: dict) -> int:
         except (ValueError, TypeError):
             return None
 
-    # Try SwarmUI port 7801
-    port = _get_host_port("7801/tcp")
+    # Try SwarmUI internal port 17865 (maps to external 7865)
+    port = _get_host_port("17865/tcp")
     if port is not None:
-        logger.debug(f"Found SwarmUI port on 7801/tcp -> external port {port}")
+        logger.debug(f"Found SwarmUI port on 17865/tcp -> external port {port}")
+        return port
+
+    # Fallback: try external port directly
+    port = _get_host_port("7865/tcp")
+    if port is not None:
+        logger.debug(f"Found SwarmUI port on 7865/tcp -> external port {port}")
         return port
 
     available_ports = list(ports.keys()) if ports else []
     raise RuntimeError(
-        f"No SwarmUI port mapping found (tried 7801/tcp). "
+        f"No SwarmUI port mapping found (tried 17865/tcp, 7865/tcp). "
         f"Available ports: {available_ports}"
     )
 
@@ -369,10 +381,11 @@ class VastInstance:
     ssh_host: str | None = None
     ssh_port: int | None = None
     api_port: int | None = None  # ComfyUI API port (external mapped port)
-    swarmui_port: int | None = None  # SwarmUI API port (7801 external mapped)
+    swarmui_port: int | None = None  # SwarmUI API port (7865 external, 17865 internal)
     public_ip: str | None = None  # Direct public IP for HTTP connections
     jupyter_token: str | None = None  # Auth token for API
     template_type: str = "comfyui"  # "comfyui" or "swarmui"
+    webpage: str | None = None  # Cloudflare tunnel URL (vast.ai default)
 
 
 class VastAIClient:
@@ -421,9 +434,10 @@ class VastAIClient:
 
         client = await self._get_client()
 
-        # Build query
+        # Build query (vast.ai uses MB for GPU RAM, convert from GB)
+        gpu_ram_min_mb = gpu_ram_min * 1024
         query = {
-            "gpu_ram": {"gte": gpu_ram_min},
+            "gpu_ram": {"gte": gpu_ram_min_mb},
             "disk_space": {"gte": disk_space_min},
             "dph_total": {"lte": max_price},
             "rentable": {"eq": True},
@@ -604,10 +618,12 @@ class VastAIClient:
 
                     ssh_host = data.get("ssh_host")
                     public_ip = data.get("public_ipaddr")
+                    webpage = data.get("webpage")  # Cloudflare tunnel URL
                     logger.info(
                         "Instance ready",
                         instance_id=instance_id,
                         public_ip=public_ip,
+                        webpage=webpage,
                         api_port=api_port,
                         swarmui_port=swarmui_port,
                         template_type=template_type,
@@ -629,6 +645,7 @@ class VastAIClient:
                         public_ip=public_ip,
                         jupyter_token=data.get("jupyter_token"),
                         template_type=template_type,
+                        webpage=webpage,
                     )
                 elif status in ("exited", "error"):
                     logger.error("Instance failed to start", status=status, msg=data.get("status_msg"))
@@ -663,15 +680,21 @@ class VastAIClient:
             if "instances" in data:
                 data = data["instances"]
 
-            # Extract ComfyUI port using shared helper (only for running instances)
+            # Extract ports for running instances
             status = data.get("actual_status", "unknown")
             api_port = None
+            swarmui_port = None
             if status == "running":
                 try:
                     api_port = _extract_comfyui_port(data)
-                except RuntimeError as e:
-                    logger.warning("Instance running but port not found",
-                                   instance_id=instance_id, error=str(e))
+                except RuntimeError:
+                    pass
+                try:
+                    swarmui_port = _extract_swarmui_port(data)
+                except RuntimeError:
+                    pass
+
+            template_type = "swarmui" if swarmui_port else "comfyui"
 
             return VastInstance(
                 id=instance_id,
@@ -685,8 +708,11 @@ class VastAIClient:
                 ssh_host=data.get("ssh_host"),
                 ssh_port=data.get("ssh_port"),
                 api_port=api_port,
+                swarmui_port=swarmui_port,
                 public_ip=data.get("public_ipaddr"),
                 jupyter_token=data.get("jupyter_token"),
+                template_type=template_type,
+                webpage=data.get("webpage"),
             )
         except Exception as e:
             logger.error("Failed to get instance", instance_id=instance_id, error=str(e))
@@ -712,11 +738,19 @@ class VastAIClient:
                 # Extract ComfyUI port for running instances
                 status = inst.get("actual_status", "unknown")
                 api_port = None
+                swarmui_port = None
                 if status == "running":
                     try:
                         api_port = _extract_comfyui_port(inst)
                     except RuntimeError:
                         pass
+                    try:
+                        swarmui_port = _extract_swarmui_port(inst)
+                    except RuntimeError:
+                        pass
+
+                # Determine template type from ports
+                template_type = "swarmui" if swarmui_port else "comfyui"
 
                 instances.append(VastInstance(
                     id=inst.get("id"),
@@ -730,8 +764,11 @@ class VastAIClient:
                     ssh_host=inst.get("ssh_host"),
                     ssh_port=inst.get("ssh_port"),
                     api_port=api_port,
+                    swarmui_port=swarmui_port,
                     public_ip=inst.get("public_ipaddr"),
                     jupyter_token=inst.get("jupyter_token"),
+                    template_type=template_type,
+                    webpage=inst.get("webpage"),
                 ))
             return instances
         except Exception as e:
@@ -975,7 +1012,7 @@ class VastAIClient:
         This is the main entry point for SwarmUI video generation on vast.ai.
         Uses the official Vast.ai SwarmUI template which includes:
         - SwarmUI with ComfyUI backend
-        - Proper port exposure (7801)
+        - Proper port exposure (7865 external, 17865 internal)
         - Pre-configured for video generation
 
         Args:
@@ -993,20 +1030,35 @@ class VastAIClient:
         ]
 
         if running_swarmui:
-            logger.info("Using existing SwarmUI instance", instance_id=running_swarmui[0].id)
-            self._active_instance = running_swarmui[0]
-            return running_swarmui[0]
+            instance = running_swarmui[0]
+            logger.info("Using existing SwarmUI instance", instance_id=instance.id)
+            self._active_instance = instance
+
+            # Auto-configure GPU URL if instance has webpage
+            if instance.webpage:
+                from app.routers.gpu_config import set_swarmui_url
+                set_swarmui_url(instance.webpage, instance.id)
+
+            return instance
 
         # Find RTX 5090 offer (fastest for video gen)
+        # Note: RTX 5090 reports ~31.8GB, so use 30GB min
+        # Note: RTX 5090 is new, many aren't verified yet
         offers = await self.search_offers(
-            gpu_ram_min=32,  # 5090 has 32GB
+            gpu_ram_min=30,  # 5090 reports ~31.8GB
             disk_space_min=80,
             max_price=max_price,
             gpu_name=gpu_name,
+            verified=False,  # RTX 5090s may not be verified yet
         )
 
         if not offers:
-            logger.error("No suitable GPU offers found for SwarmUI", max_price=max_price)
+            logger.error(
+                "No RTX 5090 offers found",
+                max_price=max_price,
+                gpu_name=gpu_name,
+                hint="RTX 5090 may not be available at this price. Try increasing max_price.",
+            )
             return None
 
         offer = offers[0]
@@ -1191,9 +1243,6 @@ echo "===== i2v SwarmUI setup complete! ====="
 
         client = await self._get_client()
 
-        # Use official SwarmUI template
-        template_hash = SWARMUI_TEMPLATE_HASH
-
         # Enforce minimum disk space for video models
         MIN_DISK_GB = 80
         if disk_space < MIN_DISK_GB:
@@ -1203,21 +1252,21 @@ echo "===== i2v SwarmUI setup complete! ====="
         # Get model download script
         onstart_script = self._get_model_download_script()
 
+        # Use SwarmUI Docker image directly (template_hash doesn't work)
+        # VERIFIED WORKING: vastai/swarmui:v0.9.4.0-Beta-cuda-12.1-pytorch-2.5.1-py311
+        # Must use jupyter_direct runtype for port exposure
         payload = {
             "client_id": "i2v-swarmui",
-            "template_hash_id": template_hash,
+            "image": SWARMUI_DOCKER_IMAGE,
             "disk": disk_space,
+            "runtype": "jupyter_direct",  # Exposes ports 7865 and 8080
+            "onstart": onstart_script,
         }
 
-        # Add onstart script if we have R2 URLs configured
-        if onstart_script:
-            payload["onstart"] = onstart_script
-            logger.info("Added model download script to instance startup")
-
         logger.info(
-            "Creating SwarmUI instance from template",
+            "Creating SwarmUI instance",
             offer_id=offer_id,
-            template_hash=template_hash,
+            image=SWARMUI_DOCKER_IMAGE,
             disk_space=disk_space,
         )
 
@@ -1242,6 +1291,17 @@ echo "===== i2v SwarmUI setup complete! ====="
                 instance_id, template_type="swarmui"
             )
             self._active_instance = instance
+
+            # Auto-configure GPU URL if instance has webpage (Cloudflare tunnel)
+            if instance and instance.webpage:
+                from app.routers.gpu_config import set_swarmui_url
+                set_swarmui_url(instance.webpage, instance.id)
+                logger.info(
+                    "Auto-configured SwarmUI URL",
+                    url=instance.webpage,
+                    instance_id=instance.id,
+                )
+
             return instance
 
         except httpx.HTTPStatusError as e:

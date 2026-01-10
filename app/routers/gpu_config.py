@@ -75,6 +75,15 @@ def get_gpu_provider() -> str:
     return _runtime_config.get("gpu_provider", settings.gpu_provider)
 
 
+def set_swarmui_url(url: str, instance_id: int | None = None) -> None:
+    """Set the SwarmUI URL (called automatically after vast.ai instance is ready)."""
+    _runtime_config["swarmui_url"] = url
+    _runtime_config["gpu_provider"] = "vastai"
+    if instance_id:
+        _runtime_config["vastai_instance_id"] = instance_id
+    logger.info("SwarmUI URL auto-configured", url=url, instance_id=instance_id)
+
+
 @router.get("/config", response_model=GPUConfigResponse)
 async def get_gpu_config() -> GPUConfigResponse:
     """Get current GPU configuration and check availability."""

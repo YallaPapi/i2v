@@ -22,9 +22,10 @@ class InstanceResponse(BaseModel):
     price_per_hour: float
     ssh_host: str | None = None
     api_port: int | None = None  # ComfyUI port
-    swarmui_port: int | None = None  # SwarmUI port (7801)
+    swarmui_port: int | None = None  # SwarmUI port (7865 external)
     public_ip: str | None = None  # Direct public IP for HTTP connections
     template_type: str = "comfyui"  # "comfyui" or "swarmui"
+    webpage: str | None = None  # Cloudflare tunnel URL (auto-configured)
 
 
 class OfferResponse(BaseModel):
@@ -88,6 +89,7 @@ def _instance_to_response(instance: VastInstance) -> InstanceResponse:
         swarmui_port=instance.swarmui_port,
         public_ip=instance.public_ip,
         template_type=instance.template_type,
+        webpage=instance.webpage,
     )
 
 
@@ -755,10 +757,12 @@ async def create_swarmui_instance(
 
     Uses the official vast.ai SwarmUI template which includes:
     - SwarmUI with ComfyUI backend
-    - Port 7801 exposed for API access
+    - Port 7865 exposed (internal 17865)
     - Pre-configured for video generation
+    - Cloudflare tunnel URL returned in webpage field
 
     Default: RTX 5090 for fast video generation.
+    Template: 8e5e6ab1fceb9db3f813e815907b3390
     """
     client = get_vastai_client()
 
@@ -770,7 +774,7 @@ async def create_swarmui_instance(
     if not instance:
         raise HTTPException(
             status_code=503,
-            detail="No suitable GPU available. Try increasing max_price.",
+            detail="No RTX 5090 available. Try increasing max_price or check vast.ai directly.",
         )
 
     return _instance_to_response(instance)
