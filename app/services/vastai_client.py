@@ -1106,40 +1106,68 @@ echo "===== i2v ComfyUI setup complete! ====="
         """Generate startup script to download Wan 2.2 models from R2 (SwarmUI)."""
         script = """#!/bin/bash
 set -e
-echo "Downloading Wan 2.2 models from R2..."
+echo "===== i2v SwarmUI Instance Setup ====="
 
 # Create SwarmUI model directories
 mkdir -p /workspace/SwarmUI/Models/diffusion_models
 mkdir -p /workspace/SwarmUI/Models/Lora
 
-# Download Wan 2.2 GGUF (9.6GB)
+echo "===== Installing SageAttention 2 ====="
+pip install triton --quiet
+pip install sageattention --quiet || {
+    echo "SageAttention pip install failed, trying from source..."
+    pip install git+https://github.com/thu-ml/SageAttention.git --quiet
+}
+python -c "import sageattention; print('SageAttention installed')" 2>/dev/null || echo "SageAttention check failed, continuing..."
+
+echo "===== Installing xformers ====="
+pip install xformers --quiet || echo "xformers install failed, continuing..."
+
+echo "===== Downloading Wan 2.2 models from R2 (parallel) ====="
+
+# Download models in parallel for speed
 GGUF_PATH="/workspace/SwarmUI/Models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+NSFW_PATH="/workspace/SwarmUI/Models/diffusion_models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+LORA_PATH="/workspace/SwarmUI/Models/Lora/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+
+# Start parallel downloads
 if [ ! -f "$GGUF_PATH" ]; then
-    echo "Downloading Wan 2.2 GGUF..."
-    wget -q --show-progress -O "$GGUF_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+    wget -q -O "$GGUF_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf" &
+    PID1=$!
+    echo "Downloading Wan 2.2 GGUF (9.6GB)..."
 else
     echo "Wan 2.2 GGUF already exists"
+    PID1=""
 fi
 
-# Download NSFW GGUF (15.4GB)
-NSFW_PATH="/workspace/SwarmUI/Models/diffusion_models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
 if [ ! -f "$NSFW_PATH" ]; then
-    echo "Downloading NSFW GGUF..."
-    wget -q --show-progress -O "$NSFW_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+    wget -q -O "$NSFW_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf" &
+    PID2=$!
+    echo "Downloading NSFW GGUF (15.4GB)..."
 else
     echo "NSFW GGUF already exists"
+    PID2=""
 fi
 
-# Download LightX2V LoRA (1.2GB)
-LORA_PATH="/workspace/SwarmUI/Models/Lora/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
 if [ ! -f "$LORA_PATH" ]; then
-    echo "Downloading LightX2V LoRA..."
-    wget -q --show-progress -O "$LORA_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+    wget -q -O "$LORA_PATH" "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors" &
+    PID3=$!
+    echo "Downloading LightX2V LoRA (1.2GB)..."
 else
     echo "LightX2V LoRA already exists"
+    PID3=""
 fi
 
-echo "Model download complete!"
+# Wait for all downloads
+[ -n "$PID1" ] && wait $PID1 && echo "Wan 2.2 GGUF complete"
+[ -n "$PID2" ] && wait $PID2 && echo "NSFW GGUF complete"
+[ -n "$PID3" ] && wait $PID3 && echo "LightX2V LoRA complete"
+
+echo "===== Model downloads complete! ====="
+ls -la /workspace/SwarmUI/Models/diffusion_models/
+ls -la /workspace/SwarmUI/Models/Lora/
+
+echo "===== i2v SwarmUI setup complete! ====="
 """
         return script
 
