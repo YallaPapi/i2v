@@ -823,19 +823,15 @@ async def check_swarmui_health(instance_id: int) -> dict:
 @router.post("/swarmui/generate-video")
 async def generate_video_swarmui(request: SwarmUIGenerateRequest) -> dict:
     """
-    Generate a video from an image using SwarmUI on vast.ai.
+    Generate video from image using SwarmUI on vast.ai - FULLY AUTOMATIC.
 
-    This is the PREFERRED method for video generation. It:
-    1. Uses runtime-configured SwarmUI URL if available (from /api/gpu/config)
-    2. Otherwise gets or creates a SwarmUI GPU instance
-    3. Uses SwarmUI's REST API for generation
-    4. Caches result to R2 and returns URL
-
-    SwarmUI handles model loading and workflow internally,
-    making it more reliable than raw ComfyUI.
-
-    NOTE: vast.ai portal templates require manually setting the SwarmUI URL
-    via /api/gpu/config after getting the tunnel URL from the vast.ai console.
+    Just like fal.ai - no manual configuration needed:
+    1. Checks for existing SwarmUI URL in config
+    2. If not available, provisions RTX 5090 GPU
+    3. Waits for SwarmUI to be healthy (polls every 15s)
+    4. Auto-configures the URL
+    5. Generates video via SwarmUI API
+    6. Caches to R2 and returns URL
     """
     from app.services.r2_cache import cache_video
     from app.routers.gpu_config import get_swarmui_url, get_gpu_provider
@@ -865,13 +861,18 @@ async def generate_video_swarmui(request: SwarmUIGenerateRequest) -> dict:
                 detail="No GPU available. Configure SwarmUI URL via /api/gpu/config or try again later.",
             )
 
-        if not instance.swarmui_port or not instance.public_ip:
+        # URL should be auto-configured now, get it from runtime config
+        config_url = get_swarmui_url()
+        if config_url:
+            swarmui_url = config_url
+        elif instance.public_ip and instance.swarmui_port:
+            swarmui_url = f"http://{instance.public_ip}:{instance.swarmui_port}"
+        else:
             raise HTTPException(
                 status_code=503,
-                detail="SwarmUI instance not ready. Set tunnel URL via /api/gpu/config after getting it from vast.ai console.",
+                detail="SwarmUI instance created but URL not available. Instance may still be starting.",
             )
 
-        swarmui_url = build_swarmui_url(instance)
         gpu_name = instance.gpu_name
 
     # Connect to SwarmUI

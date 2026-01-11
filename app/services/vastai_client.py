@@ -1227,16 +1227,25 @@ echo "===== i2v SwarmUI setup complete! ====="
         self,
         offer_id: int,
         disk_space: int = 80,
+        wait_for_healthy: bool = True,
     ) -> VastInstance | None:
         """
-        Create a vast.ai instance using the official SwarmUI template.
+        Create a vast.ai instance with SwarmUI ready for video generation.
+
+        Fully automatic flow:
+        1. Create instance with SwarmUI Docker image
+        2. Wait for instance to be "running"
+        3. Extract SwarmUI URL from public_ip:port
+        4. Auto-configure GPU URL in runtime config
+        5. Wait for SwarmUI to be healthy (accessible)
 
         Args:
             offer_id: The offer ID to rent
             disk_space: Disk space in GB (80GB minimum for video models)
+            wait_for_healthy: Wait for SwarmUI to be accessible (default True)
 
         Returns:
-            VastInstance with swarmui_port if successful
+            VastInstance with swarmui_port if successful, ready for generation
         """
         if not self.api_key:
             return None
@@ -1290,17 +1299,31 @@ echo "===== i2v SwarmUI setup complete! ====="
             instance = await self._wait_for_instance(
                 instance_id, template_type="swarmui"
             )
+
+            if not instance:
+                return None
+
             self._active_instance = instance
 
-            # Auto-configure GPU URL if instance has webpage (Cloudflare tunnel)
-            if instance and instance.webpage:
+            # Auto-configure GPU URL from public_ip:port or webpage
+            swarmui_url = None
+            if instance.public_ip and instance.swarmui_port:
+                swarmui_url = f"http://{instance.public_ip}:{instance.swarmui_port}"
+            elif instance.webpage:
+                swarmui_url = instance.webpage
+
+            if swarmui_url:
                 from app.routers.gpu_config import set_swarmui_url
-                set_swarmui_url(instance.webpage, instance.id)
+                set_swarmui_url(swarmui_url, instance.id)
                 logger.info(
                     "Auto-configured SwarmUI URL",
-                    url=instance.webpage,
+                    url=swarmui_url,
                     instance_id=instance.id,
                 )
+
+            # Wait for SwarmUI to be healthy (accessible)
+            if wait_for_healthy and swarmui_url:
+                instance = await self._wait_for_swarmui_healthy(instance, swarmui_url)
 
             return instance
 
@@ -1314,6 +1337,88 @@ echo "===== i2v SwarmUI setup complete! ====="
         except Exception as e:
             logger.error("Failed to create SwarmUI instance", error=str(e))
             return None
+
+    async def _wait_for_swarmui_healthy(
+        self,
+        instance: VastInstance,
+        swarmui_url: str,
+        timeout: int = 600,  # 10 minutes max for SwarmUI startup + model downloads
+        poll_interval: int = 15,
+    ) -> VastInstance:
+        """
+        Wait for SwarmUI to be accessible via HTTP.
+
+        Polls every 15 seconds, logs status every minute.
+        SwarmUI may take several minutes to start (model downloads, etc.)
+
+        Args:
+            instance: VastInstance that is already "running"
+            swarmui_url: URL to health check
+            timeout: Max seconds to wait (default 10 minutes)
+            poll_interval: Seconds between health checks (default 15)
+
+        Returns:
+            Same instance (for chaining)
+        """
+        from app.services.swarmui_client import SwarmUIClient
+
+        logger.info(
+            "Waiting for SwarmUI to be healthy",
+            url=swarmui_url,
+            instance_id=instance.id,
+            timeout=timeout,
+        )
+
+        start = asyncio.get_event_loop().time()
+        last_log = 0
+        attempts = 0
+
+        while asyncio.get_event_loop().time() - start < timeout:
+            elapsed = asyncio.get_event_loop().time() - start
+            attempts += 1
+
+            # Log status every minute
+            if elapsed - last_log >= 60:
+                logger.info(
+                    "SwarmUI health check in progress",
+                    instance_id=instance.id,
+                    elapsed_seconds=int(elapsed),
+                    attempts=attempts,
+                )
+                last_log = elapsed
+
+            # Try health check
+            try:
+                swarmui_client = SwarmUIClient(base_url=swarmui_url, timeout=10.0)
+                healthy = await swarmui_client.health_check()
+                await swarmui_client.close()
+
+                if healthy:
+                    logger.info(
+                        "SwarmUI is healthy and ready",
+                        url=swarmui_url,
+                        instance_id=instance.id,
+                        startup_seconds=int(elapsed),
+                    )
+                    return instance
+
+            except Exception as e:
+                logger.debug(
+                    "SwarmUI not yet accessible",
+                    error=str(e)[:100],
+                    attempt=attempts,
+                )
+
+            await asyncio.sleep(poll_interval)
+
+        # Timeout - log warning but return instance anyway (user can retry)
+        logger.warning(
+            "SwarmUI health check timeout - instance may still be starting",
+            instance_id=instance.id,
+            timeout=timeout,
+            url=swarmui_url,
+        )
+        return instance
 
     async def shutdown_idle_instances(self, idle_minutes: int = 15) -> int:
         """Destroy instances that have been idle for too long."""
