@@ -1,0 +1,85 @@
+# Dockerfile for SwarmUI on Vast.ai
+# Uses CUDA 12.8 for RTX 5090/Blackwell compatibility
+#
+# Build: docker build -t swarmui-i2v -f Dockerfile.swarmui .
+# Run:   docker run --gpus all -p 7801:7801 swarmui-i2v
+
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+# Environment
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV SWARMUI_DIR=/workspace/SwarmUI
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    curl \
+    unzip \
+    python3 \
+    python3-pip \
+    python3-venv \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install .NET 8 SDK (SwarmUI is .NET based)
+RUN wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh \
+    && chmod +x dotnet-install.sh \
+    && ./dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet \
+    && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
+    && rm dotnet-install.sh
+
+# Clone SwarmUI from CORRECT repo
+WORKDIR /workspace
+RUN git clone https://github.com/mcmonkeyprojects/SwarmUI.git
+
+WORKDIR $SWARMUI_DIR
+
+# Make launch script executable
+RUN chmod +x launch-linux.sh
+
+# Create model directories (SwarmUI creates ComfyUI internally)
+RUN mkdir -p Models/diffusion_models \
+    && mkdir -p Models/Lora \
+    && mkdir -p Models/vae \
+    && mkdir -p Models/clip
+
+# Download Wan 2.2 models from R2 (cached copies for speed)
+# Model 1: Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf (9.6GB)
+RUN wget -q --show-progress -O Models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf \
+    "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+
+# Model 2: NSFW Camera Prompt variant (15.4GB)
+RUN wget -q --show-progress -O Models/diffusion_models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf \
+    "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan22EnhancedNSFWCameraPrompt_nsfwFASTMOVEV2Q8H.gguf"
+
+# LoRA: LightX2V 4-step acceleration
+RUN wget -q --show-progress -O Models/Lora/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors \
+    "https://pub-10a867f870e7439f8178cad5f323ef29.r2.dev/models/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+
+# Create startup script that installs ComfyUI-GGUF node on first run
+RUN echo '#!/bin/bash\n\
+# Install ComfyUI-GGUF if not present\n\
+if [ ! -d "dlbackend/comfy/ComfyUI/custom_nodes/ComfyUI-GGUF" ]; then\n\
+    echo "Installing ComfyUI-GGUF node..."\n\
+    mkdir -p dlbackend/comfy/ComfyUI/custom_nodes\n\
+    cd dlbackend/comfy/ComfyUI/custom_nodes\n\
+    git clone https://github.com/city96/ComfyUI-GGUF.git\n\
+    cd $SWARMUI_DIR\n\
+fi\n\
+\n\
+# Launch SwarmUI\n\
+./launch-linux.sh --host 0.0.0.0 --port 7801\n\
+' > /workspace/start.sh && chmod +x /workspace/start.sh
+
+# Expose SwarmUI port
+EXPOSE 7801
+
+# Run SwarmUI
+CMD ["/workspace/start.sh"]
