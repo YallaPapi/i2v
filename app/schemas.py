@@ -6,6 +6,7 @@ import json
 
 # Model-specific resolution support
 MODEL_RESOLUTIONS = {
+    # fal.ai models
     "wan": ["480p", "720p", "1080p"],
     "wan21": ["480p", "720p"],
     "wan22": ["480p", "580p", "720p"],
@@ -26,7 +27,33 @@ MODEL_RESOLUTIONS = {
     "luma-ray2": ["540p", "720p", "1080p"],
     "cogvideox": ["480p", "720p"],  # CogVideoX-5B
     "stable-video": ["576p"],  # SVD fixed resolution
+    # Vast.ai self-hosted models
+    "vastai-wan22-i2v": ["480p", "720p"],  # Wan 2.2 I2V 14B
+    "vastai-wan22-t2v": ["480p", "720p"],
+    "vastai-cogvideox": ["480p", "720p"],
+    "vastai-svd": ["576p"],
 }
+
+
+# ============================================================
+# VAST.AI CONFIGURATION
+# ============================================================
+
+class VastaiVideoConfig(BaseModel):
+    """Config for Vast.ai video generation."""
+
+    lora: Optional[str] = None  # LoRA model name
+    lora_strength: float = 1.0  # 0.0-1.0
+    steps: int = 4  # Inference steps (4 with LoRA, 20+ without)
+    cfg_scale: float = 1.0  # CFG scale 1.0-20.0
+    frames: int = 33  # Number of frames (17-81)
+    fps: int = 16  # Output FPS
+    seed: Optional[int] = None  # Random seed
+
+
+def is_vastai_model(model: str) -> bool:
+    """Check if model runs on Vast.ai."""
+    return model.startswith("vastai-")
 
 
 class JobCreate(BaseModel):
@@ -38,6 +65,7 @@ class JobCreate(BaseModel):
     resolution: Literal["480p", "576p", "580p", "720p", "1080p"] = "1080p"
     duration_sec: Literal[5, 10, 15] = 5  # 15s supported by Wan 2.6
     model: Literal[
+        # fal.ai models
         "wan",
         "wan21",
         "wan22",
@@ -58,7 +86,14 @@ class JobCreate(BaseModel):
         "luma-ray2",
         "cogvideox",
         "stable-video",
+        # Vast.ai self-hosted models
+        "vastai-wan22-i2v",
+        "vastai-wan22-t2v",
+        "vastai-cogvideox",
+        "vastai-svd",
     ] = "wan"
+    # Vast.ai config (only used when model starts with 'vastai-')
+    vastai_config: Optional[VastaiVideoConfig] = None
 
     @field_validator("resolution")
     @classmethod
@@ -71,6 +106,10 @@ class JobCreate(BaseModel):
                 f"Resolution '{v}' not supported for model '{model}'. Valid options: {valid_resolutions}"
             )
         return v
+
+    def get_provider(self) -> Literal["fal", "vastai"]:
+        """Get provider based on model selection."""
+        return "vastai" if is_vastai_model(self.model) else "fal"
 
 
 class JobResponse(BaseModel):
@@ -85,6 +124,7 @@ class JobResponse(BaseModel):
     resolution: str
     duration_sec: int
     model: str
+    provider: str = "fal"  # Video generation provider
     wan_request_id: Optional[str] = None
     wan_status: str
     wan_video_url: Optional[str] = None
@@ -99,7 +139,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# Image model type - includes all FLUX.1, FLUX.2, Kontext, Ideogram, and NSFW variants
+# Image model type - includes all FLUX.1, FLUX.2, Kontext, and Ideogram variants
 ImageModelType = Literal[
     "gpt-image-1.5",
     "kling-image",
@@ -116,10 +156,6 @@ ImageModelType = Literal[
     "flux-kontext-pro",
     # Ideogram (text-in-image)
     "ideogram-2",
-    # NSFW models (vast.ai + ComfyUI)
-    "pony-v6",
-    "pony-realistic",
-    "sdxl-base",
 ]
 
 

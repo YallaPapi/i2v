@@ -1,365 +1,95 @@
-"""Generation service for pipeline execution - wraps fal_client and image_client."""
-
+"""
+Service to dispatch generation jobs to the correct provider (Fal, Vast.ai, etc.).
+Provider is determined automatically based on model selection.
+"""
 import asyncio
-from typing import List, Optional
 import structlog
 
-from app.fal_client import submit_job, get_job_result, MODELS as VIDEO_MODELS
-from app.image_client import submit_image_job, get_image_result, IMAGE_MODELS
-from app.services.nsfw_image_executor import generate_nsfw_image, NSFW_MODELS
+from app.models import BatchJobItem
+from app.services.vastai_orchestrator import get_vastai_orchestrator
+from app.services import fal_client
+from app.schemas import is_vastai_model
 
 logger = structlog.get_logger()
 
-# NSFW model names for routing
-NSFW_MODEL_NAMES = set(NSFW_MODELS.keys())  # {'pony-v6', 'pony-realistic', 'sdxl-base'}
-
-
-def is_nsfw_model(model: str) -> bool:
-    """Check if a model is an NSFW model that requires vast.ai."""
-    return model in NSFW_MODEL_NAMES
-
-# Poll interval and timeout for job completion
-POLL_INTERVAL_SECONDS = 3
-MAX_POLL_TIME_SECONDS = 600  # 10 minutes max per job
-
-
-async def wait_for_video_completion(model: str, request_id: str) -> dict:
-    """Poll for video job completion."""
-    elapsed = 0
-    while elapsed < MAX_POLL_TIME_SECONDS:
-        result = await get_job_result(model, request_id)
-
-        if result["status"] == "completed":
-            return result
-        elif result["status"] == "failed":
-            raise Exception(result.get("error_message", "Video generation failed"))
-
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
-        elapsed += POLL_INTERVAL_SECONDS
-
-    raise Exception(f"Video generation timed out after {MAX_POLL_TIME_SECONDS}s")
-
-
-async def wait_for_image_completion(model: str, request_id: str) -> dict:
-    """Poll for image job completion."""
-    elapsed = 0
-    while elapsed < MAX_POLL_TIME_SECONDS:
-        result = await get_image_result(model, request_id)
-
-        if result["status"] == "completed":
-            return result
-        elif result["status"] == "failed":
-            raise Exception(result.get("error_message", "Image generation failed"))
-
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
-        elapsed += POLL_INTERVAL_SECONDS
-
-    raise Exception(f"Image generation timed out after {MAX_POLL_TIME_SECONDS}s")
-
-
-async def generate_video(
-    image_url: str,
-    prompt: str,
-    model: str = "kling",
-    resolution: str = "1080p",
-    duration_sec: int = 5,
-    negative_prompt: Optional[str] = None,
-    enable_audio: bool = False,
-) -> str:
+async def _run_fal_job_and_wait(item: BatchJobItem, config: dict) -> str:
     """
-    Generate a single video from an image.
-
-    Returns the video URL.
+    Runs a job on Fal.ai and polls until completion.
+    Returns the final video URL.
     """
-    logger.info(
-        "Generating video",
-        model=model,
-        image_url=image_url[:50],
-        enable_audio=enable_audio,
-    )
+    logger.info("Dispatching job to Fal.ai", item_id=item.id, config=config)
 
-    # Validate model
-    if model not in VIDEO_MODELS:
-        raise ValueError(
-            f"Unknown video model: {model}. Available: {list(VIDEO_MODELS.keys())}"
-        )
+    # Extract parameters for fal_client
+    # This part needs to be robust to handle different expected keys
+    # For now, we assume a simple mapping.
+    # TODO: Create a more robust mapping from generic config to provider-specific params.
+    model = config.get("model", "kling")
+    # A default image_url is needed if not in the item
+    # This might come from a parent job or a template in a real scenario
+    image_url = item.get_variation_params().get("image_url", "https://example.com/placeholder.jpg")
+    motion_prompt = item.prompt or "A gentle breeze"
+    
+    # These might not always be present, provide defaults
+    resolution = config.get("resolution", "1080p")
+    duration_sec = config.get("duration_sec", 5)
+    negative_prompt = config.get("negative_prompt")
+    enable_audio = config.get("enable_audio", False)
 
-    # Submit job
-    request_id = await submit_job(
-        model=model,
-        image_url=image_url,
-        motion_prompt=prompt,
-        resolution=resolution,
-        duration_sec=duration_sec,
-        negative_prompt=negative_prompt,
-        enable_audio=enable_audio,
-    )
-
-    # Wait for completion
-    result = await wait_for_video_completion(model, request_id)
-
-    if not result.get("video_url"):
-        raise Exception("No video URL in completed result")
-
-    logger.info("Video generated", model=model, url=result["video_url"][:50])
-    return result["video_url"]
-
-
-async def generate_image(
-    image_url: str,
-    prompt: str,
-    model: str = "gpt-image-1.5",
-    aspect_ratio: str = "9:16",
-    quality: str = "high",
-    num_images: int = 1,
-    negative_prompt: Optional[str] = None,
-    # FLUX.1 parameters (flux-general only)
-    flux_strength: Optional[float] = None,
-    flux_scheduler: Optional[str] = None,
-    # FLUX.2 & Kontext parameters (only used if model supports them)
-    flux_guidance_scale: Optional[float] = None,  # dev/flex/kontext only
-    flux_num_inference_steps: Optional[int] = None,  # dev/flex/kontext only
-    flux_seed: Optional[int] = None,
-    flux_image_urls: Optional[List[str]] = None,  # Multi-ref for dev/pro/flex/max
-    flux_output_format: str = "png",
-    flux_enable_safety_checker: bool = False,
-    flux_enable_prompt_expansion: Optional[bool] = None,  # dev/flex only
-    flux_safety_tolerance: Optional[str] = None,  # pro/flex/max: "1"-"5"
-    flux_acceleration: Optional[str] = None,  # dev only: "none"/"regular"/"high"
-    # NSFW model parameters (pony-v6, pony-realistic, sdxl-base)
-    nsfw_denoise: float = 0.65,
-    nsfw_steps: int = 25,
-    nsfw_cfg: float = 7.0,
-    nsfw_seed: int = -1,
-) -> List[str]:
-    """
-    Generate image(s) from a source image.
-
-    Supports all image models including:
-    - FLUX.2 variants (fal.ai)
-    - NSFW models: pony-v6, pony-realistic, sdxl-base (vast.ai + ComfyUI)
-
-    Returns list of image URLs.
-    """
-    # Route NSFW models to vast.ai executor
-    if is_nsfw_model(model):
-        logger.info("Routing to NSFW executor",
-                    model=model,
-                    image_url=image_url[:50] if image_url else "NO IMAGE",
-                    prompt=prompt[:80] if prompt else "NO PROMPT")
-
-        # Generate images (NSFW executor generates one at a time)
-        results = []
-        for _ in range(num_images):
-            result = await generate_nsfw_image(
-                source_image_url=image_url,
-                prompt=prompt,
-                model=model,
-                negative_prompt=negative_prompt,
-                denoise=nsfw_denoise,
-                steps=nsfw_steps,
-                cfg=nsfw_cfg,
-                seed=nsfw_seed,
-            )
-
-            if result["status"] == "completed" and result.get("result_url"):
-                results.append(result["result_url"])
-            else:
-                raise Exception(result.get("error_message", "NSFW generation failed"))
-
-        logger.info("NSFW images generated", model=model, count=len(results))
-        return results
-
-    # Standard SFW models via fal.ai
-    # Check if FLUX.2 model for enhanced logging
-    is_flux2 = model.startswith("flux-2") or model.startswith("flux-kontext")
-
-    logger.info("Generating image",
-                model=model,
-                is_flux2=is_flux2,
-                image_url=image_url[:50] if image_url else "NO IMAGE",
-                prompt=prompt[:80] if prompt else "NO PROMPT",
-                flux_guidance=flux_guidance_scale,
-                flux_steps=flux_num_inference_steps,
-                multi_ref=len(flux_image_urls) if flux_image_urls else 0,
-                safety_tolerance=flux_safety_tolerance,
-                acceleration=flux_acceleration)
-
-    # Validate model
-    if model not in IMAGE_MODELS:
-        raise ValueError(
-            f"Unknown image model: {model}. Available: {list(IMAGE_MODELS.keys())}"
-        )
-
-    # Submit job with all parameters - payload builder handles per-model support
-    request_id = await submit_image_job(
-        model=model,
-        image_url=image_url,
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        num_images=num_images,
-        aspect_ratio=aspect_ratio,
-        quality=quality,
-        # FLUX.1 params
-        flux_strength=flux_strength,
-        flux_scheduler=flux_scheduler,
-        # FLUX.2 & Kontext params (payload builder filters per model)
-        flux_guidance_scale=flux_guidance_scale,
-        flux_num_inference_steps=flux_num_inference_steps,
-        flux_seed=flux_seed,
-        flux_image_urls=flux_image_urls,
-        flux_output_format=flux_output_format,
-        flux_enable_safety_checker=flux_enable_safety_checker,
-        flux_enable_prompt_expansion=flux_enable_prompt_expansion,
-        flux_safety_tolerance=flux_safety_tolerance,
-        flux_acceleration=flux_acceleration,
-    )
-
-    # Wait for completion
-    result = await wait_for_image_completion(model, request_id)
-
-    if not result.get("image_urls"):
-        raise Exception("No image URLs in completed result")
-
-    logger.info("Images generated",
-                model=model,
-                count=len(result["image_urls"]),
-                is_flux2=is_flux2)
-    return result["image_urls"]
-
-
-async def generate_images_batch(
-    image_url: str,
-    prompts: List[str],
-    model: str = "gpt-image-1.5",
-    aspect_ratio: str = "9:16",
-    quality: str = "high",
-) -> List[dict]:
-    """
-    Generate images for multiple prompts from a single source image.
-
-    Returns list of {url, prompt, type} dicts.
-    """
-    results = []
-
-    for prompt in prompts:
-        try:
-            urls = await generate_image(
-                image_url=image_url,
-                prompt=prompt,
-                model=model,
-                aspect_ratio=aspect_ratio,
-                quality=quality,
-                num_images=1,
-            )
-            for url in urls:
-                results.append(
-                    {
-                        "url": url,
-                        "prompt": prompt,
-                        "type": "image",
-                    }
-                )
-        except Exception as e:
-            logger.error("Image generation failed", prompt=prompt[:50], error=str(e))
-            # Continue with other prompts
-
-    return results
-
-
-async def generate_videos_batch(
-    image_urls: List[str],
-    prompts: List[str],
-    model: str = "kling",
-    resolution: str = "1080p",
-    duration_sec: int = 5,
-) -> List[dict]:
-    """
-    Generate videos for image/prompt combinations.
-
-    Returns list of {url, source_image, prompt, type} dicts.
-    """
-    results = []
-
-    # Generate for each image/prompt combination
-    for image_url in image_urls:
-        for prompt in prompts:
-            try:
-                video_url = await generate_video(
-                    image_url=image_url,
-                    prompt=prompt,
-                    model=model,
-                    resolution=resolution,
-                    duration_sec=duration_sec,
-                )
-                results.append(
-                    {
-                        "url": video_url,
-                        "source_image": image_url,
-                        "prompt": prompt,
-                        "type": "video",
-                    }
-                )
-            except Exception as e:
-                logger.error(
-                    "Video generation failed",
-                    image=image_url[:50],
-                    prompt=prompt[:50],
-                    error=str(e),
-                )
-                # Continue with other combinations
-
-    return results
-
-
-# Pipeline-compatible wrapper functions
-async def pipeline_generate_images(
-    image_urls: List[str],
-    prompts: List[str],
-    model: str = "gpt-image-1.5",
-    aspect_ratio: str = "9:16",
-    quality: str = "high",
-    images_per_prompt: int = 1,
-) -> dict:
-    """
-    Generate images for pipeline step.
-
-    Returns dict with 'items' list containing all generated images.
-    """
-    items = []
-
-    for image_url in image_urls:
-        batch_results = await generate_images_batch(
-            image_url=image_url,
-            prompts=prompts,
+    try:
+        request_id = await fal_client.submit_job(
             model=model,
-            aspect_ratio=aspect_ratio,
-            quality=quality,
+            image_url=image_url,
+            motion_prompt=motion_prompt,
+            resolution=resolution,
+            duration_sec=duration_sec,
+            negative_prompt=negative_prompt,
+            enable_audio=enable_audio,
         )
-        items.extend(batch_results)
 
-    return {"items": items}
+        # Poll for completion
+        for _ in range(120):  # Max wait time of 10 minutes (120 * 5s)
+            await asyncio.sleep(5)
+            result = await fal_client.get_job_result(model=model, request_id=request_id)
+            
+            if result["status"] == "completed":
+                if result.get("video_url"):
+                    logger.info("Fal.ai job completed", item_id=item.id, video_url=result["video_url"])
+                    return result["video_url"]
+                else:
+                    raise Exception("Fal.ai job completed but no video URL was returned.")
+            
+            elif result["status"] == "failed":
+                error_message = result.get("error_message", "Unknown error from Fal.ai")
+                raise Exception(f"Fal.ai job failed: {error_message}")
+        
+        raise TimeoutError("Fal.ai job timed out after 10 minutes.")
+
+    except Exception as e:
+        logger.error("Fal.ai job processing failed", item_id=item.id, error=str(e))
+        raise
 
 
-async def pipeline_generate_videos(
-    image_urls: List[str],
-    prompts: List[str],
-    model: str = "kling",
-    resolution: str = "1080p",
-    duration_sec: int = 5,
-    videos_per_image: int = 1,
-) -> dict:
+async def dispatch_generation(item: BatchJobItem, config: dict) -> str:
     """
-    Generate videos for pipeline step.
-
-    Returns dict with 'items' list containing all generated videos.
+    The main generation_fn for the BatchQueue.
+    Provider is determined automatically based on the model name.
+    Models starting with 'vastai-' go to Vast.ai, others go to fal.ai.
     """
-    items = await generate_videos_batch(
-        image_urls=image_urls,
-        prompts=prompts,
-        model=model,
-        resolution=resolution,
-        duration_sec=duration_sec,
-    )
+    model = config.get("model", "kling")
 
-    return {"items": items}
+    # Determine provider based on model (not from config)
+    provider = "vastai" if is_vastai_model(model) else "fal"
+    logger.info("Dispatching generation job", item_id=item.id, provider=provider, model=model)
+
+    if provider == "vastai":
+        orchestrator = get_vastai_orchestrator()
+        # The orchestrator's function needs to return the URL string
+        result_dict = await orchestrator.generation_fn(item=item, **config)
+        if result_dict.get("status") == "completed" and result_dict.get("video_url"):
+            return result_dict["video_url"]
+        else:
+            error_msg = result_dict.get("error_message", "Unknown error from VastAI")
+            raise Exception(f"Vast.ai job failed: {error_msg}")
+
+    else:  # fal.ai (default)
+        return await _run_fal_job_and_wait(item, config)

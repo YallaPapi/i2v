@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,10 +13,18 @@ import { Spinner } from '@/components/ui/spinner'
 import { FileUpload } from '@/components/ui/file-upload'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useCreateVideoJob, useVideoJobs } from '@/hooks/useJobs'
-import { VIDEO_MODELS, RESOLUTIONS, DURATIONS, isSelfHostedModel } from '@/api/types'
-import { generateSwarmUIVideo } from '@/api/client'
-import type { VideoJob, VideoModel } from '@/api/types'
-import { Video, CheckCircle, XCircle, Clock, ExternalLink, Link, Upload } from 'lucide-react'
+import {
+  FAL_VIDEO_MODELS,
+  VASTAI_VIDEO_MODELS,
+  RESOLUTIONS,
+  DURATIONS,
+  VASTAI_LORAS,
+  VASTAI_FRAME_OPTIONS,
+  isVastaiModel,
+  getProviderForModel,
+} from '@/api/types'
+import type { VideoJob, VideoModel, VastaiVideoConfig } from '@/api/types'
+import { Video, CheckCircle, XCircle, Clock, ExternalLink, Link, Upload, Cpu, Cloud } from 'lucide-react'
 
 const videoJobSchema = z.object({
   image_url: z.string().optional(),
@@ -26,6 +33,11 @@ const videoJobSchema = z.object({
   resolution: z.enum(['480p', '720p', '1080p']),
   duration_sec: z.string(),
   model: z.string(),
+  // Vast.ai specific fields
+  vastai_lora: z.string().optional(),
+  vastai_steps: z.number().optional(),
+  vastai_cfg: z.number().optional(),
+  vastai_frames: z.number().optional(),
 })
 
 type VideoJobFormData = z.infer<typeof videoJobSchema>
@@ -48,31 +60,31 @@ export function VideoGeneration() {
   const [selectedModel, setSelectedModel] = useState<VideoModel>('kling')
   const [inputMode, setInputMode] = useState<'url' | 'upload'>('url')
   const [uploadedUrl, setUploadedUrl] = useState<string>('')
-  const [gpuResult, setGPUResult] = useState<{ video_url: string; gpu_used: string } | null>(null)
   const createJob = useCreateVideoJob()
   const { data: recentJobs, isLoading: jobsLoading } = useVideoJobs({ limit: 10 })
-
-  // GPU video generation (SwarmUI-based for vast.ai instances)
-  const gpuGenerate = useMutation({
-    mutationFn: generateSwarmUIVideo,
-    onSuccess: (data) => {
-      setGPUResult({ video_url: data.video_url, gpu_used: data.gpu_used })
-    },
-  })
 
   const {
     register,
     handleSubmit,
     formState: { errors },
     reset,
+    watch,
+    setValue,
   } = useForm<VideoJobFormData>({
     resolver: zodResolver(videoJobSchema),
     defaultValues: {
       resolution: '1080p',
       duration_sec: '5',
       model: 'kling',
+      vastai_lora: 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise',
+      vastai_steps: 4,
+      vastai_cfg: 1.0,
+      vastai_frames: 33,
     },
   })
+
+  const watchedModel = watch('model')
+  const isVastai = isVastaiModel(watchedModel)
 
   const onSubmit = async (data: VideoJobFormData) => {
     try {
@@ -81,24 +93,16 @@ export function VideoGeneration() {
         return
       }
 
-      // Check if using GPU (self-hosted on vast.ai)
-      if (isSelfHostedModel(data.model)) {
-        setGPUResult(null)
-        await gpuGenerate.mutateAsync({
-          image_url: imageUrl,
-          prompt: data.motion_prompt,
-          negative_prompt: data.negative_prompt,
-          num_frames: 81,  // ~3.4s at 24fps
-          fps: 24,
-          steps: 4,        // LightX2V fast
-          cfg_scale: 1.0,
-        })
-        reset()
-        setUploadedUrl('')
-        return
-      }
+      // Build vastai_config if using Vast.ai model
+      const vastaiConfig: VastaiVideoConfig | undefined = isVastaiModel(data.model) ? {
+        lora: data.vastai_lora !== 'none' ? data.vastai_lora : undefined,
+        lora_strength: 1.0,
+        steps: data.vastai_steps,
+        cfg_scale: data.vastai_cfg,
+        frames: data.vastai_frames,
+        fps: 16,
+      } : undefined
 
-      // Cloud models (fal.ai)
       await createJob.mutateAsync({
         image_url: imageUrl,
         motion_prompt: data.motion_prompt,
@@ -106,6 +110,7 @@ export function VideoGeneration() {
         resolution: data.resolution,
         duration_sec: parseInt(data.duration_sec, 10) as 5 | 10,
         model: data.model as VideoModel,
+        vastai_config: vastaiConfig,
       })
       reset()
       setUploadedUrl('')
@@ -114,9 +119,11 @@ export function VideoGeneration() {
     }
   }
 
-  const isGenerating = createJob.isPending || gpuGenerate.isPending
+  const isGenerating = createJob.isPending
 
-  const modelInfo = VIDEO_MODELS.find((m) => m.value === selectedModel)
+  // Get model info from combined list
+  const allModels = [...FAL_VIDEO_MODELS, ...VASTAI_VIDEO_MODELS]
+  const modelInfo = allModels.find((m) => m.value === selectedModel)
 
   return (
     <div className="space-y-6">
@@ -199,21 +206,121 @@ export function VideoGeneration() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* Model Selection - Grouped by Provider */}
+              <div className="space-y-3">
+                <Label>Video Model</Label>
+
+                {/* fal.ai Cloud Models */}
                 <div className="space-y-2">
-                  <Label htmlFor="model">Model</Label>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Cloud className="h-4 w-4" />
+                    <span>Cloud (fal.ai)</span>
+                  </div>
                   <Select
-                    id="model"
-                    options={VIDEO_MODELS.map((m) => ({ value: m.value, label: m.label }))}
+                    id="model-fal"
+                    options={FAL_VIDEO_MODELS.map((m) => ({
+                      value: m.value,
+                      label: `${m.label} (${m.pricing})`,
+                    }))}
                     {...register('model', {
                       onChange: (e) => setSelectedModel(e.target.value as VideoModel),
                     })}
                   />
-                  {modelInfo && (
-                    <p className="text-xs text-muted-foreground">{modelInfo.pricing}</p>
-                  )}
                 </div>
 
+                {/* Vast.ai Self-hosted Models */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Cpu className="h-4 w-4" />
+                    <span>Self-hosted (Vast.ai GPU)</span>
+                  </div>
+                  <Select
+                    id="model-vastai"
+                    options={VASTAI_VIDEO_MODELS.filter(m => !m.label.includes('Coming Soon')).map((m) => ({
+                      value: m.value,
+                      label: `${m.label} (${m.pricing})`,
+                    }))}
+                    value={isVastai ? watchedModel : ''}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setValue('model', e.target.value)
+                        setSelectedModel(e.target.value as VideoModel)
+                      }
+                    }}
+                  />
+                </div>
+
+                {modelInfo && (
+                  <p className="text-xs text-muted-foreground">
+                    {modelInfo.description || modelInfo.pricing}
+                  </p>
+                )}
+              </div>
+
+              {/* Vast.ai Specific Parameters - shown only when Vast.ai model selected */}
+              {isVastai && (
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Cpu className="h-4 w-4" />
+                    Vast.ai Generation Settings
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="vastai_lora">LoRA Accelerator</Label>
+                      <Select
+                        id="vastai_lora"
+                        options={VASTAI_LORAS.map((l) => ({
+                          value: l.value,
+                          label: l.label,
+                        }))}
+                        {...register('vastai_lora')}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="vastai_frames">Frame Count</Label>
+                      <Select
+                        id="vastai_frames"
+                        options={VASTAI_FRAME_OPTIONS.map((f) => ({
+                          value: f.value.toString(),
+                          label: f.label,
+                        }))}
+                        {...register('vastai_frames', { valueAsNumber: true })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="vastai_steps">Inference Steps</Label>
+                      <Input
+                        id="vastai_steps"
+                        type="number"
+                        min={1}
+                        max={50}
+                        {...register('vastai_steps', { valueAsNumber: true })}
+                      />
+                      <p className="text-xs text-muted-foreground">4 with LoRA, 20+ without</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="vastai_cfg">CFG Scale</Label>
+                      <Input
+                        id="vastai_cfg"
+                        type="number"
+                        min={1}
+                        max={20}
+                        step={0.1}
+                        {...register('vastai_cfg', { valueAsNumber: true })}
+                      />
+                      <p className="text-xs text-muted-foreground">1.0 recommended</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="resolution">Resolution</Label>
                   <Select
@@ -222,15 +329,15 @@ export function VideoGeneration() {
                     {...register('resolution')}
                   />
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="duration_sec">Duration</Label>
-                <Select
-                  id="duration_sec"
-                  options={DURATIONS}
-                  {...register('duration_sec')}
-                />
+                <div className="space-y-2">
+                  <Label htmlFor="duration_sec">Duration</Label>
+                  <Select
+                    id="duration_sec"
+                    options={DURATIONS}
+                    {...register('duration_sec')}
+                  />
+                </div>
               </div>
 
               <Button
@@ -241,16 +348,16 @@ export function VideoGeneration() {
                 {isGenerating ? (
                   <>
                     <Spinner size="sm" className="mr-2" />
-                    {isSelfHostedModel(selectedModel) ? 'Generating on GPU...' : 'Creating Job...'}
+                    Creating Job...
                   </>
                 ) : (
-                  isSelfHostedModel(selectedModel) ? 'Generate on GPU (5090)' : 'Create Video Job'
+                  'Create Video Job'
                 )}
               </Button>
 
-              {(createJob.isError || gpuGenerate.isError) && (
+              {createJob.isError && (
                 <p className="text-sm text-destructive text-center">
-                  Failed to generate. {gpuGenerate.error?.message || 'Please try again.'}
+                  Failed to create job. Please try again.
                 </p>
               )}
 
@@ -258,23 +365,6 @@ export function VideoGeneration() {
                 <p className="text-sm text-green-600 text-center">
                   Job created successfully! ID: {createJob.data?.id}
                 </p>
-              )}
-
-              {gpuResult && (
-                <div className="border rounded-lg p-4 bg-green-50 space-y-2">
-                  <p className="text-sm font-medium text-green-800">
-                    Video generated on {gpuResult.gpu_used}!
-                  </p>
-                  <a
-                    href={gpuResult.video_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center text-sm text-blue-600 hover:underline"
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    View Video
-                  </a>
-                </div>
               )}
             </form>
           </CardContent>
@@ -299,7 +389,7 @@ export function VideoGeneration() {
                       <div className="space-y-1">
                         <p className="text-sm font-medium">Job #{job.id}</p>
                         <p className="text-xs text-muted-foreground">
-                          {job.model} • {job.resolution} • {job.duration_sec}s
+                          {job.model} • {job.resolution} • {job.duration_sec}s • {job.provider === 'vastai' ? 'Vast.ai' : 'fal.ai'}
                         </p>
                       </div>
                       {getStatusBadge(job.wan_status)}

@@ -1,3 +1,41 @@
+// Video provider type - internal only, determined by model
+export type VideoProvider = 'fal' | 'vastai'
+
+// ============================================================
+// MODEL CATEGORIZATION
+// ============================================================
+// Open Source (Vast.ai): Wan, CogVideoX, Stable Video Diffusion
+// Proprietary (fal.ai): Kling, Veo, Sora, Luma
+// ============================================================
+
+// Vast.ai open source video models
+export type VastaiVideoModel =
+  | 'vastai-wan22-i2v'      // Wan 2.2 I2V 14B (Q4 GGUF) - main model
+  | 'vastai-wan22-t2v'      // Wan 2.2 T2V 14B (future)
+  | 'vastai-cogvideox'      // CogVideoX-5B (future)
+  | 'vastai-svd'            // Stable Video Diffusion (future)
+
+// fal.ai proprietary/cloud video models
+export type FalVideoModel =
+  | 'wan' | 'wan21' | 'wan22' | 'wan-pro' | 'wan26'
+  | 'kling' | 'kling-master' | 'kling-standard' | 'kling26-pro'
+  | 'veo2' | 'veo31-fast' | 'veo31' | 'veo31-flf' | 'veo31-fast-flf'
+  | 'sora-2' | 'sora-2-pro'
+  | 'luma' | 'luma-ray2'
+  | 'cogvideox' | 'stable-video'
+
+export type VideoModel = FalVideoModel | VastaiVideoModel
+
+// Helper to check if model runs on Vast.ai
+export const isVastaiModel = (model: string): boolean => {
+  return model.startsWith('vastai-')
+}
+
+// Helper to get provider for a model
+export const getProviderForModel = (model: string): VideoProvider => {
+  return isVastaiModel(model) ? 'vastai' : 'fal'
+}
+
 // Video job types
 export interface VideoJob {
   id: number
@@ -7,12 +45,24 @@ export interface VideoJob {
   resolution: string
   duration_sec: number
   model: string
+  provider: VideoProvider
   wan_request_id: string | null
   wan_status: 'pending' | 'submitted' | 'running' | 'completed' | 'failed'
   wan_video_url: string | null
   error_message: string | null
   created_at: string
   updated_at: string
+}
+
+// Vast.ai specific generation parameters
+export interface VastaiVideoConfig {
+  lora?: string              // LoRA model name (e.g., 'wan2.2_i2v_lightx2v_4steps')
+  lora_strength?: number     // LoRA strength 0.0-1.0, default 1.0
+  steps?: number             // Inference steps, default 4 (with 4-step LoRA)
+  cfg_scale?: number         // CFG scale 1.0-20.0, default 1.0
+  frames?: number            // Number of frames (17-81 for Wan 2.2)
+  fps?: number               // Output FPS, default 16
+  seed?: number              // Random seed for reproducibility
 }
 
 export interface CreateVideoJobRequest {
@@ -22,16 +72,9 @@ export interface CreateVideoJobRequest {
   resolution: '480p' | '720p' | '1080p'
   duration_sec: 5 | 10
   model: VideoModel
+  // Vast.ai specific config (ignored for fal.ai models)
+  vastai_config?: VastaiVideoConfig
 }
-
-export type VideoModel =
-  | 'wan' | 'wan21' | 'wan22' | 'wan-pro' | 'wan26'
-  | 'wan22-gpu'  // Self-hosted Wan 2.2 on vast.ai GPU
-  | 'kling' | 'kling-master' | 'kling-standard' | 'kling26-pro'
-  | 'veo2' | 'veo31-fast' | 'veo31' | 'veo31-flf' | 'veo31-fast-flf'
-  | 'sora-2' | 'sora-2-pro'
-  | 'luma' | 'luma-ray2'
-  | 'cogvideox' | 'stable-video'
 
 // Image job types
 export interface ImageJob {
@@ -208,37 +251,93 @@ export interface HealthResponse {
   status: string
 }
 
-// Video model info for display - fal.ai January 2026 pricing (per-second)
-export const VIDEO_MODELS: { value: VideoModel; label: string; pricing: string; selfHosted?: boolean }[] = [
-  // Self-hosted GPU models (vast.ai) - pay per hour, unlimited generations
-  { value: 'wan22-gpu', label: 'Wan 2.2 (GPU)', pricing: '~$1.50/hr', selfHosted: true },
-  // Cloud models (fal.ai) - pay per generation
-  { value: 'wan', label: 'Wan 2.5', pricing: '$0.05-0.15/s' },
-  { value: 'wan21', label: 'Wan 2.1', pricing: '$0.20-0.40/vid' },
-  { value: 'wan22', label: 'Wan 2.2', pricing: '$0.04-0.08/s' },
-  { value: 'wan-pro', label: 'Wan Pro', pricing: '$0.16/s' },
-  { value: 'wan26', label: 'Wan 2.6', pricing: '$0.10-0.15/s' },
-  { value: 'kling', label: 'Kling v2.5 Turbo', pricing: '$0.07/s' },
-  { value: 'kling-master', label: 'Kling v2.1 Master', pricing: '$0.28/s' },
-  { value: 'kling-standard', label: 'Kling v2.1 Standard', pricing: '$0.05/s' },
-  { value: 'kling26-pro', label: 'Kling 2.6 Pro', pricing: '$0.07/s' },
-  { value: 'veo2', label: 'Google Veo2', pricing: '$0.50/s' },
-  { value: 'veo31-fast', label: 'Google Veo3.1 Fast', pricing: '$0.10/s' },
-  { value: 'veo31', label: 'Google Veo3.1', pricing: '$0.20/s' },
-  { value: 'veo31-flf', label: 'Veo3.1 First-Last Frame', pricing: '$0.20/s' },
-  { value: 'veo31-fast-flf', label: 'Veo3.1 Fast FLF', pricing: '$0.10/s' },
-  { value: 'sora-2', label: 'OpenAI Sora 2', pricing: '$0.10/s' },
-  { value: 'sora-2-pro', label: 'OpenAI Sora 2 Pro', pricing: '$0.30-0.50/s' },
-  { value: 'luma', label: 'Luma Dream Machine', pricing: '$0.032/s' },
-  { value: 'luma-ray2', label: 'Luma Ray2', pricing: '$0.05/s' },
-  { value: 'cogvideox', label: 'CogVideoX-5B', pricing: '$0.20/vid' },
-  { value: 'stable-video', label: 'Stable Video Diffusion', pricing: '$0.075/vid' },
+// Video model info for display
+export interface VideoModelInfo {
+  value: VideoModel
+  label: string
+  pricing: string
+  provider: VideoProvider
+  openSource?: boolean
+  description?: string
+}
+
+// fal.ai Cloud Models (proprietary + hosted open source)
+export const FAL_VIDEO_MODELS: VideoModelInfo[] = [
+  { value: 'wan', label: 'Wan 2.5', pricing: '$0.05-0.15/s', provider: 'fal', openSource: true },
+  { value: 'wan21', label: 'Wan 2.1', pricing: '$0.20-0.40/vid', provider: 'fal', openSource: true },
+  { value: 'wan22', label: 'Wan 2.2', pricing: '$0.04-0.08/s', provider: 'fal', openSource: true },
+  { value: 'wan-pro', label: 'Wan Pro', pricing: '$0.16/s', provider: 'fal', openSource: true },
+  { value: 'wan26', label: 'Wan 2.6', pricing: '$0.10-0.15/s', provider: 'fal', openSource: true },
+  { value: 'kling', label: 'Kling v2.5 Turbo', pricing: '$0.07/s', provider: 'fal' },
+  { value: 'kling-master', label: 'Kling v2.1 Master', pricing: '$0.28/s', provider: 'fal' },
+  { value: 'kling-standard', label: 'Kling v2.1 Standard', pricing: '$0.05/s', provider: 'fal' },
+  { value: 'kling26-pro', label: 'Kling 2.6 Pro', pricing: '$0.07/s', provider: 'fal' },
+  { value: 'veo2', label: 'Google Veo2', pricing: '$0.50/s', provider: 'fal' },
+  { value: 'veo31-fast', label: 'Google Veo3.1 Fast', pricing: '$0.10/s', provider: 'fal' },
+  { value: 'veo31', label: 'Google Veo3.1', pricing: '$0.20/s', provider: 'fal' },
+  { value: 'veo31-flf', label: 'Veo3.1 First-Last Frame', pricing: '$0.20/s', provider: 'fal' },
+  { value: 'veo31-fast-flf', label: 'Veo3.1 Fast FLF', pricing: '$0.10/s', provider: 'fal' },
+  { value: 'sora-2', label: 'OpenAI Sora 2', pricing: '$0.10/s', provider: 'fal' },
+  { value: 'sora-2-pro', label: 'OpenAI Sora 2 Pro', pricing: '$0.30-0.50/s', provider: 'fal' },
+  { value: 'luma', label: 'Luma Dream Machine', pricing: '$0.032/s', provider: 'fal' },
+  { value: 'luma-ray2', label: 'Luma Ray2', pricing: '$0.05/s', provider: 'fal' },
+  { value: 'cogvideox', label: 'CogVideoX-5B', pricing: '$0.20/vid', provider: 'fal', openSource: true },
+  { value: 'stable-video', label: 'Stable Video Diffusion', pricing: '$0.075/vid', provider: 'fal', openSource: true },
 ]
 
-// Helper to check if model is self-hosted (vast.ai GPU)
-export const isSelfHostedModel = (model: string): boolean => {
-  return model === 'wan22-gpu'
-}
+// Vast.ai Self-Hosted Models (open source, GPU rental cost only)
+export const VASTAI_VIDEO_MODELS: VideoModelInfo[] = [
+  {
+    value: 'vastai-wan22-i2v',
+    label: 'Wan 2.2 I2V (Self-hosted)',
+    pricing: '~$0.17/hr GPU',
+    provider: 'vastai',
+    openSource: true,
+    description: 'Wan 2.2 14B Image-to-Video, 4-step LoRA accelerated'
+  },
+  {
+    value: 'vastai-wan22-t2v',
+    label: 'Wan 2.2 T2V (Coming Soon)',
+    pricing: '~$0.17/hr GPU',
+    provider: 'vastai',
+    openSource: true,
+    description: 'Wan 2.2 14B Text-to-Video'
+  },
+  {
+    value: 'vastai-cogvideox',
+    label: 'CogVideoX-5B (Coming Soon)',
+    pricing: '~$0.17/hr GPU',
+    provider: 'vastai',
+    openSource: true,
+    description: 'Tsinghua/ZhipuAI open source video model'
+  },
+  {
+    value: 'vastai-svd',
+    label: 'Stable Video (Coming Soon)',
+    pricing: '~$0.17/hr GPU',
+    provider: 'vastai',
+    openSource: true,
+    description: 'Stability AI Stable Video Diffusion'
+  },
+]
+
+// Combined list for backward compatibility
+export const VIDEO_MODELS: VideoModelInfo[] = [...FAL_VIDEO_MODELS, ...VASTAI_VIDEO_MODELS]
+
+// Available LoRAs for Vast.ai models
+export const VASTAI_LORAS = [
+  { value: 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise', label: '4-Step Accelerator (Recommended)', steps: 4 },
+  { value: 'none', label: 'No LoRA (20+ steps)', steps: 20 },
+]
+
+// Frame count options for Vast.ai models
+export const VASTAI_FRAME_OPTIONS = [
+  { value: 17, label: '17 frames (~1s @ 16fps)' },
+  { value: 33, label: '33 frames (~2s @ 16fps)' },
+  { value: 49, label: '49 frames (~3s @ 16fps)' },
+  { value: 65, label: '65 frames (~4s @ 16fps)' },
+  { value: 81, label: '81 frames (~5s @ 16fps)' },
+]
 
 export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string; nsfw?: boolean }[] = [
   { value: 'gpt-image-1.5', label: 'GPT Image 1.5', pricing: '$0.009-0.20/image' },
@@ -277,6 +376,12 @@ export const RESOLUTIONS = [
 export const DURATIONS = [
   { value: '5', label: '5 seconds' },
   { value: '10', label: '10 seconds' },
+]
+
+// Provider info (for reference, not user selection - provider determined by model)
+export const VIDEO_PROVIDERS = [
+  { value: 'fal', label: 'fal.ai Cloud', description: 'Pay-per-use cloud API' },
+  { value: 'vastai', label: 'Vast.ai Self-hosted', description: 'GPU rental, open source models' },
 ]
 
 export const ASPECT_RATIOS = [
