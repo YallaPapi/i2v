@@ -44,6 +44,7 @@ class SwarmUIClient:
         self,
         base_url: str = "http://localhost:7801",
         timeout: float = 300.0,
+        auth_token: Optional[str] = None,
     ) -> None:
         """
         Initialize SwarmUI client.
@@ -51,19 +52,34 @@ class SwarmUIClient:
         Args:
             base_url: SwarmUI server URL (default localhost:7801)
             timeout: Request timeout in seconds (default 5 minutes for video gen)
+            auth_token: Auth token for Vast.ai tunnels (sets cookie)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.auth_token = auth_token
         self._session_id: Optional[str] = None
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None or self._client.is_closed:
+            # Build cookies dict if auth_token provided
+            cookies = None
+            if self.auth_token:
+                # Vast.ai portal uses cookie format: C.{instance_id}_auth_token
+                # We use a generic cookie name that works across instances
+                cookies = {"auth_token": self.auth_token}
+                # Also try the numbered format if instance_id is in env
+                import os
+                instance_id = os.getenv("VASTAI_INSTANCE_ID")
+                if instance_id:
+                    cookies[f"C.{instance_id}_auth_token"] = self.auth_token
+
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout,
                 follow_redirects=True,
+                cookies=cookies,
             )
         return self._client
 
@@ -117,19 +133,21 @@ class SwarmUIClient:
     )
     async def upload_image(self, image_url: str) -> str:
         """
-        Download image from URL and upload to SwarmUI.
+        Download image from URL and convert to base64 data URI for SwarmUI.
+
+        SwarmUI accepts base64 data URIs directly in the initimage parameter,
+        which is more reliable than the file upload endpoint.
 
         Args:
             image_url: Public URL of the source image
 
         Returns:
-            SwarmUI internal path for the uploaded image
+            Base64 data URI string (data:image/jpeg;base64,...)
         """
-        client = await self._get_client()
-        session_id = await self.get_session()
+        import base64
 
-        # Step 1: Download image from URL
-        logger.debug("Downloading image for SwarmUI upload", url=image_url[:80])
+        # Download image from URL
+        logger.debug("Downloading image for SwarmUI", url=image_url[:80])
 
         async with httpx.AsyncClient(timeout=60.0) as dl_client:
             resp = await dl_client.get(image_url, follow_redirects=True)
@@ -147,71 +165,72 @@ class SwarmUIClient:
             if len(image_bytes) > 50 * 1024 * 1024:
                 raise ValueError(f"Image too large: {len(image_bytes) / 1024 / 1024:.1f}MB")
 
-        # Step 2: Upload to SwarmUI
-        ext_map = {
-            "image/jpeg": ".jpg",
-            "image/jpg": ".jpg",
-            "image/png": ".png",
-            "image/webp": ".webp",
-            "image/gif": ".gif",
-        }
-        ext = ext_map.get(content_type, ".png")
-        filename = f"upload_{uuid4().hex[:8]}{ext}"
+        # Convert to base64 data URI
+        b64_data = base64.b64encode(image_bytes).decode('utf-8')
+        data_uri = f"data:{content_type};base64,{b64_data}"
 
-        # SwarmUI upload endpoint
-        files = {"file": (filename, io.BytesIO(image_bytes), content_type)}
-        data = {"session_id": session_id}
-
-        logger.debug("Uploading image to SwarmUI", filename=filename)
-
-        try:
-            upload_resp = await client.post(
-                "/API/UploadImage",
-                data=data,
-                files=files,
-            )
-            upload_resp.raise_for_status()
-            result = upload_resp.json()
-
-            # Extract path from response
-            image_path = result.get("path") or result.get("image_path") or result.get("image")
-            if not image_path:
-                # Some versions return just the filename
-                image_path = result.get("name") or filename
-
-            logger.info("Image uploaded to SwarmUI", path=image_path)
-            return image_path
-
-        except httpx.HTTPStatusError as e:
-            raise SwarmUIError(f"Failed to upload image: HTTP {e.response.status_code}")
+        logger.info("Image prepared for SwarmUI", size_kb=len(image_bytes) // 1024)
+        return data_uri
 
     async def generate_video(
         self,
         image_path: str,
         prompt: str,
-        model: str = "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
-        num_frames: int = 81,
-        fps: int = 24,
-        steps: int = 4,
-        cfg_scale: float = 1.0,
+        # EXACT defaults from user's working metadata (verified 2026-01-14)
+        model: str = "wan2.2_i2v_high_noise_14B_fp8_scaled",
+        width: int = 720,
+        height: int = 1280,
+        num_frames: int = 80,
+        fps: int = 16,
+        steps: int = 10,
+        cfg_scale: float = 7.0,
         seed: int = -1,
-        lora: Optional[str] = None,
-        lora_strength: float = 1.0,
+        # Video-specific params (exact from working metadata)
+        video_steps: int = 5,
+        video_cfg: float = 1.0,
+        swap_model: str = "wan2.2_i2v_low_noise_14B_fp8_scaled",
+        swap_percent: float = 0.6,
+        # Frame interpolation (exact from working metadata)
+        interpolation_method: str = "RIFE",
+        interpolation_multiplier: int = 2,
+        video_resolution: str = "Image Aspect, Model Res",
+        video_format: str = "h264-mp4",
+        # LoRAs with section confinement (exact from working metadata)
+        loras: Optional[list] = None,
+        lora_weights: Optional[list] = None,
+        lora_section_confinement: Optional[list] = None,
+        # Negative prompt (exact from working metadata)
+        negative_prompt: str = "blurry, jerky motion, stuttering, flickering, frame skipping, ghosting, motion blur, extra fingers, extra hands, extra limbs, missing fingers, missing limbs, deformed hands, mutated hands, fused fingers, bad anatomy, disfigured, malformed, distorted face, ugly, low quality, worst quality, logo, duplicate frames, static, frozen, morphing, warping, glitching, plastic skin",
     ) -> dict:
         """
-        Generate video from image using SwarmUI.
+        Generate video from image using SwarmUI with Wan 2.2 I2V.
+
+        Uses EXACT parameters from verified working generation (2026-01-14).
+        All defaults match the user's tested configuration.
 
         Args:
-            image_path: SwarmUI internal path from upload_image()
-            prompt: Motion/content description
-            model: Video model name (as shown in SwarmUI)
-            num_frames: Number of frames (81 = ~3.4s at 24fps)
-            fps: Output frame rate
-            steps: Sampling steps (4 for LightX2V)
-            cfg_scale: CFG scale (1.0-3.5 for Wan I2V)
+            image_path: Init image (base64 data URI)
+            prompt: Motion description (use <video//cid=2> <videoswap//cid=3> tags for LoRA section confinement)
+            model: High-noise model (wan2.2_i2v_high_noise_14B_fp8_scaled)
+            width: Output width (720)
+            height: Output height (1280)
+            num_frames: Video frames (80)
+            fps: Video FPS (16)
+            steps: Image gen steps (10)
+            cfg_scale: Image CFG (7.0)
             seed: Random seed (-1 for random)
-            lora: Optional LoRA name
-            lora_strength: LoRA strength if using LoRA
+            video_steps: Video diffusion steps (5)
+            video_cfg: Video CFG (1.0)
+            swap_model: Low-noise model to swap to at swap_percent
+            swap_percent: When to swap (0.6 = 60%)
+            interpolation_method: Frame interpolation (RIFE)
+            interpolation_multiplier: Interpolation factor (2)
+            video_resolution: Resolution mode ("Image Aspect, Model Res")
+            video_format: Output format ("h264-mp4")
+            loras: List of LoRA names
+            lora_weights: List of LoRA weights as strings
+            lora_section_confinement: List of section confinement IDs
+            negative_prompt: Negative prompt for generation
 
         Returns:
             Dict with video_path and other generation info
@@ -219,34 +238,57 @@ class SwarmUIClient:
         client = await self._get_client()
         session_id = await self.get_session()
 
-        # Build generation payload
-        # SwarmUI uses GenerateText2Image for both images and videos
-        # Video is triggered by specifying a video model
+        # Default LoRAs from working metadata (lightning LoRAs for fast generation)
+        if loras is None:
+            loras = [
+                "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16",
+                "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16"
+            ]
+        if lora_weights is None:
+            lora_weights = ["1", "1"]
+        if lora_section_confinement is None:
+            lora_section_confinement = ["2", "3"]
+
+        # Build payload with EXACT parameters from working metadata (2026-01-14)
         payload = {
             "session_id": session_id,
             "prompt": prompt,
-            "negativeprompt": "low quality, blurry, distorted, watermark",
+            "negativeprompt": negative_prompt,
+            "model": model,
             "images": 1,
-            "model": model,  # The video model
-            "initimage": image_path,
-            "initimagecreativity": 0.0,  # 0 = pure I2V, no image gen
+            "seed": seed if seed >= 0 else -1,
             "steps": steps,
             "cfgscale": cfg_scale,
-            "seed": seed if seed >= 0 else -1,
+            "aspectratio": "Custom",
+            "width": width,
+            "height": height,
+            "sampler": "euler",
+            "scheduler": "simple",
+            "initimagecreativity": 0.0,  # CORRECT param name, 0 = pure I2V
+            "videomodel": model,
+            "videoswapmodel": swap_model,
+            "videoswappercent": swap_percent,
             "videoframes": num_frames,
+            "videosteps": video_steps,
+            "videocfg": video_cfg,
+            "videoresolution": video_resolution,
+            "videoformat": video_format,
+            "videoframeinterpolationmultiplier": interpolation_multiplier,
+            "videoframeinterpolationmethod": interpolation_method,
             "videofps": fps,
-            "videoformat": "mp4",
+            "automaticvae": True,
+            "loras": loras,
+            "loraweights": lora_weights,
+            "lorasectionconfinement": lora_section_confinement,
+            "initimage": image_path,
         }
-
-        # Add LoRA if specified
-        if lora:
-            payload["loras"] = f"{lora}:{lora_strength}"
 
         logger.info(
             "Submitting video generation to SwarmUI",
             model=model,
+            swap_model=swap_model,
             frames=num_frames,
-            steps=steps,
+            video_steps=video_steps,
         )
 
         try:
@@ -268,10 +310,20 @@ class SwarmUIClient:
             if not images:
                 raise SwarmUIGenerationError("No output in generation result")
 
-            # SwarmUI returns paths like "View/local/raw/2026-01-09/filename.mp4"
-            video_path = images[0] if images else None
+            # SwarmUI returns multiple files: PNG thumbnail + MP4 video
+            # Find the MP4/video file from the results
+            video_path = None
+            for path in images:
+                if path.endswith('.mp4') or path.endswith('.webm') or path.endswith('.gif'):
+                    video_path = path
+                    break
 
-            logger.info("Video generation complete", path=video_path)
+            # Fallback to first result if no video found
+            if not video_path:
+                video_path = images[0]
+                logger.warning("No video file found in results, using first output", path=video_path)
+
+            logger.info("Video generation complete", path=video_path, total_outputs=len(images))
 
             return {
                 "video_path": video_path,
@@ -332,23 +384,26 @@ class SwarmUIClient:
 _swarmui_client: Optional[SwarmUIClient] = None
 
 
-def get_swarmui_client(base_url: Optional[str] = None) -> SwarmUIClient:
+def get_swarmui_client(base_url: Optional[str] = None, auth_token: Optional[str] = None) -> SwarmUIClient:
     """
     Get SwarmUI client singleton.
 
     Args:
         base_url: Override base URL (default from env or localhost:7801)
+        auth_token: Override auth token (default from env SWARMUI_AUTH_TOKEN)
 
     Returns:
         SwarmUIClient instance
     """
     global _swarmui_client
 
+    import os
     if base_url is None:
-        import os
         base_url = os.getenv("SWARMUI_URL", "http://localhost:7801")
+    if auth_token is None:
+        auth_token = os.getenv("SWARMUI_AUTH_TOKEN")
 
     if _swarmui_client is None or _swarmui_client.base_url != base_url:
-        _swarmui_client = SwarmUIClient(base_url=base_url)
+        _swarmui_client = SwarmUIClient(base_url=base_url, auth_token=auth_token)
 
     return _swarmui_client

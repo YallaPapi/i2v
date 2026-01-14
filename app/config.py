@@ -20,6 +20,52 @@ class Settings(BaseSettings):
     # Optional - for prompt enhancement
     anthropic_api_key: Optional[str] = None
 
+    # RunPod GPU pod settings
+    runpod_api_key: Optional[str] = None
+    vast_api_key: Optional[str] = None
+    runpod_pod_id: Optional[str] = None
+    runpod_pod_url: Optional[str] = None
+    runpod_enabled: bool = False
+
+    # Cloudflare Zero Trust Tunnel (for SwarmUI access)
+    cloudflare_tunnel_token: Optional[str] = None
+    swarmui_url: Optional[str] = None  # Tunnel URL (e.g., https://xxx.trycloudflare.com)
+    swarmui_auth_token: Optional[str] = None  # Auth token from tunnel URL ?token=xxx
+    vastai_instance_id: Optional[str] = None  # Vast.ai instance ID
+
+    # SwarmUI generation defaults (EXACT from working metadata 2026-01-14)
+    swarmui_model: str = "wan2.2_i2v_high_noise_14B_fp8_scaled"
+    swarmui_swap_model: str = "wan2.2_i2v_low_noise_14B_fp8_scaled"
+    swarmui_default_steps: int = 10
+    swarmui_default_cfg: float = 7.0
+    swarmui_default_frames: int = 80
+    swarmui_default_fps: int = 16
+    swarmui_video_steps: int = 5
+    swarmui_video_cfg: float = 1.0
+    swarmui_swap_percent: float = 0.6
+    # LoRAs with section confinement (high_fp16 for video model, low_fp16 for swap model)
+    swarmui_lora_high: str = "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16"
+    swarmui_lora_low: str = "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16"
+
+    # Pinokio WAN GP settings (Vast.ai self-hosted)
+    pinokio_wan_url: Optional[str] = None  # Cloudflare tunnel URL
+    pinokio_ssh_host: Optional[str] = None  # SSH host (e.g., ssh9.vast.ai)
+    pinokio_ssh_port: int = 28690  # SSH port
+    pinokio_ssh_user: str = "root"  # SSH user
+    pinokio_max_concurrent: int = 1  # WAN GP processes sequentially
+    pinokio_enabled: bool = False  # Enable Pinokio backend
+
+    @property
+    def pinokio_ssh_config(self) -> Optional[dict]:
+        """Get SSH config dict for PinokioClient if configured."""
+        if self.pinokio_ssh_host:
+            return {
+                "host": self.pinokio_ssh_host,
+                "port": self.pinokio_ssh_port,
+                "user": self.pinokio_ssh_user,
+            }
+        return None
+
     # Database - SQLite (default for local dev) or PostgreSQL (production)
     db_path: str = "wan_jobs.db"  # SQLite path (used when database_url not set)
     database_url: Optional[str] = None  # PostgreSQL URL: postgresql+asyncpg://user:pass@host/db
@@ -53,6 +99,7 @@ class Settings(BaseSettings):
 
     # Worker
     worker_poll_interval_seconds: int = 10
+    worker_max_concurrency: int = 5
     max_concurrent_submits: int = 20
     max_concurrent_polls: int = 20
 
@@ -65,24 +112,6 @@ class Settings(BaseSettings):
     # Defaults
     default_resolution: str = "1080p"
     default_duration_sec: int = 5
-
-    # SwarmUI settings
-    swarmui_url: str = "http://localhost:7801"
-    swarmui_model: str = "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
-    swarmui_lora: Optional[str] = None  # e.g., "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise"
-    swarmui_lora_strength: float = 1.0
-    swarmui_default_steps: int = 4
-    swarmui_default_cfg: float = 1.0
-    swarmui_default_frames: int = 81
-    swarmui_default_fps: int = 24
-
-    # ComfyUI settings (for vast.ai GPU)
-    comfyui_url: str = "http://localhost:8188"  # Set to vast.ai Cloudflare tunnel URL
-    comfyui_token: Optional[str] = None  # Jupyter token for auth (from vast.ai)
-
-    # GPU provider settings
-    gpu_provider: str = "none"  # "none", "local", "vastai"
-    vastai_instance_id: Optional[int] = None  # Active vast.ai instance ID
 
     def ensure_download_dir(self) -> Path:
         """Ensure download directory exists and return Path."""
