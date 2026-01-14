@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Sparkles, AlertTriangle } from 'lucide-react'
+import { Sparkles } from 'lucide-react'
 
 type ModelType = 'i2i' | 'i2v'
 
@@ -13,7 +13,6 @@ interface ModelOption {
   provider: string
   description?: string
   recommended?: boolean
-  nsfw?: boolean  // NSFW models require vast.ai GPU
 }
 
 interface ModelSelectorProps {
@@ -127,34 +126,6 @@ const I2I_MODELS: ModelOption[] = [
     priceValue: 0.04,
     provider: 'Ideogram',
     description: 'Best for text-in-image - accurate typography rendering',
-  },
-  // NSFW Models (vast.ai GPU - open source, only GPU compute costs)
-  {
-    value: 'pony-v6',
-    label: 'Pony V6 XL',
-    price: '~$0.005/img',
-    priceValue: 0.005,
-    provider: 'NSFW (vast.ai)',
-    description: 'Anime/stylized NSFW - open source, GPU compute only',
-    nsfw: true,
-  },
-  {
-    value: 'pony-realistic',
-    label: 'Pony Realism',
-    price: '~$0.005/img',
-    priceValue: 0.005,
-    provider: 'NSFW (vast.ai)',
-    description: 'Photorealistic NSFW - open source, GPU compute only',
-    nsfw: true,
-  },
-  {
-    value: 'sdxl-base',
-    label: 'SDXL Base',
-    price: '~$0.004/img',
-    priceValue: 0.004,
-    provider: 'NSFW (vast.ai)',
-    description: 'General purpose SDXL - open source, GPU compute only',
-    nsfw: true,
   },
 ]
 
@@ -330,6 +301,33 @@ const I2V_MODELS: ModelOption[] = [
     provider: 'Stability AI',
     description: 'Budget option, image-only (no prompt)',
   },
+  // Pinokio WAN GP Self-Hosted Models
+  {
+    value: 'pinokio-wan22-i2v',
+    label: 'Pinokio Wan 2.2 I2V',
+    price: '~$0.01/vid',
+    priceValue: 0.01,
+    provider: 'Pinokio (Self-Hosted)',
+    description: 'Self-hosted on RTX 5090 via Vast.ai (~2min/video)',
+  },
+  {
+    value: 'pinokio-hunyuan-i2v',
+    label: 'Pinokio Hunyuan 1.5 I2V',
+    price: '~$0.01/vid',
+    priceValue: 0.01,
+    provider: 'Pinokio (Self-Hosted)',
+    description: 'Hunyuan 1.5 i2v distilled - self-hosted',
+  },
+  // Vast.ai SwarmUI Self-Hosted Models (H100)
+  {
+    value: 'vastai-wan22-i2v',
+    label: 'SwarmUI Wan 2.2 I2V',
+    price: '~$0.07/vid',
+    priceValue: 0.07,
+    provider: 'SwarmUI (Self-Hosted)',
+    description: 'H100 GPU via Vast.ai - 14B FP8 + Lightning LoRA (~1min/video)',
+    recommended: true,
+  },
 ]
 
 export function ModelSelector({
@@ -390,19 +388,6 @@ export function ModelSelector({
               Best Value
             </Badge>
           )}
-          {selectedModel.nsfw && (
-            <Badge variant="destructive" className="text-xs gap-1">
-              <AlertTriangle className="h-3 w-3" />
-              NSFW - GPU Rental
-            </Badge>
-          )}
-        </div>
-      )}
-
-      {/* NSFW Warning */}
-      {selectedModel?.nsfw && (
-        <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 p-2 rounded-md">
-          ⚠️ This model runs on rented vast.ai GPU. Cold start may take 2-5 min. Requires VASTAI_API_KEY.
         </div>
       )}
 

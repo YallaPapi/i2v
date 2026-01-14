@@ -187,18 +187,32 @@ Periodically compare your progress against the PRD. Are you on track? Are you bu
 |----------|-------|
 | Instance ID | `29996148` |
 | SSH | `ssh -p 25797 root@115.124.123.238` |
-| SwarmUI URL | `https://light-curious-idol-msg.trycloudflare.com` |
+| SwarmUI URL | `https://swarm.wunderbun.com` (permanent tunnel) |
 | Auth Token | See .env `SWARMUI_AUTH_TOKEN` |
 | GPU | H100 SXM (80GB VRAM) |
 | Template | `vastai/swarmui:v0.9.7-Beta` |
+| SwarmUI Port | `7865` (via Caddy proxy, internal `17865`) |
 
-### Cloudflare Tunnel Access
-The Vast.ai SwarmUI template auto-creates a quick tunnel on startup. Get the URL and token:
+### Cloudflare Tunnel Setup
+
+**Permanent Named Tunnel** (recommended - no HTTP timeout issues):
+```bash
+# Tunnel ID: fe6f25a9-f59b-46f3-9578-7c19cd7faf3e
+# Public hostname: swarm.wunderbun.com → http://localhost:7865
+
+# Start named tunnel on instance:
+ssh -p 25797 root@115.124.123.238 << 'EOF'
+export TOKEN="$CLOUDFLARE_TUNNEL_TOKEN"  # From .env
+nohup cloudflared tunnel run --token "$TOKEN" > /tmp/tunnel.log 2>&1 &
+EOF
+```
+
+**Quick Tunnel** (auto-created by Vast.ai template, has 100s HTTP timeout):
 ```bash
 ssh -p 25797 root@115.124.123.238 "grep trycloudflare /var/log/tunnel_manager.log | tail -1"
 ```
 
-**Auth Token Required**: The tunnel URL requires a token cookie. Visit `URL?token=XXX` first, or set the cookie:
+**Auth Token Required**: Both tunnel types require auth cookie:
 ```
 Cookie: C.{INSTANCE_ID}_auth_token={TOKEN}
 ```
@@ -231,9 +245,10 @@ ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.
 3. **SwarmUI Backend Config** (`/root/SwarmUI/Data/Backends.fds`):
 Set `ExtraArgs: --use-sage-attention` in the ComfyUI backend settings.
 
-4. **Cloudflare Tunnel** (for external access):
+4. **Cloudflare Named Tunnel** (for permanent external access):
 ```bash
-nohup cloudflared tunnel --url http://localhost:7801 > /tmp/cloudflared.log 2>&1 &
+# Use the named tunnel token from .env CLOUDFLARE_TUNNEL_TOKEN
+nohup cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
 ```
 
 ### Onstart Script Template
@@ -243,44 +258,24 @@ Add this to the Vast.ai instance onstart to automate setup:
 exec > /var/log/onstart.log 2>&1
 set -x
 
-apt-get update -qq
-apt-get install -y -qq git wget curl python3 python3-pip
+# Named tunnel token (set in Vast.ai instance env or paste here)
+TUNNEL_TOKEN="eyJhIjoiNmU4YWNhOWI4MDEyYjE5YmYwMmZlMDBiNWJiMGQxNjUiLCJ0IjoiZmU2ZjI1YTktZjU5Yi00NmYzLTk1NzgtN2MxOWNkN2ZhZjNlIiwicyI6Ik16WXdPR1kxTjJJdE1HUmxPUzAwT1dOaExUaGlZVE10WXpBM09XVmxOamxoTnpKbCJ9"
 
-# Install .NET for SwarmUI
-wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
-chmod +x /tmp/dotnet-install.sh
-/tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet
-ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+# Wait for SwarmUI to start (Vast.ai template auto-starts it)
+sleep 30
 
-# Install Cloudflare tunnel
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
+# Start permanent Cloudflare tunnel (swarm.wunderbun.com → localhost:7865)
+nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
 
-# Fix libcuda symlink for SageAttention
-ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
-
-# Clone SwarmUI if not exists
-if [ ! -d "/root/SwarmUI" ]; then
-    cd /root && git clone https://github.com/mcmonkeyprojects/SwarmUI.git
-fi
-
-# Install SageAttention
-cd /root/SwarmUI
-./launch-linux.sh --help > /dev/null 2>&1  # This installs venv
-/root/SwarmUI/dlbackend/ComfyUI/venv/bin/pip install sageattention
-
-# Configure backend for SageAttention
-sed -i 's/ExtraArgs: .*/ExtraArgs: --use-sage-attention/' /root/SwarmUI/Data/Backends.fds 2>/dev/null
-
-# Start SwarmUI
-nohup ./launch-linux.sh --host 0.0.0.0 --port 7801 --launch_mode none > /var/log/swarmui.log 2>&1 &
-sleep 10
-
-# Start Cloudflare tunnel
-nohup cloudflared tunnel --url http://localhost:7801 > /tmp/cloudflared.log 2>&1 &
-
-echo "Setup complete! Check /tmp/cloudflared.log for tunnel URL"
+echo "Named tunnel started! Access via https://swarm.wunderbun.com"
 ```
+
+**Note**: The Vast.ai SwarmUI template already handles:
+- SwarmUI installation and startup (port 17865)
+- Caddy reverse proxy (port 7865)
+- Quick tunnels for portal access
+
+The onstart script only needs to add the **named tunnel** for permanent access.
 
 ### SwarmUI API (Wan 2.2 I2V - VERIFIED 2026-01-14)
 

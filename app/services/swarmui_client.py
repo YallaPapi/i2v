@@ -3,9 +3,9 @@
 import io
 import json
 import asyncio
-from uuid import uuid4
-from typing import Optional
+from typing import Optional, Callable
 import httpx
+import websockets
 import structlog
 from tenacity import (
     retry,
@@ -195,22 +195,23 @@ class SwarmUIClient:
         interpolation_multiplier: int = 2,
         video_resolution: str = "Image Aspect, Model Res",
         video_format: str = "h264-mp4",
-        # LoRAs with section confinement (exact from working metadata)
-        loras: Optional[list] = None,
-        lora_weights: Optional[list] = None,
-        lora_section_confinement: Optional[list] = None,
+        # LoRAs - embedded in prompt using <video> <lora:name> <videoswap> <lora:name> syntax
+        lora_high: str = "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16",
+        lora_low: str = "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16",
         # Negative prompt (exact from working metadata)
         negative_prompt: str = "blurry, jerky motion, stuttering, flickering, frame skipping, ghosting, motion blur, extra fingers, extra hands, extra limbs, missing fingers, missing limbs, deformed hands, mutated hands, fused fingers, bad anatomy, disfigured, malformed, distorted face, ugly, low quality, worst quality, logo, duplicate frames, static, frozen, morphing, warping, glitching, plastic skin",
+        # Progress callback
+        on_progress: Optional[Callable[[float], None]] = None,
     ) -> dict:
         """
-        Generate video from image using SwarmUI with Wan 2.2 I2V.
+        Generate video from image using SwarmUI with Wan 2.2 I2V via WebSocket.
 
-        Uses EXACT parameters from verified working generation (2026-01-14).
-        All defaults match the user's tested configuration.
+        Uses WebSocket API for reliable long-running generation without HTTP timeouts.
+        LoRAs are embedded in the prompt using SwarmUI's <video> and <videoswap> syntax.
 
         Args:
             image_path: Init image (base64 data URI)
-            prompt: Motion description (use <video//cid=2> <videoswap//cid=3> tags for LoRA section confinement)
+            prompt: Motion description (LoRAs will be auto-appended)
             model: High-noise model (wan2.2_i2v_high_noise_14B_fp8_scaled)
             width: Output width (720)
             height: Output height (1280)
@@ -227,32 +228,25 @@ class SwarmUIClient:
             interpolation_multiplier: Interpolation factor (2)
             video_resolution: Resolution mode ("Image Aspect, Model Res")
             video_format: Output format ("h264-mp4")
-            loras: List of LoRA names
-            lora_weights: List of LoRA weights as strings
-            lora_section_confinement: List of section confinement IDs
+            lora_high: Lightning LoRA for video model
+            lora_low: Lightning LoRA for swap model
             negative_prompt: Negative prompt for generation
+            on_progress: Optional callback for progress updates (0.0-1.0)
 
         Returns:
-            Dict with video_path and other generation info
+            Dict with video_path, video_url, seed, model, frames
         """
-        client = await self._get_client()
+        import os
         session_id = await self.get_session()
 
-        # Default LoRAs from working metadata (lightning LoRAs for fast generation)
-        if loras is None:
-            loras = [
-                "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16",
-                "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16"
-            ]
-        if lora_weights is None:
-            lora_weights = ["1", "1"]
-        if lora_section_confinement is None:
-            lora_section_confinement = ["2", "3"]
+        # Build prompt with LoRAs embedded using SwarmUI syntax
+        # <video> section applies to video model, <videoswap> to swap model
+        full_prompt = f"{prompt} <video> <lora:{lora_high}> <videoswap> <lora:{lora_low}>"
 
-        # Build payload with EXACT parameters from working metadata (2026-01-14)
+        # Build payload - NO loras/loraweights params, they're in the prompt
         payload = {
             "session_id": session_id,
-            "prompt": prompt,
+            "prompt": full_prompt,
             "negativeprompt": negative_prompt,
             "model": model,
             "images": 1,
@@ -264,7 +258,7 @@ class SwarmUIClient:
             "height": height,
             "sampler": "euler",
             "scheduler": "simple",
-            "initimagecreativity": 0.0,  # CORRECT param name, 0 = pure I2V
+            "initimagecreativity": 0.0,
             "videomodel": model,
             "videoswapmodel": swap_model,
             "videoswappercent": swap_percent,
@@ -277,67 +271,70 @@ class SwarmUIClient:
             "videoframeinterpolationmethod": interpolation_method,
             "videofps": fps,
             "automaticvae": True,
-            "loras": loras,
-            "loraweights": lora_weights,
-            "lorasectionconfinement": lora_section_confinement,
             "initimage": image_path,
         }
 
         logger.info(
-            "Submitting video generation to SwarmUI",
+            "Submitting video generation via WebSocket",
             model=model,
             swap_model=swap_model,
             frames=num_frames,
             video_steps=video_steps,
         )
 
+        # Build WebSocket URL and auth headers
+        ws_url = self.base_url.replace("https://", "wss://").replace("http://", "ws://")
+        ws_url = f"{ws_url}/API/GenerateText2ImageWS"
+
+        headers = {}
+        if self.auth_token:
+            instance_id = os.getenv("VASTAI_INSTANCE_ID", "")
+            if instance_id:
+                headers["Cookie"] = f"C.{instance_id}_auth_token={self.auth_token}"
+            else:
+                headers["Cookie"] = f"auth_token={self.auth_token}"
+
         try:
-            # Use sync endpoint for simplicity (can upgrade to WebSocket later)
-            resp = await client.post(
-                "/API/GenerateText2Image",
-                json=payload,
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            result = resp.json()
+            async with websockets.connect(ws_url, additional_headers=headers) as ws:
+                await ws.send(json.dumps(payload))
 
-            # Check for errors
-            if "error" in result:
-                raise SwarmUIGenerationError(f"Generation failed: {result['error']}")
+                video_path = None
+                result_seed = seed
 
-            # Extract output path(s)
-            images = result.get("images", [])
-            if not images:
-                raise SwarmUIGenerationError("No output in generation result")
+                async for msg in ws:
+                    data = json.loads(msg)
 
-            # SwarmUI returns multiple files: PNG thumbnail + MP4 video
-            # Find the MP4/video file from the results
-            video_path = None
-            for path in images:
-                if path.endswith('.mp4') or path.endswith('.webm') or path.endswith('.gif'):
-                    video_path = path
-                    break
+                    if "gen_progress" in data:
+                        progress = data["gen_progress"].get("overall_percent", 0)
+                        if on_progress:
+                            on_progress(progress)
+                        logger.debug("Generation progress", percent=f"{progress*100:.0f}%")
 
-            # Fallback to first result if no video found
-            if not video_path:
-                video_path = images[0]
-                logger.warning("No video file found in results, using first output", path=video_path)
+                    elif "image" in data:
+                        img = data["image"]
+                        if isinstance(img, dict):
+                            video_path = img.get("image", "")
+                        else:
+                            video_path = str(img)
+                        logger.info("Generation complete", path=video_path)
+                        break
 
-            logger.info("Video generation complete", path=video_path, total_outputs=len(images))
+                    elif "error" in data:
+                        raise SwarmUIGenerationError(f"Generation failed: {data['error']}")
 
-            return {
-                "video_path": video_path,
-                "video_url": f"{self.base_url}/{video_path}" if video_path else None,
-                "seed": result.get("seed", seed),
-                "model": model,
-                "frames": num_frames,
-            }
+                if not video_path:
+                    raise SwarmUIGenerationError("No output received from generation")
 
-        except httpx.HTTPStatusError as e:
-            error_text = e.response.text[:500] if e.response.text else "Unknown error"
-            raise SwarmUIGenerationError(f"Generation failed: HTTP {e.response.status_code} - {error_text}")
-        except httpx.TimeoutException:
-            raise SwarmUIGenerationError(f"Generation timed out after {self.timeout}s")
+                return {
+                    "video_path": video_path,
+                    "video_url": f"{self.base_url}/{video_path}",
+                    "seed": result_seed,
+                    "model": model,
+                    "frames": num_frames,
+                }
+
+        except websockets.exceptions.WebSocketException as e:
+            raise SwarmUIGenerationError(f"WebSocket error: {e}")
 
     async def get_video_bytes(self, video_path: str) -> bytes:
         """

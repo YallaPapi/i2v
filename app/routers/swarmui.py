@@ -150,13 +150,8 @@ async def generate_video(
     lora_high = request.lora_high or settings.swarmui_lora_high
     lora_low = request.lora_low or settings.swarmui_lora_low
 
-    # Build LoRA arrays with section confinement
-    loras = [lora_high, lora_low]
-    lora_weights = ["1", "1"]
-    lora_section_confinement = ["2", "3"]  # cid=2 for video, cid=3 for videoswap
-
     logger.info(
-        "Starting SwarmUI video generation",
+        "Starting SwarmUI video generation (WebSocket)",
         image_url=str(request.image_url)[:80],
         model=model,
         swap_model=swap_model,
@@ -170,7 +165,8 @@ async def generate_video(
         # Step 1: Upload image to SwarmUI (converts to base64 data URI)
         image_path = await client.upload_image(str(request.image_url))
 
-        # Step 2: Generate video with EXACT Wan 2.2 I2V params from working metadata
+        # Step 2: Generate video via WebSocket (no HTTP timeout issues)
+        # LoRAs are embedded in prompt using <video> <lora:name> <videoswap> <lora:name> syntax
         result = await client.generate_video(
             image_path=image_path,
             prompt=request.prompt,
@@ -192,10 +188,9 @@ async def generate_video(
             video_format=request.video_format,
             width=request.width,
             height=request.height,
-            # LoRAs with section confinement
-            loras=loras,
-            lora_weights=lora_weights,
-            lora_section_confinement=lora_section_confinement,
+            # LoRAs - embedded in prompt automatically
+            lora_high=lora_high,
+            lora_low=lora_low,
         )
 
         video_url = result.get("video_url")
