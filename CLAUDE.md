@@ -2,6 +2,8 @@
 
 ---
 
+NO FUCKING GUESSING! DO NOT GUESS EVER! IF I ASK YOU A QUESTION AND YOU DON'T KNOW THE ANSWER, FUCKNIG SEARCH FOR THE ANSWER EITHER IN THE DOCS OR FUCKING ON THE INTERNET. GUESSING IS NOT ALLOWED. GUESSING IS A WASTE OF TIME. WHEN U GUESS U ARE WRONG 99% OF THE TIME AND IT IS A COMPLETE WASTE OF TIME. GUESSING IS BAD. GUESSING RUINS PROJECTS. GUESSING MAKES ME WANT TO CANCEL MY SUBSCRIPTION AND USE ANOTHER SERVICE. DO NOT DO IT. STOP DOING IT. FUCK
+
 DO NOT ASK ME QUESTIONS THAT YOU COULD FIND THE ANSWER TO BY SEARCHING THE CODEBASE. FOR EXAMPLE, IF WE DISCUSS A CLOUDFLARE SOLUTION, DO NOT ASK ME IF I HAVE AN API KEY WHEN U COULD JUST SEARCH THE CODEBASE TO SEE IF THERE IS AN API KEY. IF WE DISCUSS SOMETHING THAT REQUIRES A TOKEN, DO NOT ASK ME IF I HAVE A TOKEN WHEN U CAN SEARCH THE CODEBASE TO SEE IF I HAVE A TOKEN. DO NOT ASK ME ANYTHING IF U CAN SEARCH FOR THE ANSWER IN THE FUCKING CODEBASE.
 
 ## CLAUDE-MEM WINDOWS FIX (IMPORTANT)
@@ -182,34 +184,80 @@ Periodically compare your progress against the PRD. Are you on track? Are you bu
 
 ## Vast.ai GPU Instance Configuration
 
-### Access Details
+### Access Details (UPDATED 2026-01-15)
 | Variable | Value |
 |----------|-------|
-| Instance ID | `29996148` |
-| SSH | `ssh -p 25797 root@115.124.123.238` |
-| SwarmUI URL | `https://swarm.wunderbun.com` (permanent tunnel) |
-| Auth Token | See .env `SWARMUI_AUTH_TOKEN` |
-| GPU | H100 SXM (80GB VRAM) |
-| Template | `vastai/swarmui:v0.9.7-Beta` |
-| SwarmUI Port | `7865` (via Caddy proxy, internal `17865`) |
+| Instance ID | `30034308` |
+| SSH | `ssh -p <port> root@<ssh_host>` (get from `vastai show instances`) |
+| SwarmUI Named Tunnel | `https://swarm.wunderbun.com` (permanent URL) |
+| Auth Token | See `.env` `SWARMUI_AUTH_TOKEN` |
+| GPU | NVIDIA H100 80GB HBM3 |
+| Template | `vastai/swarmui` (official) |
+| SwarmUI Path | `/workspace/SwarmUI/` (NOT /root/) |
+| SwarmUI Internal Port | `17865` (direct API, localhost only) |
+| SwarmUI External Port | `7865` (Caddy proxy, accessible externally) |
+| ComfyUI Ports | `7821/7823` (internal backend) |
+| Volume ID | `30034307` (91GB, mounted at /workspace) |
+
+**CRITICAL: SSH Changes Every Instance Restart!**
+- SSH goes through Vast.ai proxy: `ssh -p <port> root@ssh<N>.vast.ai`
+- The port and host CHANGE every time the instance is rebooted/recreated
+- ALWAYS get current SSH info: `vastai show instances --raw | jq '.[0] | {ssh_host, ssh_port}'`
+- Direct IP (`public_ipaddr`) does NOT work for SSH
+- Example: `ssh -p 100 root@34.48.171.202` (port changes each restart)
+
+**DISK SPACE WARNING:**
+- Volume is 91GB total - monitor usage with `df -h /workspace`
+- Models use ~75GB - only ~16GB free
+- Temp files can fill disk causing SSH crashes and SwarmUI failures
+- Clean `/workspace/SwarmUI/Output/` and temp files regularly
 
 ### Cloudflare Tunnel Setup
 
-**Permanent Named Tunnel** (recommended - no HTTP timeout issues):
-```bash
-# Tunnel ID: fe6f25a9-f59b-46f3-9578-7c19cd7faf3e
-# Public hostname: swarm.wunderbun.com → http://localhost:7865
+**CRITICAL: Named Tunnel Must Be Started Manually (or via onstart script)**
 
-# Start named tunnel on instance:
-ssh -p 25797 root@115.124.123.238 << 'EOF'
-export TOKEN="$CLOUDFLARE_TUNNEL_TOKEN"  # From .env
-nohup cloudflared tunnel run --token "$TOKEN" > /tmp/tunnel.log 2>&1 &
-EOF
+The Vast.ai SwarmUI template ONLY starts quick tunnels (random `*.trycloudflare.com` URLs).
+Our named tunnel (`swarm.wunderbun.com`) requires explicit start.
+
+**Two Tunnel Types:**
+
+| Type | URL | Timeout | Auto-start |
+|------|-----|---------|------------|
+| Quick Tunnel | `*.trycloudflare.com` | 100 seconds | YES (by template) |
+| Named Tunnel | `swarm.wunderbun.com` | No limit | NO (manual/onstart) |
+
+**Named Tunnel Configuration:**
+- Tunnel ID: `fe6f25a9-f59b-46f3-9578-7c19cd7faf3e`
+- Public hostname: `swarm.wunderbun.com` → `http://localhost:7865`
+- Token: See `.env` `CLOUDFLARE_TUNNEL_TOKEN`
+- Configured in: Cloudflare Zero Trust Dashboard → Networks → Tunnels
+
+**Port Mapping (IMPORTANT - check this if tunnel returns 502):**
+The tunnel hostname points to a specific port in Cloudflare dashboard:
+- Correct: `swarm.wunderbun.com` → `http://localhost:7865` (Caddy proxy)
+- If you get 502, verify port in Cloudflare Zero Trust dashboard matches
+
+**Starting the Named Tunnel:**
+```bash
+# 1. SSH into instance (get current SSH from vastai show instances)
+ssh -p <port> root@<ssh_host>
+
+# 2. Start named tunnel
+TUNNEL_TOKEN="<from .env CLOUDFLARE_TUNNEL_TOKEN>"
+nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
+
+# 3. Verify it's running
+ps aux | grep "tunnel run" | grep -v grep
+tail -f /tmp/tunnel.log
 ```
 
-**Quick Tunnel** (auto-created by Vast.ai template, has 100s HTTP timeout):
+**Making it Permanent (onstart script):**
+The named tunnel command is included in `scripts/vastai_onstart.sh`. When creating a new instance, paste the full onstart script into the Vast.ai "onstart" field. This ensures the tunnel starts automatically on instance boot.
+
+**Quick Tunnel (fallback):**
 ```bash
-ssh -p 25797 root@115.124.123.238 "grep trycloudflare /var/log/tunnel_manager.log | tail -1"
+# Get current quick tunnel URL from instance logs
+ssh -p <port> root@<ssh_host> "grep trycloudflare /var/log/tunnel_manager.log | tail -1"
 ```
 
 **Auth Token Required**: Both tunnel types require auth cookie:
@@ -219,79 +267,95 @@ Cookie: C.{INSTANCE_ID}_auth_token={TOKEN}
 
 The backend uses `SWARMUI_AUTH_TOKEN` env var to set this cookie automatically.
 
-### Model Setup
-Models are stored in `/root/SwarmUI/Models/diffusion_models/`:
-- `Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf` (9GB) - Default I2V model
-- `wan22-model-2367702.gguf` (14GB) - Civitai model
-- `wan22-model-2367780.gguf` (14GB) - Civitai model
-- `wan22-nsfw-v2-q8-high.gguf` (15GB) - Enhanced NSFW model
+### Model Setup (UPDATED 2026-01-15)
+Models are stored in `/workspace/SwarmUI/Models/diffusion_models/`:
+- `wan2.2_i2v_high_noise_14B_fp8.gguf` (15GB) - High-noise base model
+- `wan2.2_i2v_low_noise_14B_fp8.gguf` (15GB) - Low-noise swap model
 
-Text encoders in `/root/SwarmUI/Models/text_encoders/`:
+LoRAs in `/workspace/SwarmUI/Models/Lora/`:
+- `wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16.safetensors` (586MB)
+- `wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16.safetensors` (586MB)
+- `wan2.2-lightning_i2v_civitai_high.safetensors` (602MB)
+- `wan2.2-lightning_i2v_civitai_low.safetensors` (706MB)
+
+Text encoders in `/workspace/SwarmUI/Models/text_encoders/`:
 - `umt5_xxl_fp8_e4m3fn_scaled.safetensors` (6.3GB)
 
-### Required Fixes (Apply on Instance Start)
-These MUST be applied after instance creation/restart:
+### CRITICAL: Required Fixes After Instance Start
+The official SwarmUI template is missing dependencies. Run these IMMEDIATELY:
 
-1. **libcuda.so symlink** (required for SageAttention):
 ```bash
-ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
+# SSH into instance (get current port from `vastai show instances`)
+ssh -p 34308 root@ssh2.vast.ai
+
+# 1. Install gguf module (REQUIRED for GGUF models to load)
+# NOTE: The correct pip path is /venv/main/bin/pip (NOT /workspace/SwarmUI/dlbackend/ComfyUI/venv/bin/pip)
+/venv/main/bin/pip install gguf
+
+# 2. Restart SwarmUI to reload models
+pkill -f SwarmUI && cd /workspace/SwarmUI && ./launch-linux.sh &
+
+# 3. Verify gguf is installed
+/venv/main/bin/python -c "import gguf; print('gguf OK')"
+
+# 4. Verify models are visible (after restart completes ~60s)
+curl -X POST "http://localhost:7865/API/ListModels" -H "Content-Type: application/json" -d '{}' | jq '.models | length'
 ```
 
-2. **SageAttention** (faster attention for RTX 50 series):
-```bash
-/root/SwarmUI/dlbackend/ComfyUI/venv/bin/pip install sageattention
+Without `pip install gguf`, you will see this error:
+```
+ModuleNotFoundError: No module named 'gguf'
+Request requires model '...' but the backend does not have that model
 ```
 
-3. **SwarmUI Backend Config** (`/root/SwarmUI/Data/Backends.fds`):
-Set `ExtraArgs: --use-sage-attention` in the ComfyUI backend settings.
+### Onstart Script (Recommended for New Instances)
 
-4. **Cloudflare Named Tunnel** (for permanent external access):
-```bash
-# Use the named tunnel token from .env CLOUDFLARE_TUNNEL_TOKEN
-nohup cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
-```
+See `docs/VASTAI_INSTANCE_REBUILD.md` for complete onstart script with model downloads.
 
-### Onstart Script Template
-Add this to the Vast.ai instance onstart to automate setup:
+Quick version:
 ```bash
 #!/bin/bash
 exec > /var/log/onstart.log 2>&1
 set -x
 
-# Named tunnel token (set in Vast.ai instance env or paste here)
-TUNNEL_TOKEN="eyJhIjoiNmU4YWNhOWI4MDEyYjE5YmYwMmZlMDBiNWJiMGQxNjUiLCJ0IjoiZmU2ZjI1YTktZjU5Yi00NmYzLTk1NzgtN2MxOWNkN2ZhZjNlIiwicyI6Ik16WXdPR1kxTjJJdE1HUmxPUzAwT1dOaExUaGlZVE10WXpBM09XVmxOamxoTnpKbCJ9"
+# Wait for SwarmUI to fully start
+sleep 60
 
-# Wait for SwarmUI to start (Vast.ai template auto-starts it)
-sleep 30
+# Install gguf module (CRITICAL - without this GGUF models won't load)
+# NOTE: Correct pip path is /venv/main/bin/pip
+/venv/main/bin/pip install gguf
 
-# Start permanent Cloudflare tunnel (swarm.wunderbun.com → localhost:7865)
-nohup cloudflared tunnel run --token "$TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
+# Optional: Start named Cloudflare tunnel for permanent URL
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    nohup cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
+fi
 
-echo "Named tunnel started! Access via https://swarm.wunderbun.com"
+# Restart SwarmUI to reload with new modules
+pkill -f SwarmUI && cd /workspace/SwarmUI && nohup ./launch-linux.sh > /tmp/swarmui.log 2>&1 &
+
+echo "Onstart complete!"
 ```
 
-**Note**: The Vast.ai SwarmUI template already handles:
-- SwarmUI installation and startup (port 17865)
-- Caddy reverse proxy (port 7865)
-- Quick tunnels for portal access
-
-The onstart script only needs to add the **named tunnel** for permanent access.
-
-### SwarmUI API (Wan 2.2 I2V - VERIFIED 2026-01-14)
+### SwarmUI API (Wan 2.2 I2V - VERIFIED 2026-01-15)
 
 Full API documentation: `docs/swarm/` directory
 
 **Key Endpoints:**
 - `POST /API/GetNewSession` - Get session ID
-- `POST /API/GenerateText2Image` - Generate video (I2V with init image)
+- `WS /API/GenerateText2ImageWS` - Generate video via WebSocket (RECOMMENDED)
+- `POST /API/GenerateText2Image` - Generate video via HTTP (has timeout issues)
 
-**EXACT Working Parameters (from verified generation):**
+**Port Usage:**
+- On instance (SSH): Use `http://127.0.0.1:17865` or `ws://127.0.0.1:17865`
+- Via tunnel: Use `https://tunnel-url` or `wss://tunnel-url` (goes through Caddy on 7865)
+
+**EXACT Working Parameters (UPDATED 2026-01-15 for GGUF models):**
 ```json
 {
   "session_id": "<from GetNewSession>",
   "prompt": "a woman laughs, smiles <video//cid=2> <videoswap//cid=3>",
   "negativeprompt": "blurry, jerky motion, stuttering, flickering...",
-  "model": "wan2.2_i2v_high_noise_14B_fp8_scaled",
+  "model": "wan2.2_i2v_high_noise_14B_fp8.gguf",
   "images": 1,
   "steps": 10,
   "cfgscale": 7.0,
@@ -301,8 +365,8 @@ Full API documentation: `docs/swarm/` directory
   "sampler": "euler",
   "scheduler": "simple",
   "initimagecreativity": 0.0,
-  "videomodel": "wan2.2_i2v_high_noise_14B_fp8_scaled",
-  "videoswapmodel": "wan2.2_i2v_low_noise_14B_fp8_scaled",
+  "videomodel": "wan2.2_i2v_high_noise_14B_fp8.gguf",
+  "videoswapmodel": "wan2.2_i2v_low_noise_14B_fp8.gguf",
   "videoswappercent": 0.6,
   "videoframes": 80,
   "videosteps": 5,
@@ -319,6 +383,10 @@ Full API documentation: `docs/swarm/` directory
   "initimage": "<base64 data URI>"
 }
 ```
+
+**NOTE**: Model filenames use `.gguf` extension (not `_scaled` suffix). The exact filenames on instance are:
+- `wan2.2_i2v_high_noise_14B_fp8.gguf` (high-noise base)
+- `wan2.2_i2v_low_noise_14B_fp8.gguf` (low-noise swap)
 
 **Critical Notes:**
 - `initimagecreativity` NOT `initimagecreativestrength` (param name matters!)
