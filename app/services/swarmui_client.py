@@ -176,30 +176,31 @@ class SwarmUIClient:
         self,
         image_path: str,
         prompt: str,
-        # GGUF model names (updated 2026-01-15 to match instance)
+        # GGUF model names (updated 2026-01-16 to match instance)
         model: str = "wan2.2_i2v_high_noise_14B_fp8.gguf",
         width: int = 720,
         height: int = 1280,
-        num_frames: int = 80,
+        num_frames: int = 81,  # Fixed: was 80, should be 81
         fps: int = 16,
-        steps: int = 10,
+        steps: int = 20,  # Fixed: was 10, should be 20
         cfg_scale: float = 7.0,
         seed: int = -1,
-        # Video-specific params (exact from working metadata)
-        video_steps: int = 5,
+        # Video-specific params (exact from working metadata 2026-01-16)
+        video_steps: int = 10,  # Fixed: was 5, should be 10
         video_cfg: float = 1.0,
         swap_model: str = "wan2.2_i2v_low_noise_14B_fp8.gguf",
         swap_percent: float = 0.6,
-        # Frame interpolation (exact from working metadata)
+        # Frame interpolation
         interpolation_method: str = "RIFE",
         interpolation_multiplier: int = 2,
         video_resolution: str = "Image Aspect, Model Res",
-        video_format: str = "h264-mp4",
-        # LoRAs - embedded in prompt using <video> <lora:name> <videoswap> <lora:name> syntax
-        lora_high: str = "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16",
-        lora_low: str = "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16",
-        # Negative prompt (exact from working metadata)
-        negative_prompt: str = "blurry, jerky motion, stuttering, flickering, frame skipping, ghosting, motion blur, extra fingers, extra hands, extra limbs, missing fingers, missing limbs, deformed hands, mutated hands, fused fingers, bad anatomy, disfigured, malformed, distorted face, ugly, low quality, worst quality, logo, duplicate frames, static, frozen, morphing, warping, glitching, plastic skin",
+        video_format: str = "webp",  # Fixed: was h264-mp4, working uses webp
+        # LoRAs - CORRECT names from instance (2026-01-16)
+        # Uses loras/loraweights/lorasectionconfinement arrays, NOT embedded in prompt
+        lora_high: str = "Lightning_Lora-HIGH_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1022-L",
+        lora_low: str = "Lightning_Lora-_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1030-H",
+        # Negative prompt (simpler from working metadata)
+        negative_prompt: str = "blurry, choppy, plastic skin, perfect skin",
         # Progress callback
         on_progress: Optional[Callable[[float], None]] = None,
     ) -> dict:
@@ -239,11 +240,11 @@ class SwarmUIClient:
         import os
         session_id = await self.get_session()
 
-        # Build prompt with LoRAs embedded using SwarmUI syntax
-        # <video> section applies to video model, <videoswap> to swap model
-        full_prompt = f"{prompt} <video> <lora:{lora_high}> <videoswap> <lora:{lora_low}>"
+        # Build prompt with CID tags for LoRA section confinement
+        # <video//cid=2> links to loras[0], <videoswap//cid=3> links to loras[1]
+        full_prompt = f"{prompt} <video//cid=2> <videoswap//cid=3>"
 
-        # Build payload - NO loras/loraweights params, they're in the prompt
+        # Build payload with CORRECT LoRA syntax (arrays + lorasectionconfinement)
         payload = {
             "session_id": session_id,
             "prompt": full_prompt,
@@ -253,7 +254,7 @@ class SwarmUIClient:
             "seed": seed if seed >= 0 else -1,
             "steps": steps,
             "cfgscale": cfg_scale,
-            "aspectratio": "Custom",
+            "aspectratio": "9:16",  # Fixed: was "Custom"
             "width": width,
             "height": height,
             "sampler": "euler",
@@ -272,6 +273,11 @@ class SwarmUIClient:
             "videofps": fps,
             "automaticvae": True,
             "initimage": image_path,
+            # LoRAs with section confinement (cid=2 for video, cid=3 for videoswap)
+            # MUST be comma-separated strings, NOT arrays
+            "loras": f"{lora_high},{lora_low}",
+            "loraweights": "1,1",
+            "lorasectionconfinement": "2,3",
         }
 
         logger.info(

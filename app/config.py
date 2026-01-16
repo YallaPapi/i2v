@@ -33,19 +33,19 @@ class Settings(BaseSettings):
     swarmui_auth_token: Optional[str] = None  # Auth token from tunnel URL ?token=xxx
     vastai_instance_id: Optional[str] = None  # Vast.ai instance ID
 
-    # SwarmUI generation defaults (Updated 2026-01-15 - GGUF model names)
+    # SwarmUI generation defaults (Updated 2026-01-16 - CORRECT values from working metadata)
     swarmui_model: str = "wan2.2_i2v_high_noise_14B_fp8.gguf"
     swarmui_swap_model: str = "wan2.2_i2v_low_noise_14B_fp8.gguf"
-    swarmui_default_steps: int = 10
+    swarmui_default_steps: int = 20  # Fixed: was 10
     swarmui_default_cfg: float = 7.0
-    swarmui_default_frames: int = 80
+    swarmui_default_frames: int = 81  # Fixed: was 80
     swarmui_default_fps: int = 16
-    swarmui_video_steps: int = 5
+    swarmui_video_steps: int = 10  # Fixed: was 5
     swarmui_video_cfg: float = 1.0
     swarmui_swap_percent: float = 0.6
-    # LoRAs with section confinement (high_fp16 for video model, low_fp16 for swap model)
-    swarmui_lora_high: str = "wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16"
-    swarmui_lora_low: str = "wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16"
+    # LoRAs - CORRECT filenames from instance (2026-01-16)
+    swarmui_lora_high: str = "Lightning_Lora-HIGH_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1022-L"
+    swarmui_lora_low: str = "Lightning_Lora-_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1030-H"
 
     # Pinokio WAN GP settings (Vast.ai self-hosted)
     pinokio_wan_url: Optional[str] = None  # Cloudflare tunnel URL
