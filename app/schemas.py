@@ -28,10 +28,13 @@ MODEL_RESOLUTIONS = {
     "cogvideox": ["480p", "720p"],  # CogVideoX-5B
     "stable-video": ["576p"],  # SVD fixed resolution
     # Vast.ai self-hosted models
-    "vastai-wan22-i2v": ["480p", "720p"],  # Wan 2.2 I2V 14B
+    "vastai-wan22-i2v": ["480p", "720p", "1080p"],  # Wan 2.2 I2V 14B (1080p may OOM)
     "vastai-wan22-t2v": ["480p", "720p"],
     "vastai-cogvideox": ["480p", "720p"],
     "vastai-svd": ["576p"],
+    # Pinokio WAN GP self-hosted models
+    "pinokio-wan22-i2v": ["480p", "720p"],  # Wan 2.2 I2V via Pinokio
+    "pinokio-hunyuan-i2v": ["480p", "720p"],  # Hunyuan 1.5 i2v
 }
 
 
@@ -40,20 +43,56 @@ MODEL_RESOLUTIONS = {
 # ============================================================
 
 class VastaiVideoConfig(BaseModel):
-    """Config for Vast.ai video generation."""
+    """Config for Vast.ai video generation with Wan 2.2."""
 
-    lora: Optional[str] = None  # LoRA model name
+    # LoRA params (high+low pair for dual-model Wan 2.2)
+    lora_high: Optional[str] = None  # Lightning LoRA for high-noise model
+    lora_low: Optional[str] = None   # Lightning LoRA for low-noise swap model
     lora_strength: float = 1.0  # 0.0-1.0
-    steps: int = 4  # Inference steps (4 with LoRA, 20+ without)
-    cfg_scale: float = 1.0  # CFG scale 1.0-20.0
-    frames: int = 33  # Number of frames (17-81)
+    steps: int = 10  # Image gen steps
+    cfg_scale: float = 7.0  # Image gen CFG scale
+    frames: int = 80  # Number of frames (17-257)
     fps: int = 16  # Output FPS
-    seed: Optional[int] = None  # Random seed
+    seed: Optional[int] = -1  # Random seed (-1 for random)
+
+    # Advanced Wan 2.2 I2V params
+    video_steps: int = 5  # Video diffusion steps (5 with lightning LoRA)
+    video_cfg: float = 1.0  # Video CFG scale (1.0 for Wan)
+    swap_model: Optional[str] = None  # Model to swap to at swap_percent
+    swap_percent: float = 0.6  # When to swap (0.6 = 60%)
+    interpolation_method: Optional[str] = "RIFE"  # Frame interpolation
+    interpolation_multiplier: int = 2  # Interpolation factor (2x frames)
+
+    # Post-processing options
+    caption: Optional[str] = None  # Caption text for overlay
+    apply_spoof: bool = False  # Apply spoofing transforms
 
 
 def is_vastai_model(model: str) -> bool:
     """Check if model runs on Vast.ai."""
     return model.startswith("vastai-")
+
+
+# ============================================================
+# PINOKIO WAN GP CONFIGURATION
+# ============================================================
+
+class PinokioVideoConfig(BaseModel):
+    """Config for Pinokio WAN GP video generation.
+
+    Source: .taskmaster/docs/pinokio-integration-prd.txt
+    Verified: wgp.py:5164 generate_video() signature
+    """
+
+    steps: int = 4  # Inference steps (4 for distilled models)
+    cfg_scale: float = 5.0  # Guidance scale
+    frames: int = 81  # Number of frames (81 = ~5sec at 16fps)
+    seed: int = -1  # Random seed (-1 for random)
+
+
+def is_pinokio_model(model: str) -> bool:
+    """Check if model runs on Pinokio WAN GP."""
+    return model.startswith("pinokio-")
 
 
 class JobCreate(BaseModel):
@@ -91,9 +130,14 @@ class JobCreate(BaseModel):
         "vastai-wan22-t2v",
         "vastai-cogvideox",
         "vastai-svd",
+        # Pinokio WAN GP self-hosted models
+        "pinokio-wan22-i2v",
+        "pinokio-hunyuan-i2v",
     ] = "wan"
     # Vast.ai config (only used when model starts with 'vastai-')
     vastai_config: Optional[VastaiVideoConfig] = None
+    # Pinokio config (only used when model starts with 'pinokio-')
+    pinokio_config: Optional[PinokioVideoConfig] = None
 
     @field_validator("resolution")
     @classmethod
@@ -107,9 +151,14 @@ class JobCreate(BaseModel):
             )
         return v
 
-    def get_provider(self) -> Literal["fal", "vastai"]:
+    def get_provider(self) -> Literal["fal", "vastai", "pinokio"]:
         """Get provider based on model selection."""
-        return "vastai" if is_vastai_model(self.model) else "fal"
+        if is_vastai_model(self.model):
+            return "vastai"
+        elif is_pinokio_model(self.model):
+            return "pinokio"
+        else:
+            return "fal"
 
 
 class JobResponse(BaseModel):
@@ -327,6 +376,10 @@ class I2VConfig(BaseModel):
         "luma-ray2",
         "cogvideox",
         "stable-video",
+        # Self-hosted
+        "vastai-wan22-i2v",
+        "pinokio-wan22-i2v",
+        "pinokio-hunyuan-i2v",
     ] = "kling"
     videos_per_image: int = 1
     resolution: Literal["480p", "576p", "580p", "720p", "1080p"] = "1080p"
@@ -603,6 +656,10 @@ class BulkI2VConfig(BaseModel):
         "luma-ray2",
         "cogvideox",
         "stable-video",
+        # Self-hosted
+        "vastai-wan22-i2v",
+        "pinokio-wan22-i2v",
+        "pinokio-hunyuan-i2v",
     ] = "kling"
     resolution: Literal["480p", "576p", "720p", "1080p"] = "1080p"
     duration_sec: int = 5  # Model-specific: Kling 5/10, Veo 4/6/8, Sora 4/8/12, Wan26 5/10/15

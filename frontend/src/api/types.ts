@@ -56,7 +56,8 @@ export interface VideoJob {
 
 // Vast.ai specific generation parameters
 export interface VastaiVideoConfig {
-  lora?: string              // LoRA model name (e.g., 'wan2.2_i2v_lightx2v_4steps')
+  lora_high?: string         // High-noise model LoRA (e.g., 'wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16')
+  lora_low?: string          // Low-noise swap model LoRA
   lora_strength?: number     // LoRA strength 0.0-1.0, default 1.0
   steps?: number             // Inference steps, default 4 (with 4-step LoRA)
   cfg_scale?: number         // CFG scale 1.0-20.0, default 1.0
@@ -324,11 +325,39 @@ export const VASTAI_VIDEO_MODELS: VideoModelInfo[] = [
 // Combined list for backward compatibility
 export const VIDEO_MODELS: VideoModelInfo[] = [...FAL_VIDEO_MODELS, ...VASTAI_VIDEO_MODELS]
 
-// Available LoRAs for Vast.ai models
+// Available LoRA sets for Vast.ai models (each set has high+low pair)
 export const VASTAI_LORAS = [
-  { value: 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise', label: '4-Step Accelerator (Recommended)', steps: 4 },
-  { value: 'none', label: 'No LoRA (20+ steps)', steps: 20 },
+  {
+    value: 'kijai',
+    label: 'Kijai Lightning (Recommended)',
+    steps: 4,
+    description: 'Kijai 4-step Lightning LoRA - fastest, well-tested'
+  },
+  {
+    value: 'civitai',
+    label: 'Civitai Lightning',
+    steps: 4,
+    description: 'Civitai 4-step variant - alternative style'
+  },
+  {
+    value: 'none',
+    label: 'No LoRA (20+ steps)',
+    steps: 20,
+    description: 'Full quality, slower generation'
+  },
 ]
+
+// LoRA set mappings (high-noise + low-noise pairs)
+export const LORA_SET_MAP: Record<string, { high: string; low: string }> = {
+  kijai: {
+    high: 'wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16',
+    low: 'wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16',
+  },
+  civitai: {
+    high: 'wan2.2-lightning_i2v_civitai_high',
+    low: 'wan2.2-lightning_i2v_civitai_low',
+  },
+}
 
 // Frame count options for Vast.ai models
 export const VASTAI_FRAME_OPTIONS = [

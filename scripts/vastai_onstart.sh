@@ -1,98 +1,132 @@
 #!/bin/bash
-# Vast.ai Onstart Script for SwarmUI + Wan 2.2 I2V
-# This script runs on instance startup and sets up everything automatically.
-#
-# Usage: Include this script in the Vast.ai instance creation payload as "onstart"
-
-set -e
+# Vast.ai Onstart Script - SwarmUI Model Downloader
+# Uses SwarmUI's ModelsAPI for reliable model registration
+# Updated: 2026-01-16
 exec > /var/log/onstart.log 2>&1
+set -x
+echo "Onstart script started at $(date)"
 
-echo "=== $(date) Starting i2v SwarmUI setup ==="
+# Configuration (with fallback defaults)
+export CLOUDFLARE_TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-eyJhIjoiNmU4YWNhOWI4MDEyYjE5YmYwMmZlMDBiNWJiMGQxNjUiLCJ0IjoiZmU2ZjI1YTktZjU5Yi00NmYzLTk1NzgtN2MxOWNkN2ZhZjNlIiwicyI6Ik16WXdPR1kxTjJJdE1HUmxPUzAwT1dOaExUaGlZVE10WXpBM09XVmxOamxoTnpKbCJ9}"
+export CIVITAI_TOKEN="${CIVITAI_TOKEN:-1fce15bca33db94cda6daab75f21de79}"
 
-# Step 1: Install system dependencies
-echo "=== $(date) Installing system dependencies ==="
-apt-get update -qq
-apt-get install -y -qq git wget curl python3 python3-pip python3-venv
+PIP_CACHE="/workspace/pip_cache"
+mkdir -p "$PIP_CACHE"
 
-# Step 2: Install .NET 8 SDK (required for SwarmUI)
-echo "=== $(date) Installing .NET 8 SDK ==="
-wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
-chmod +x /tmp/dotnet-install.sh
-/tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet
-ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
-dotnet --version
+#==============================================================================
+# INSTALL PYTHON DEPENDENCIES
+#==============================================================================
+echo "Installing Python packages..."
+/venv/main/bin/pip install --cache-dir="$PIP_CACHE" gguf sageattention triton websockets --quiet
 
-# Step 3: Clone SwarmUI
-echo "=== $(date) Cloning SwarmUI ==="
-cd /root
-git clone https://github.com/mcmonkeyprojects/SwarmUI.git
-cd /root/SwarmUI
+#==============================================================================
+# WAIT FOR SWARMUI TO BE READY
+#==============================================================================
+echo "Waiting for SwarmUI on port 17865..."
+for i in {1..120}; do
+    if nc -z localhost 17865 2>/dev/null; then
+        echo "SwarmUI is ready!"
+        break
+    fi
+    if [ $i -eq 120 ]; then
+        echo "ERROR: SwarmUI failed to start after 10 minutes"
+        exit 1
+    fi
+    sleep 5
+done
 
-# Step 4: Create model directories
-echo "=== $(date) Creating model directories ==="
-mkdir -p Models/diffusion_models Models/Lora
-
-# Step 5: Download models from HuggingFace (parallel)
-echo "=== $(date) Downloading models ==="
-(
-    wget -q --show-progress -O Models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf \
-        "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
-) &
-(
-    wget -q --show-progress -O Models/Lora/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors \
-        "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
-) &
-
-# Step 6: Start SwarmUI (this will create venv and install ComfyUI)
-echo "=== $(date) Starting SwarmUI initial setup ==="
-# Run SwarmUI briefly to trigger install, then stop
-timeout 120 ./launch-linux.sh --host 0.0.0.0 --port 7801 --launch_mode none || true
-
-# Step 7: Fix venv pip (needed for ComfyUI packages)
-echo "=== $(date) Fixing venv pip ==="
-if [ -d "/root/SwarmUI/dlbackend/ComfyUI/venv" ]; then
-    /root/SwarmUI/dlbackend/ComfyUI/venv/bin/python -m ensurepip --upgrade
-    /root/SwarmUI/dlbackend/ComfyUI/venv/bin/pip install torchsde torchaudio 'gguf>=0.13.0' sentencepiece protobuf
-fi
-
-# Step 8: Install ComfyUI-GGUF node
-echo "=== $(date) Installing ComfyUI-GGUF node ==="
-if [ -d "/root/SwarmUI/dlbackend/ComfyUI/custom_nodes" ]; then
-    cd /root/SwarmUI/dlbackend/ComfyUI/custom_nodes
-    git clone https://github.com/city96/ComfyUI-GGUF.git
-fi
-
-# Wait for model downloads to complete
-echo "=== $(date) Waiting for model downloads ==="
-wait
-
-# Step 9: Install cloudflared
-echo "=== $(date) Installing cloudflared ==="
-wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
-
-# Step 10: Start SwarmUI properly
-echo "=== $(date) Starting SwarmUI ==="
-cd /root/SwarmUI
-nohup ./launch-linux.sh --host 0.0.0.0 --port 7801 --launch_mode none > /var/log/swarmui.log 2>&1 &
-
-# Wait for SwarmUI to be ready
-echo "=== $(date) Waiting for SwarmUI to start ==="
-sleep 30
-
-# Step 11: Start cloudflared tunnel
-echo "=== $(date) Starting cloudflared tunnel ==="
-nohup cloudflared tunnel --url http://localhost:7801 > /var/log/cloudflared.log 2>&1 &
-
-# Wait for tunnel to be ready
+# Give SwarmUI a moment to fully initialize
 sleep 10
 
-# Get and log the public URL
-echo "=== $(date) Setup complete ==="
-PUBLIC_URL=$(strings /var/log/cloudflared.log | grep trycloudflare.com | tail -1)
-echo "Public URL: $PUBLIC_URL"
-echo "$PUBLIC_URL" > /root/public_url.txt
+#==============================================================================
+# DOWNLOAD MODELS VIA SWARMUI API
+#==============================================================================
+echo "Downloading models via SwarmUI ModelsAPI..."
 
-echo "=== $(date) SwarmUI ready for video generation ==="
-echo "Check /var/log/swarmui.log for SwarmUI status"
-echo "Check /var/log/cloudflared.log for tunnel status"
+# Copy the downloader script to SwarmUI directory
+cat > /workspace/SwarmUI/download_models.py << 'PYTHON_SCRIPT'
+#!/usr/bin/env python3
+"""Download models via SwarmUI's ModelsAPI WebSocket endpoint."""
+
+import asyncio
+import json
+import os
+import sys
+
+CIVITAI_MODEL_IDS = [
+    # Diffusion models
+    2060527, 2060943, 2584698, 2584707, 2367702, 2367780,
+    290640, 923681, 501240, 915814,
+    # LoRAs
+    2090326, 2090344, 2079658, 2079614, 1776890, 984672,
+    1301668, 2546506, 263005, 87153, 556208, 2074888, 1071060,
+    # Embeddings
+    775151, 772342, 145996,
+]
+
+MAX_CONCURRENT = 4
+
+async def download_model(model_id, token, host, semaphore):
+    import websockets
+    url = f"https://civitai.com/api/download/models/{model_id}?token={token}"
+    ws_url = f"{host}/API/DoModelDownloadWS"
+
+    async with semaphore:
+        print(f"[{model_id}] Starting download...")
+        try:
+            async with websockets.connect(ws_url, close_timeout=10) as ws:
+                await ws.send(json.dumps({"url": url}))
+                async for msg in ws:
+                    data = json.loads(msg)
+                    if "progress" in data:
+                        print(f"[{model_id}] {data.get('progress', 0):.0%}")
+                    elif "success" in data:
+                        print(f"[{model_id}] SUCCESS")
+                        return True
+                    elif "error" in data:
+                        print(f"[{model_id}] ERROR: {data['error']}")
+                        return False
+                return False
+        except Exception as e:
+            print(f"[{model_id}] Error: {e}")
+            return False
+
+async def main():
+    token = os.environ.get("CIVITAI_TOKEN")
+    if not token:
+        print("ERROR: CIVITAI_TOKEN not set")
+        sys.exit(1)
+
+    host = os.environ.get("SWARM_HOST", "ws://localhost:17865")
+    print(f"Downloading {len(CIVITAI_MODEL_IDS)} models via {host}")
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    tasks = [download_model(mid, token, host, semaphore) for mid in CIVITAI_MODEL_IDS]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    success = sum(1 for r in results if r is True)
+    print(f"Complete: {success}/{len(CIVITAI_MODEL_IDS)} succeeded")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+PYTHON_SCRIPT
+
+chmod +x /workspace/SwarmUI/download_models.py
+/venv/main/bin/python /workspace/SwarmUI/download_models.py
+
+#==============================================================================
+# START CLOUDFLARE TUNNEL
+#==============================================================================
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    echo "Starting Cloudflare named tunnel..."
+    nohup cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" > /tmp/tunnel.log 2>&1 &
+fi
+
+#==============================================================================
+# VERIFY
+#==============================================================================
+echo "Verifying models loaded..."
+sleep 5
+curl -s http://localhost:17865/API/ListModels -X POST -H "Content-Type: application/json" -d '{"path":"","depth":10}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Models found: {len(d.get(\"files\",[]))}')" 2>/dev/null || echo "Could not query model list"
+
+echo "Onstart script completed at $(date)"

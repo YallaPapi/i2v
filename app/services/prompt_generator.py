@@ -5,12 +5,58 @@ Generates i2i prompts with on-screen captions for Instagram/TikTok style photos.
 Extracted from generate_prompts.py for API integration.
 """
 
+import re
 import random
 import anthropic
 import structlog
-from typing import Literal
+from typing import Literal, Union, TypedDict
 
 logger = structlog.get_logger()
+
+
+class PromptWithCaption(TypedDict):
+    """Structured prompt with separate caption for post-processing."""
+    prompt: str
+    caption: str
+
+
+# Regex to extract caption from prompt
+CAPTION_PATTERN = re.compile(
+    r",?\s*off-center TikTok-style caption written in Proxima Nova Semibold font "
+    r"white text with black outline reads:\s*(.+)$",
+    re.IGNORECASE
+)
+
+
+def extract_caption(prompt: str) -> tuple[str, str]:
+    """
+    Extract caption from prompt and return (clean_prompt, caption).
+
+    Args:
+        prompt: Full prompt with embedded caption
+
+    Returns:
+        Tuple of (prompt without caption, caption text)
+    """
+    match = CAPTION_PATTERN.search(prompt)
+    if match:
+        caption = match.group(1).strip()
+        # Remove quotes if present
+        if caption.startswith('"') and caption.endswith('"'):
+            caption = caption[1:-1]
+        elif caption.startswith("'") and caption.endswith("'"):
+            caption = caption[1:-1]
+
+        # Remove the caption portion from the prompt
+        clean_prompt = CAPTION_PATTERN.sub("", prompt).strip()
+        # Remove trailing comma if present
+        if clean_prompt.endswith(","):
+            clean_prompt = clean_prompt[:-1].strip()
+
+        return clean_prompt, caption
+
+    # No caption found - return original prompt and empty caption
+    return prompt, ""
 
 MODEL = "claude-sonnet-4-5-20250929"
 
@@ -1275,7 +1321,8 @@ async def generate_prompts(
     preserve_identity: bool = True,
     framing: Literal["close", "medium", "full"] = "medium",
     realism_preset: Literal["default", "phone_grainy", "harsh_flash", "film_aesthetic", "selfie", "candid"] = "default",
-) -> list[str]:
+    embed_caption: bool = True,
+) -> Union[list[str], list[PromptWithCaption]]:
     """
     Generate i2i prompts using Claude.
 
@@ -1288,9 +1335,13 @@ async def generate_prompts(
         preserve_identity: If True, add "preserving her exact facial features" to prompts
         framing: "close" (face/shoulders), "medium" (waist up), "full" (head to toe)
         realism_preset: Style preset for realism injection (default, phone_grainy, harsh_flash, etc.)
+        embed_caption: If True (default), return prompts with embedded captions.
+                      If False, return list of {prompt, caption} dicts for post-processing.
+                      Use False for models like Wan 2.2 where captions drift.
 
     Returns:
-        List of generated prompts
+        If embed_caption=True: List of prompt strings with embedded captions
+        If embed_caption=False: List of PromptWithCaption dicts with separate caption field
     """
     if count < 1 or count > 50:
         raise ValueError("Count must be between 1 and 50")
@@ -1415,6 +1466,23 @@ async def generate_prompts(
 
             clean_prompts.append(cleaned)
 
-    logger.info("Generated prompts", requested=count, actual=len(clean_prompts), bust_size=bust_size, preserve_identity=preserve_identity, framing=framing, realism_preset=realism_preset)
+    logger.info(
+        "Generated prompts",
+        requested=count,
+        actual=len(clean_prompts),
+        bust_size=bust_size,
+        preserve_identity=preserve_identity,
+        framing=framing,
+        realism_preset=realism_preset,
+        embed_caption=embed_caption,
+    )
+
+    # If embed_caption=False, extract captions for post-processing
+    if not embed_caption:
+        result: list[PromptWithCaption] = []
+        for prompt in clean_prompts:
+            clean_prompt, caption = extract_caption(prompt)
+            result.append(PromptWithCaption(prompt=clean_prompt, caption=caption))
+        return result
 
     return clean_prompts

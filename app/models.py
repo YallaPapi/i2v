@@ -787,6 +787,7 @@ class Job(Base):
     resolution = Column(String, nullable=False, default="1080p")
     duration_sec = Column(Integer, nullable=False, default=5)
     model = Column(String, nullable=False, default="wan")
+    provider = Column(String, nullable=False, default="fal")  # 'fal' or 'runpod'
 
     # Wan/Fal tracking
     wan_request_id = Column(String, nullable=True)

@@ -19,6 +19,7 @@ import {
   RESOLUTIONS,
   DURATIONS,
   VASTAI_LORAS,
+  LORA_SET_MAP,
   VASTAI_FRAME_OPTIONS,
   isVastaiModel,
   getProviderForModel,
@@ -76,10 +77,10 @@ export function VideoGeneration() {
       resolution: '1080p',
       duration_sec: '5',
       model: 'kling',
-      vastai_lora: 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise',
+      vastai_lora: 'kijai',  // Default to Kijai Lightning LoRA set
       vastai_steps: 4,
       vastai_cfg: 1.0,
-      vastai_frames: 33,
+      vastai_frames: 81,  // ~5 seconds at 16fps
     },
   })
 
@@ -94,8 +95,12 @@ export function VideoGeneration() {
       }
 
       // Build vastai_config if using Vast.ai model
+      const loraSet = data.vastai_lora && data.vastai_lora !== 'none'
+        ? LORA_SET_MAP[data.vastai_lora]
+        : undefined
       const vastaiConfig: VastaiVideoConfig | undefined = isVastaiModel(data.model) ? {
-        lora: data.vastai_lora !== 'none' ? data.vastai_lora : undefined,
+        lora_high: loraSet?.high,
+        lora_low: loraSet?.low,
         lora_strength: 1.0,
         steps: data.vastai_steps,
         cfg_scale: data.vastai_cfg,

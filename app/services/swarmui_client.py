@@ -176,8 +176,8 @@ class SwarmUIClient:
         self,
         image_path: str,
         prompt: str,
-        # EXACT defaults from user's working metadata (verified 2026-01-14)
-        model: str = "wan2.2_i2v_high_noise_14B_fp8_scaled",
+        # GGUF model names (updated 2026-01-15 to match instance)
+        model: str = "wan2.2_i2v_high_noise_14B_fp8.gguf",
         width: int = 720,
         height: int = 1280,
         num_frames: int = 80,
@@ -188,7 +188,7 @@ class SwarmUIClient:
         # Video-specific params (exact from working metadata)
         video_steps: int = 5,
         video_cfg: float = 1.0,
-        swap_model: str = "wan2.2_i2v_low_noise_14B_fp8_scaled",
+        swap_model: str = "wan2.2_i2v_low_noise_14B_fp8.gguf",
         swap_percent: float = 0.6,
         # Frame interpolation (exact from working metadata)
         interpolation_method: str = "RIFE",
@@ -212,7 +212,7 @@ class SwarmUIClient:
         Args:
             image_path: Init image (base64 data URI)
             prompt: Motion description (LoRAs will be auto-appended)
-            model: High-noise model (wan2.2_i2v_high_noise_14B_fp8_scaled)
+            model: High-noise model (wan2.2_i2v_high_noise_14B_fp8.gguf)
             width: Output width (720)
             height: Output height (1280)
             num_frames: Video frames (80)

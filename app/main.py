@@ -42,15 +42,13 @@ from app.face_swap_client import (
 )
 from app.fal_upload import upload_image, SUPPORTED_FORMATS
 from app.routers.pipelines import router as pipelines_router
-from app.routers.vastai import router as vastai_router
 from app.routers.nsfw import router as nsfw_router
-from app.routers.nsfw_images import router as nsfw_images_router
 from app.routers.auth import router as auth_router
 from app.routers.credits import router as credits_router
 from app.routers.batch_jobs import router as batch_jobs_router
 from app.routers.templates import router as templates_router
-from app.routers.swarmui import router as swarmui_router
-from app.routers.gpu_config import router as gpu_config_router
+from app.services.batch_queue import init_batch_queue
+from app.services.generation_service import dispatch_generation
 
 logger = structlog.get_logger()
 
@@ -123,6 +121,13 @@ async def lifespan(app: FastAPI):
         poll_interval=settings.worker_poll_interval_seconds,
     )
     init_db()
+
+    # Initialize the batch queue with the real generation function
+    logger.info("Initializing batch job queue...")
+    await init_batch_queue(
+        max_concurrency=settings.worker_max_concurrency,
+        generation_fn=dispatch_generation,
+    )
 
     # Recover interrupted jobs from previous crash (Production Hardening Principle 3)
     try:
@@ -290,11 +295,7 @@ app.include_router(credits_router, prefix="/api")  # Credits: /api/credits/balan
 app.include_router(batch_jobs_router, prefix="/api")  # Batch jobs: /api/batch-jobs
 app.include_router(templates_router, prefix="/api")  # Templates: /api/templates
 app.include_router(pipelines_router, prefix="/api")
-app.include_router(vastai_router, prefix="/api")
-app.include_router(swarmui_router, prefix="/api")  # SwarmUI: /api/swarm/*
-app.include_router(gpu_config_router, prefix="/api")  # GPU config: /api/gpu/*
 app.include_router(nsfw_router, prefix="/api")
-app.include_router(nsfw_images_router, prefix="/api")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -350,13 +351,14 @@ async def create_job(job_data: JobCreate, db: Session = Depends(get_db)):
         resolution=job_data.resolution,
         duration_sec=job_data.duration_sec,
         model=job_data.model,
+        provider=job_data.provider,
         wan_status="pending",
     )
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    logger.info("Job created", job_id=job.id, status=job.wan_status)
+    logger.info("Job created", job_id=job.id, provider=job.provider, status=job.wan_status)
     return job
 
 

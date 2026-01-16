@@ -14,6 +14,9 @@ from app.database import SessionLocal, init_db
 from app.models import Job, ImageJob
 from app.fal_client import submit_job, get_job_result, FalAPIError
 from app.image_client import submit_image_job, get_image_result, ImageAPIError
+from app.schemas import is_vastai_model
+from app.services.vastai_orchestrator import get_vastai_orchestrator
+from app.services.r2_cache import cache_video
 
 logger = structlog.get_logger()
 
@@ -99,7 +102,7 @@ async def submit_single_job(
     model: str,
     negative_prompt: str | None = None,
 ) -> tuple[int, str | None, str | None]:
-    """Submit a single job and return (job_id, request_id, error)."""
+    """Submit a single job to fal.ai and return (job_id, request_id, error)."""
     try:
         request_id = await submit_job(
             model=model,
@@ -109,7 +112,7 @@ async def submit_single_job(
             duration_sec=duration_sec,
             negative_prompt=negative_prompt,
         )
-        logger.info("Job submitted", job_id=job_id, model=model, request_id=request_id)
+        logger.info("Job submitted to fal.ai", job_id=job_id, model=model, request_id=request_id)
         return (job_id, request_id, None)
     except FalAPIError as e:
         logger.error("Job submission failed", job_id=job_id, model=model, error=str(e))
@@ -119,8 +122,84 @@ async def submit_single_job(
         return (job_id, None, f"Unexpected error: {str(e)}")
 
 
+async def process_vastai_job(job: Job, db: Session) -> bool:
+    """
+    Process a single vastai job synchronously via SwarmUI WebSocket.
+    Returns True on success, False on failure.
+
+    VastAI jobs are processed ONE AT A TIME to avoid multiple WebSocket connections.
+    """
+    logger.info("Processing vastai job", job_id=job.id, model=job.model)
+    job.wan_status = "running"
+    db.commit()
+
+    try:
+        orchestrator = get_vastai_orchestrator()
+        client = await orchestrator.get_or_create_client()
+
+        # Upload image to SwarmUI
+        image_path = await client.upload_image(job.image_url)
+
+        # Map resolution to width/height (9:16 portrait default)
+        if job.resolution == "720p":
+            width, height = 720, 1280
+        elif job.resolution == "1080p":
+            width, height = 1080, 1920
+        else:
+            width, height = 480, 848
+
+        # Generate video via WebSocket
+        result = await client.generate_video(
+            image_path=image_path,
+            prompt=job.motion_prompt or "gentle motion",
+            negative_prompt=job.negative_prompt,
+            model=settings.swarmui_model,
+            width=width,
+            height=height,
+            num_frames=settings.swarmui_default_frames,
+            fps=settings.swarmui_default_fps,
+            steps=settings.swarmui_default_steps,
+            cfg_scale=settings.swarmui_default_cfg,
+            video_steps=settings.swarmui_video_steps,
+            video_cfg=settings.swarmui_video_cfg,
+            swap_model=settings.swarmui_swap_model,
+            swap_percent=settings.swarmui_swap_percent,
+            lora_high=settings.swarmui_lora_high,
+            lora_low=settings.swarmui_lora_low,
+        )
+
+        video_url = result.get("video_url")
+        if not video_url:
+            raise Exception("No video_url in SwarmUI result")
+
+        # Cache to R2 if available
+        video_path = result.get("video_path")
+        if video_path:
+            try:
+                video_bytes = await client.get_video_bytes(video_path)
+                cached_url = await cache_video(video_url, video_bytes=video_bytes)
+                if cached_url:
+                    video_url = cached_url
+            except Exception as e:
+                logger.warning("R2 cache failed, using direct URL", error=str(e))
+
+        job.wan_status = "completed"
+        job.wan_video_url = video_url
+        db.commit()
+
+        logger.info("Vastai job completed", job_id=job.id, video_url=video_url[:50])
+        return True
+
+    except Exception as e:
+        logger.error("Vastai job failed", job_id=job.id, error=str(e))
+        job.wan_status = "failed"
+        job.error_message = str(e)
+        db.commit()
+        return False
+
+
 async def submit_pending_jobs():
-    """Find pending jobs and submit them to Fal concurrently."""
+    """Find pending jobs and route to appropriate provider."""
     db = get_db_session()
     try:
         pending_jobs = (
@@ -133,35 +212,50 @@ async def submit_pending_jobs():
         if not pending_jobs:
             return
 
-        logger.info("Submitting pending jobs", count=len(pending_jobs))
+        # Separate vastai jobs from fal.ai jobs
+        vastai_jobs = [j for j in pending_jobs if is_vastai_model(j.model or "")]
+        fal_jobs = [j for j in pending_jobs if not is_vastai_model(j.model or "")]
 
-        # Submit all jobs concurrently
-        tasks = [
-            submit_single_job(
-                job.id,
-                job.image_url,
-                job.motion_prompt,
-                job.resolution,
-                job.duration_sec,
-                job.model or "wan",
-                job.negative_prompt,
-            )
-            for job in pending_jobs
-        ]
-        results = await asyncio.gather(*tasks)
+        logger.info(
+            "Submitting pending jobs",
+            total=len(pending_jobs),
+            vastai=len(vastai_jobs),
+            fal=len(fal_jobs),
+        )
 
-        # Update database with results
-        job_map = {job.id: job for job in pending_jobs}
-        for job_id, request_id, error in results:
-            job = job_map[job_id]
-            if request_id:
-                job.wan_request_id = request_id
-                job.wan_status = "submitted"
-            else:
-                job.wan_status = "failed"
-                job.error_message = error
+        # Process vastai jobs ONE AT A TIME (sequential, not concurrent)
+        # This avoids multiple WebSocket connections to SwarmUI
+        for job in vastai_jobs:
+            await process_vastai_job(job, db)
 
-        db.commit()
+        # Submit fal.ai jobs concurrently (they handle queuing)
+        if fal_jobs:
+            tasks = [
+                submit_single_job(
+                    job.id,
+                    job.image_url,
+                    job.motion_prompt,
+                    job.resolution,
+                    job.duration_sec,
+                    job.model or "wan",
+                    job.negative_prompt,
+                )
+                for job in fal_jobs
+            ]
+            results = await asyncio.gather(*tasks)
+
+            # Update database with results
+            job_map = {job.id: job for job in fal_jobs}
+            for job_id, request_id, error in results:
+                job = job_map[job_id]
+                if request_id:
+                    job.wan_request_id = request_id
+                    job.wan_status = "submitted"
+                else:
+                    job.wan_status = "failed"
+                    job.error_message = error
+
+            db.commit()
 
     finally:
         db.close()

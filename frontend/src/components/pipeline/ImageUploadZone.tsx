@@ -5,6 +5,19 @@ import { Upload, X, Link, Loader2, FolderArchive } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+// Polyfill for crypto.randomUUID() - not available in non-secure contexts (HTTP)
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // Fallback for non-secure contexts
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 interface UploadedImage {
   id: string
   url: string
@@ -54,7 +67,7 @@ export function ImageUploadZone({
       const data = await response.json()
       return {
         image: {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           url: data.url,
           preview: URL.createObjectURL(file),
           name: file.name,
@@ -121,7 +134,7 @@ export function ImageUploadZone({
       new URL(urlInput)
 
       const newImage: UploadedImage = {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         url: urlInput,
         preview: urlInput,
         name: urlInput.split('/').pop() || 'image',

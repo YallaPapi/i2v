@@ -1,5 +1,7 @@
 # Architecture Overview
 
+> **Note:** For comprehensive architecture documentation, see [../ARCHITECTURE.md](../ARCHITECTURE.md)
+
 ## System Architecture
 
 ```mermaid
@@ -22,7 +24,7 @@ graph TB
 
     subgraph SelfHosted[Self-Hosted GPU]
         J[vast.ai Instance]
-        K[ComfyUI]
+        K[SwarmUI]
     end
 
     subgraph Storage
@@ -46,10 +48,11 @@ graph TB
 
 ## Components
 
-### Frontend (React + TypeScript)
+### Frontend (React + TypeScript + Vite)
 
-- Job management UI
-- Pipeline creation
+- Playground UI for generation
+- Job management
+- Template management
 - Real-time status updates
 
 ### Backend (FastAPI)
@@ -57,6 +60,7 @@ graph TB
 - RESTful API endpoints
 - Async job processing
 - Database management
+- GPU configuration
 
 ### Services
 
@@ -64,6 +68,8 @@ graph TB
 - **Pipeline Executor**: Runs generation steps
 - **Rate Limiter**: Prevents API quota exhaustion
 - **R2 Cache**: CDN caching for outputs
+- **SwarmUI Client**: Self-hosted GPU video generation
+- **Vast.ai Client**: GPU instance management
 
 ## Data Flow
 
@@ -77,21 +83,19 @@ graph TB
 6. Results cached to R2 CDN
 7. Frontend displays completed video
 
-### Self-Hosted GPU Generation (vast.ai)
+### Self-Hosted GPU Generation (SwarmUI on Vast.ai)
 
 1. User selects "Wan 2.2 (GPU)" model in frontend
-2. Frontend calls `/api/vastai/generate-video`
+2. Frontend calls `/api/swarm/generate-video`
 3. Backend checks runtime GPU config (set via `/api/gpu/config`)
-4. If configured, uses tunnel URL to access ComfyUI on vast.ai
-5. ComfyUI executes Wan 2.2 I2V workflow with LightX2V LoRA
+4. If configured, uses SwarmUI REST API via tunnel URL
+5. SwarmUI executes Wan 2.2 I2V with LightX2V 4-step LoRA
 6. Generated video cached to R2
 7. Video URL returned to frontend
 
-**Note:** vast.ai instances use Cloudflare tunnels for access. The tunnel URL must be manually obtained from the vast.ai console and configured via the GPU config API. See [GPU Setup Guide](../GPU_SETUP.md) for details.
+**Important:** Vast.ai instances use Cloudflare tunnels. The tunnel URL must be obtained from the vast.ai console and configured via `/api/gpu/config`. See [GPU Setup Guide](../GPU_SETUP.md).
 
 ## GPU Integration Architecture
-
-The platform supports self-hosted GPU video generation on vast.ai:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -100,15 +104,14 @@ The platform supports self-hosted GPU video generation on vast.ai:
 │                                                                  │
 │   /api/gpu/config                                                │
 │       │                                                          │
-│       ├── comfyui_url: Tunnel URL from vast.ai console          │
-│       ├── swarmui_url: SwarmUI URL (if using SwarmUI)           │
+│       ├── swarmui_url: SwarmUI tunnel URL (primary)             │
+│       ├── comfyui_url: ComfyUI URL (legacy, deprecated)         │
 │       ├── gpu_provider: "none" | "local" | "vastai"             │
 │       └── vastai_instance_id: Active instance ID                │
 │                                                                  │
 │   Runtime Config (in-memory)                                    │
 │       │                                                          │
-│       └── Used by /api/vastai/generate-video                    │
-│           and /api/swarm/generate-video endpoints               │
+│       └── Used by /api/swarm/generate-video endpoint            │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -118,17 +121,26 @@ The platform supports self-hosted GPU video generation on vast.ai:
 | File | Purpose |
 |------|---------|
 | `app/routers/gpu_config.py` | Runtime GPU URL configuration API |
-| `app/routers/vastai.py` | vast.ai instance management and video generation |
-| `app/routers/swarmui.py` | SwarmUI-specific endpoints |
-| `app/services/vastai_client.py` | vast.ai API client |
-| `app/services/swarmui_client.py` | SwarmUI API client |
-| `app/services/comfyui_workflows.py` | ComfyUI workflow definitions |
+| `app/routers/swarmui.py` | SwarmUI video generation endpoints |
+| `app/routers/vastai.py` | Vast.ai instance management |
+| `app/services/swarmui_client.py` | SwarmUI REST API client |
+| `app/services/vastai_client.py` | Vast.ai API client |
+| `app/services/comfyui_workflows.py` | Legacy ComfyUI workflows (deprecated) |
 
 ### Supported Models
 
 | Model | Backend | Notes |
 |-------|---------|-------|
-| Wan 2.2 (GPU) | ComfyUI on vast.ai | Self-hosted, ~$0.34/hr |
-| Wan 2.5 | Fal.ai | Cloud, pay-per-gen |
-| Kling | Fal.ai | Cloud, pay-per-gen |
-| Veo 2 | Fal.ai | Cloud, pay-per-gen |
+| Wan 2.2 (GPU) | SwarmUI on vast.ai | Self-hosted, ~$0.50-1.50/hr |
+| Wan 2.5/2.6 | Fal.ai | Cloud, $0.05-0.15/s |
+| Kling | Fal.ai | Cloud, $0.35/5s |
+| Veo 2/3.1 | Fal.ai | Cloud, $0.20-0.50/s |
+| Sora 2 | Fal.ai | Cloud, $0.10-0.30/s |
+| Luma Ray2 | Fal.ai | Cloud, $0.05/s |
+
+## Related Documentation
+
+- [ARCHITECTURE.md](../ARCHITECTURE.md) - Comprehensive system documentation
+- [BACKENDS.md](../BACKENDS.md) - Backend client details
+- [ROADMAP.md](../ROADMAP.md) - Development priorities
+- [GPU_SETUP.md](../GPU_SETUP.md) - GPU setup guide

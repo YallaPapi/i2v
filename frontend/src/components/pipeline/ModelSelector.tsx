@@ -301,23 +301,6 @@ const I2V_MODELS: ModelOption[] = [
     provider: 'Stability AI',
     description: 'Budget option, image-only (no prompt)',
   },
-  // Pinokio WAN GP Self-Hosted Models
-  {
-    value: 'pinokio-wan22-i2v',
-    label: 'Pinokio Wan 2.2 I2V',
-    price: '~$0.01/vid',
-    priceValue: 0.01,
-    provider: 'Pinokio (Self-Hosted)',
-    description: 'Self-hosted on RTX 5090 via Vast.ai (~2min/video)',
-  },
-  {
-    value: 'pinokio-hunyuan-i2v',
-    label: 'Pinokio Hunyuan 1.5 I2V',
-    price: '~$0.01/vid',
-    priceValue: 0.01,
-    provider: 'Pinokio (Self-Hosted)',
-    description: 'Hunyuan 1.5 i2v distilled - self-hosted',
-  },
   // Vast.ai SwarmUI Self-Hosted Models (H100)
   {
     value: 'vastai-wan22-i2v',
@@ -325,7 +308,7 @@ const I2V_MODELS: ModelOption[] = [
     price: '~$0.07/vid',
     priceValue: 0.07,
     provider: 'SwarmUI (Self-Hosted)',
-    description: 'H100 GPU via Vast.ai - 14B FP8 + Lightning LoRA (~1min/video)',
+    description: 'H100 GPU - 14B FP8 + Lightning LoRA (~1min). WARNING: 1080p may OOM',
     recommended: true,
   },
 ]

@@ -24,6 +24,7 @@ router = APIRouter(prefix="/batch-jobs", tags=["batch-jobs"])
 class BatchJobConfig(BaseModel):
     """Configuration for batch generation."""
     model: str = Field(..., description="Model to use for generation")
+    provider: Optional[str] = Field("fal", description="The generation provider to use (e.g., 'fal', 'vastai')")
     quality: Optional[str] = Field("high", description="Quality level")
     aspect_ratio: Optional[str] = Field("9:16", description="Aspect ratio")
     duration_sec: Optional[int] = Field(5, description="Video duration (for video output)")

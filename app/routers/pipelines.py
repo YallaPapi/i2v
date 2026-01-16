@@ -318,8 +318,12 @@ async def list_pipelines(
 
 @router.get("/download")
 async def download_file(url: str = Query(..., description="URL of file to download")):
-    """Proxy download to avoid CORS issues with external CDNs."""
+    """Proxy download to avoid CORS issues with external CDNs.
+
+    Uses streaming to forward bytes as they arrive (no buffering).
+    """
     from urllib.parse import urlparse
+    import asyncio
 
     # Validate URL is from allowed domains
     allowed_domains = ["fal.media", "fal.ai", "r2.dev", "r2.cloudflarestorage.com"]
@@ -328,27 +332,38 @@ async def download_file(url: str = Query(..., description="URL of file to downlo
     if not any(domain in parsed.netloc for domain in allowed_domains):
         raise HTTPException(status_code=400, detail="URL not from allowed domain")
 
-    try:
+    filename = parsed.path.split("/")[-1] or "download"
+
+    async def stream_response():
+        """Stream bytes from source URL to client."""
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    yield chunk
 
-            content_type = response.headers.get(
-                "content-type", "application/octet-stream"
-            )
-            filename = parsed.path.split("/")[-1] or "download"
+    # Get content type with a HEAD request first (fast)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            head_response = await client.head(url)
+            content_type = head_response.headers.get("content-type", "application/octet-stream")
+            content_length = head_response.headers.get("content-length")
+    except Exception:
+        content_type = "application/octet-stream"
+        content_length = None
 
-            return StreamingResponse(
-                iter([response.content]),
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f'attachment; filename="{filename}"',
-                    "Access-Control-Allow-Origin": "*",
-                },
-            )
-    except httpx.HTTPError as e:
-        logger.error("Download proxy failed", url=url, error=str(e))
-        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {str(e)}")
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Allow-Origin": "*",
+    }
+    if content_length:
+        headers["Content-Length"] = content_length
+
+    return StreamingResponse(
+        stream_response(),
+        media_type=content_type,
+        headers=headers,
+    )
 
 
 # ============== Server Restart ==============

@@ -187,8 +187,8 @@ Periodically compare your progress against the PRD. Are you on track? Are you bu
 ### Access Details (UPDATED 2026-01-15)
 | Variable | Value |
 |----------|-------|
-| Instance ID | `30034308` |
-| SSH | `ssh -p <port> root@<ssh_host>` (get from `vastai show instances`) |
+| Instance ID | `30049869` |
+| SSH | `ssh -i ~/.ssh/id_ed25519 -p 4967 root@130.211.120.53` |
 | SwarmUI Named Tunnel | `https://swarm.wunderbun.com` (permanent URL) |
 | Auth Token | See `.env` `SWARMUI_AUTH_TOKEN` |
 | GPU | NVIDIA H100 80GB HBM3 |
@@ -197,20 +197,88 @@ Periodically compare your progress against the PRD. Are you on track? Are you bu
 | SwarmUI Internal Port | `17865` (direct API, localhost only) |
 | SwarmUI External Port | `7865` (Caddy proxy, accessible externally) |
 | ComfyUI Ports | `7821/7823` (internal backend) |
-| Volume ID | `30034307` (91GB, mounted at /workspace) |
+| Disk Size | 300GB (mounted at /workspace) |
 
-**CRITICAL: SSH Changes Every Instance Restart!**
-- SSH goes through Vast.ai proxy: `ssh -p <port> root@ssh<N>.vast.ai`
-- The port and host CHANGE every time the instance is rebooted/recreated
-- ALWAYS get current SSH info: `vastai show instances --raw | jq '.[0] | {ssh_host, ssh_port}'`
-- Direct IP (`public_ipaddr`) does NOT work for SSH
-- Example: `ssh -p 100 root@34.48.171.202` (port changes each restart)
+**CRITICAL: How to SSH into Vast.ai Instances**
 
-**DISK SPACE WARNING:**
-- Volume is 91GB total - monitor usage with `df -h /workspace`
-- Models use ~75GB - only ~16GB free
+**ALWAYS use `vastai ssh-url` to get the correct SSH connection:**
+```bash
+# Get correct SSH URL (includes proper IP and port)
+vastai ssh-url <instance_id>
+# Returns: ssh://root@<ip>:<port>
+
+# Then connect:
+ssh -p <port> root@<ip>
+```
+
+**Why `show instances` SSH info is often WRONG:**
+- `ssh_host` and `ssh_port` from `show instances` are for the proxy
+- Instances with direct port mapping use `public_ipaddr` + a different port
+- The CLI's `ssh-url` command handles this logic correctly
+
+**Source:** `vast-cli/vast.py` lines 4755-4763:
+```python
+# If direct port mapping exists, use public_ipaddr + mapped port
+if (port_22d is not None):
+    ipaddr = instance["public_ipaddr"]
+    port = int(port_22d[0]["HostPort"])
+else:
+    # Fall back to ssh_host + ssh_port (proxy)
+    ipaddr = instance["ssh_host"]
+    port = int(instance["ssh_port"])
+```
+
+**DO NOT:**
+- Manually construct SSH from `show instances` output
+- Use `ssh_host`/`ssh_port` directly without checking `ssh-url`
+- Retry failed SSH without checking the correct port
+
+**DISK SPACE:**
+- Current disk: 300GB at `/workspace`
+- Monitor usage with `df -h /workspace`
 - Temp files can fill disk causing SSH crashes and SwarmUI failures
 - Clean `/workspace/SwarmUI/Output/` and temp files regularly
+
+### Instance Migration (CRITICAL - Read Before Migrating)
+
+When migrating to a new Vast.ai instance, **you CANNOT transfer the `/venv` directory**:
+
+**Why:**
+- `/venv` is on a **read-only overlay filesystem** (Docker image layer)
+- Files in the overlay cannot be deleted, renamed, or overwritten
+- `vastai copy` can transfer it but you can't replace the existing `/venv/main`
+
+**What CAN be transferred via `vastai copy`:**
+- `/workspace/SwarmUI/Models/Stable-Diffusion/` (checkpoints/diffusion models)
+- `/workspace/SwarmUI/Models/text_encoders/` (text encoder)
+- `/workspace/SwarmUI/Models/Lora/` (LoRA files)
+- Any other files in `/workspace/`
+
+**Correct Migration Procedure:**
+```bash
+# 1. Create new instance with larger disk
+# 2. Copy models from old to new instance:
+vastai copy <old_id>:/workspace/SwarmUI/Models/Stable-Diffusion/ <new_id>:/workspace/SwarmUI/Models/Stable-Diffusion/
+vastai copy <old_id>:/workspace/SwarmUI/Models/text_encoders/ <new_id>:/workspace/SwarmUI/Models/text_encoders/
+
+# 3. SSH into new instance and RESET SwarmUI to trigger install wizard:
+mv /workspace/SwarmUI/Data /workspace/SwarmUI/Data.bak
+supervisorctl restart swarmui
+
+# 4. Access SwarmUI via quick tunnel URL (check logs):
+grep "7865.*trycloudflare" /var/log/tunnel_manager.log | tail -1
+
+# 5. Complete the SwarmUI install wizard (installs ComfyUI + dependencies)
+
+# 6. After wizard completes, install custom packages:
+pip install sageattention triton gguf
+```
+
+**Why reset SwarmUI Data folder:**
+- Copied `/workspace/SwarmUI/Data/` contains old config (Settings.fds, Backends.fds)
+- SwarmUI thinks it's already installed and skips the wizard
+- But ComfyUI venv is missing, so backend fails with "ModuleNotFoundError"
+- Resetting Data folder forces fresh install wizard
 
 ### Cloudflare Tunnel Setup
 
@@ -267,16 +335,27 @@ Cookie: C.{INSTANCE_ID}_auth_token={TOKEN}
 
 The backend uses `SWARMUI_AUTH_TOKEN` env var to set this cookie automatically.
 
-### Model Setup (UPDATED 2026-01-15)
-Models are stored in `/workspace/SwarmUI/Models/diffusion_models/`:
+### Model Setup (UPDATED 2026-01-16)
+
+**Diffusion Models** in `/workspace/SwarmUI/Models/Stable-Diffusion/`:
 - `wan2.2_i2v_high_noise_14B_fp8.gguf` (15GB) - High-noise base model
 - `wan2.2_i2v_low_noise_14B_fp8.gguf` (15GB) - Low-noise swap model
 
-LoRAs in `/workspace/SwarmUI/Models/Lora/`:
+**IMPORTANT: Models go in `Stable-Diffusion` folder (SwarmUI's default), NOT `diffusion_models`!**
+
+SwarmUI looks in its own `Models/` directory, configured in `Data/Settings.fds`:
+- `ModelRoot: Models` → `/workspace/SwarmUI/Models/`
+- `SDModelFolder: Stable-Diffusion` → `/workspace/SwarmUI/Models/Stable-Diffusion/`
+- `SDLoraFolder: Lora` → `/workspace/SwarmUI/Models/Lora/`
+- `SDEmbeddingFolder: Embeddings` → `/workspace/SwarmUI/Models/Embeddings/`
+
+**LoRAs** - put in `/workspace/SwarmUI/Models/Lora/`:
 - `wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16.safetensors` (586MB)
 - `wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16.safetensors` (586MB)
 - `wan2.2-lightning_i2v_civitai_high.safetensors` (602MB)
 - `wan2.2-lightning_i2v_civitai_low.safetensors` (706MB)
+
+**Embeddings** - put in `/workspace/SwarmUI/Models/Embeddings/`
 
 Text encoders in `/workspace/SwarmUI/Models/text_encoders/`:
 - `umt5_xxl_fp8_e4m3fn_scaled.safetensors` (6.3GB)
@@ -288,19 +367,22 @@ The official SwarmUI template is missing dependencies. Run these IMMEDIATELY:
 # SSH into instance (get current port from `vastai show instances`)
 ssh -p 34308 root@ssh2.vast.ai
 
-# 1. Install gguf module (REQUIRED for GGUF models to load)
-# NOTE: The correct pip path is /venv/main/bin/pip (NOT /workspace/SwarmUI/dlbackend/ComfyUI/venv/bin/pip)
-/venv/main/bin/pip install gguf
+# 1. Install required packages
+# CRITICAL: Use --cache-dir to avoid filling 16GB root disk!
+mkdir -p /workspace/pip_cache
+/venv/main/bin/pip install --cache-dir=/workspace/pip_cache gguf sageattention triton kornia spandrel
 
 # 2. Restart SwarmUI to reload models
 pkill -f SwarmUI && cd /workspace/SwarmUI && ./launch-linux.sh &
 
-# 3. Verify gguf is installed
-/venv/main/bin/python -c "import gguf; print('gguf OK')"
+# 3. Verify packages installed
+/venv/main/bin/python -c "import gguf, kornia, spandrel; print('all packages OK')"
 
 # 4. Verify models are visible (after restart completes ~60s)
 curl -X POST "http://localhost:7865/API/ListModels" -H "Content-Type: application/json" -d '{}' | jq '.models | length'
 ```
+
+**Why --cache-dir is critical:** The root overlay filesystem is only 16GB. Without --cache-dir, pip caches to /root/.cache/pip which fills up the root disk and causes "No space left on device" errors.
 
 Without `pip install gguf`, you will see this error:
 ```

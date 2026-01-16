@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     swarmui_auth_token: Optional[str] = None  # Auth token from tunnel URL ?token=xxx
     vastai_instance_id: Optional[str] = None  # Vast.ai instance ID
 
-    # SwarmUI generation defaults (EXACT from working metadata 2026-01-14)
-    swarmui_model: str = "wan2.2_i2v_high_noise_14B_fp8_scaled"
-    swarmui_swap_model: str = "wan2.2_i2v_low_noise_14B_fp8_scaled"
+    # SwarmUI generation defaults (Updated 2026-01-15 - GGUF model names)
+    swarmui_model: str = "wan2.2_i2v_high_noise_14B_fp8.gguf"
+    swarmui_swap_model: str = "wan2.2_i2v_low_noise_14B_fp8.gguf"
     swarmui_default_steps: int = 10
     swarmui_default_cfg: float = 7.0
     swarmui_default_frames: int = 80

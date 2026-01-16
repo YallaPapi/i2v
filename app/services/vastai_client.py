@@ -126,14 +126,13 @@ VASTAI_API_URL = "https://console.vast.ai/api/v0"
 #   Includes ComfyUI backend automatically
 # =============================================================================
 
-# SwarmUI Docker image (VERIFIED WORKING)
-# Note: Template hash doesn't work ("not accessible by user")
-# Must use direct Docker image with runtype="jupyter_direct" for port exposure
+# SwarmUI Docker image - CUDA 12.8 for RTX 5090/Blackwell support
+# We use base CUDA image and install SwarmUI via onstart script
 SWARMUI_DOCKER_IMAGE = os.getenv(
     "SWARMUI_DOCKER_IMAGE",
-    "vastai/swarmui:v0.9.4.0-Beta-cuda-12.1-pytorch-2.5.1-py311"
+    "nvidia/cuda:12.8.0-runtime-ubuntu22.04"
 )
-SWARMUI_PORT = 7865  # Internal port (mapped to dynamic external port)
+SWARMUI_PORT = 7801  # SwarmUI default port
 
 # ComfyUI template (legacy fallback)
 COMFYUI_TEMPLATE_HASH = os.getenv(
@@ -1035,9 +1034,9 @@ class VastAIClient:
             self._active_instance = instance
 
             # Auto-configure GPU URL if instance has webpage
+            # Note: URL is now fixed via SWARMUI_URL in .env (Zero Trust tunnel)
             if instance.webpage:
-                from app.routers.gpu_config import set_swarmui_url
-                set_swarmui_url(instance.webpage, instance.id)
+                logger.info("Instance has webpage URL", webpage=instance.webpage)
 
             return instance
 
@@ -1223,6 +1222,108 @@ echo "===== i2v SwarmUI setup complete! ====="
 """
         return script
 
+    def _get_swarmui_full_onstart_script(self) -> str:
+        """Generate COMPLETE startup script for SwarmUI from scratch.
+
+        This script is injected into the Vast.ai instance and runs on boot.
+        It reads the Cloudflare tunnel token from our settings (env) at generation time.
+
+        Includes:
+        1. Base dependencies
+        2. .NET 8 SDK
+        3. Cloudflared installation
+        4. SwarmUI clone and setup
+        5. SageAttention installation
+        6. Model downloads
+        7. Cloudflare Zero Trust tunnel (persistent URL)
+        8. SwarmUI startup
+        """
+        from app.config import settings
+
+        # Get tunnel token - read from our local .env at script generation time
+        tunnel_token = settings.cloudflare_tunnel_token or ""
+
+        if not tunnel_token:
+            logger.warning("CLOUDFLARE_TUNNEL_TOKEN not set - will use quick tunnel")
+            tunnel_cmd = 'nohup cloudflared tunnel --url http://localhost:7801 > /tmp/cloudflared.log 2>&1 &'
+        else:
+            # Use Zero Trust tunnel with persistent URL
+            tunnel_cmd = f'nohup cloudflared tunnel run --token "{tunnel_token}" > /tmp/cloudflared.log 2>&1 &'
+
+        script = f'''#!/bin/bash
+exec > /var/log/onstart.log 2>&1
+set -x
+
+echo "===== i2v SwarmUI FULL SETUP - $(date) ====="
+
+# ===== PART 1: Base Dependencies =====
+echo "[1/8] Installing base dependencies..."
+apt-get update -qq
+apt-get install -y -qq git wget curl python3 python3-pip python3-venv
+
+# ===== PART 2: .NET 8 SDK (required for SwarmUI) =====
+echo "[2/8] Installing .NET 8 SDK..."
+wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh
+/tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet
+ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+dotnet --version
+
+# ===== PART 3: Cloudflared =====
+echo "[3/8] Installing cloudflared..."
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+cloudflared --version
+
+# ===== PART 4: libcuda symlink (required for SageAttention) =====
+echo "[4/8] Creating libcuda symlink..."
+ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
+
+# ===== PART 5: Clone and Setup SwarmUI =====
+echo "[5/8] Setting up SwarmUI..."
+if [ ! -d "/root/SwarmUI" ]; then
+    cd /root && git clone https://github.com/mcmonkeyprojects/SwarmUI.git
+fi
+cd /root/SwarmUI
+
+# Initial launch to create venv and install deps
+echo "Running initial SwarmUI setup (takes 2-3 minutes)..."
+./launch-linux.sh --help > /dev/null 2>&1 || true
+
+# Fix pip in venv and install dependencies
+/root/SwarmUI/dlbackend/ComfyUI/venv/bin/python -m ensurepip --upgrade
+/root/SwarmUI/dlbackend/ComfyUI/venv/bin/pip install sageattention torchsde torchaudio || echo "SageAttention failed"
+
+# Configure SageAttention
+if [ -f "/root/SwarmUI/Data/Backends.fds" ]; then
+    sed -i 's/ExtraArgs: .*/ExtraArgs: --use-sage-attention/' /root/SwarmUI/Data/Backends.fds
+fi
+
+# ===== PART 6: Download Model =====
+echo "[6/8] Downloading Wan 2.2 model..."
+mkdir -p /root/SwarmUI/Models/diffusion_models
+GGUF_PATH="/root/SwarmUI/Models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+if [ ! -f "$GGUF_PATH" ]; then
+    wget -q -O "$GGUF_PATH" "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"
+fi
+ls -lh /root/SwarmUI/Models/diffusion_models/
+
+# ===== PART 7: Start SwarmUI =====
+echo "[7/8] Starting SwarmUI..."
+cd /root/SwarmUI
+nohup ./launch-linux.sh --host 0.0.0.0 --port 7801 --launch_mode none > /var/log/swarmui.log 2>&1 &
+sleep 15
+
+# ===== PART 8: Start Cloudflare Tunnel =====
+echo "[8/8] Starting Cloudflare tunnel..."
+{tunnel_cmd}
+sleep 5
+
+echo "===== SETUP COMPLETE - $(date) ====="
+ps aux | grep -E "(SwarmUI|cloudflared)" | grep -v grep
+'''
+        return script
+
     async def create_swarmui_instance(
         self,
         offer_id: int,
@@ -1258,8 +1359,8 @@ echo "===== i2v SwarmUI setup complete! ====="
             logger.info(f"Increasing disk space to {MIN_DISK_GB}GB for video models")
             disk_space = MIN_DISK_GB
 
-        # Get model download script
-        onstart_script = self._get_model_download_script()
+        # Get FULL onstart script (installs SwarmUI, cloudflared, models, etc.)
+        onstart_script = self._get_swarmui_full_onstart_script()
 
         # Use SwarmUI Docker image directly (template_hash doesn't work)
         # VERIFIED WORKING: vastai/swarmui:v0.9.4.0-Beta-cuda-12.1-pytorch-2.5.1-py311
@@ -1313,13 +1414,20 @@ echo "===== i2v SwarmUI setup complete! ====="
                 swarmui_url = instance.webpage
 
             if swarmui_url:
-                from app.routers.gpu_config import set_swarmui_url
-                set_swarmui_url(swarmui_url, instance.id)
-                logger.info(
-                    "Auto-configured SwarmUI URL",
-                    url=swarmui_url,
-                    instance_id=instance.id,
-                )
+                # With Zero Trust tunnel, use fixed SWARMUI_URL from .env instead
+                from app.config import settings
+                if settings.swarmui_url:
+                    swarmui_url = settings.swarmui_url
+                    logger.info(
+                        "Using fixed SwarmUI URL from settings",
+                        url=swarmui_url,
+                    )
+                else:
+                    logger.info(
+                        "Using dynamic SwarmUI URL (no SWARMUI_URL in .env)",
+                        url=swarmui_url,
+                        instance_id=instance.id,
+                    )
 
             # Wait for SwarmUI to be healthy (accessible)
             if wait_for_healthy and swarmui_url:
