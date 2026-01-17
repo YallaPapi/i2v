@@ -176,31 +176,31 @@ class SwarmUIClient:
         self,
         image_path: str,
         prompt: str,
-        # GGUF model names (updated 2026-01-16 to match instance)
-        model: str = "wan2.2_i2v_high_noise_14B_fp8.gguf",
+        # Wan2.2 Remix model names (updated 2026-01-17 from working metadata)
+        model: str = "Wan2-2-Remix_-T2V-I2V-_-_I2V_High_v2-1",
         width: int = 720,
         height: int = 1280,
-        num_frames: int = 81,  # Fixed: was 80, should be 81
+        num_frames: int = 81,
         fps: int = 16,
-        steps: int = 20,  # Fixed: was 10, should be 20
+        steps: int = 20,
         cfg_scale: float = 7.0,
         seed: int = -1,
-        # Video-specific params (exact from working metadata 2026-01-16)
-        video_steps: int = 10,  # Fixed: was 5, should be 10
+        # Video-specific params (from working metadata 2026-01-17)
+        video_steps: int = 5,  # 5 steps with Seko LoRA
         video_cfg: float = 1.0,
-        swap_model: str = "wan2.2_i2v_low_noise_14B_fp8.gguf",
+        swap_model: str = "Wan2-2-Remix_-T2V-I2V-_-_I2V_Low_v2-1",
         swap_percent: float = 0.6,
         # Frame interpolation
         interpolation_method: str = "RIFE",
         interpolation_multiplier: int = 2,
         video_resolution: str = "Image Aspect, Model Res",
-        video_format: str = "webp",  # Fixed: was h264-mp4, working uses webp
-        # LoRAs - CORRECT names from instance (2026-01-16)
-        # Uses loras/loraweights/lorasectionconfinement arrays, NOT embedded in prompt
-        lora_high: str = "Lightning_Lora-HIGH_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1022-L",
-        lora_low: str = "Lightning_Lora-_massive_speed_up_for_Wan2-1_-_Wan2-2_made_by_Lightx2v_-_Kijai_-_2-2-Lightning-I2V-1030-H",
-        # Negative prompt (simpler from working metadata)
-        negative_prompt: str = "blurry, choppy, plastic skin, perfect skin",
+        video_format: str = "webp",
+        # LoRAs - optional, pass exact filenames without .safetensors extension
+        # SwarmUI looks in /workspace/SwarmUI/Models/Lora/
+        lora_high: Optional[str] = None,
+        lora_low: Optional[str] = None,
+        # Negative prompt - pass through from user
+        negative_prompt: str = "",
         # Progress callback
         on_progress: Optional[Callable[[float], None]] = None,
     ) -> dict:
@@ -229,8 +229,6 @@ class SwarmUIClient:
             interpolation_multiplier: Interpolation factor (2)
             video_resolution: Resolution mode ("Image Aspect, Model Res")
             video_format: Output format ("h264-mp4")
-            lora_high: Lightning LoRA for video model
-            lora_low: Lightning LoRA for swap model
             negative_prompt: Negative prompt for generation
             on_progress: Optional callback for progress updates (0.0-1.0)
 
@@ -240,11 +238,14 @@ class SwarmUIClient:
         import os
         session_id = await self.get_session()
 
-        # Build prompt with CID tags for LoRA section confinement
+        # Build prompt - add CID tags only if LoRAs are provided
         # <video//cid=2> links to loras[0], <videoswap//cid=3> links to loras[1]
-        full_prompt = f"{prompt} <video//cid=2> <videoswap//cid=3>"
+        if lora_high and lora_low:
+            full_prompt = f"{prompt} <video//cid=2> <videoswap//cid=3>"
+        else:
+            full_prompt = prompt
 
-        # Build payload with CORRECT LoRA syntax (arrays + lorasectionconfinement)
+        # Build payload
         payload = {
             "session_id": session_id,
             "prompt": full_prompt,
@@ -254,7 +255,7 @@ class SwarmUIClient:
             "seed": seed if seed >= 0 else -1,
             "steps": steps,
             "cfgscale": cfg_scale,
-            "aspectratio": "9:16",  # Fixed: was "Custom"
+            "aspectratio": "9:16",
             "width": width,
             "height": height,
             "sampler": "euler",
@@ -273,12 +274,13 @@ class SwarmUIClient:
             "videofps": fps,
             "automaticvae": True,
             "initimage": image_path,
-            # LoRAs with section confinement (cid=2 for video, cid=3 for videoswap)
-            # MUST be comma-separated strings, NOT arrays
-            "loras": f"{lora_high},{lora_low}",
-            "loraweights": "1,1",
-            "lorasectionconfinement": "2,3",
         }
+
+        # Add LoRAs only if provided (optional - for speed-up LoRAs etc.)
+        if lora_high and lora_low:
+            payload["loras"] = [lora_high, lora_low]
+            payload["loraweights"] = ["1", "1"]
+            payload["lorasectionconfinement"] = ["2", "3"]
 
         logger.info(
             "Submitting video generation via WebSocket",

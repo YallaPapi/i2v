@@ -5,6 +5,7 @@ Uses the permanent Cloudflare tunnel at swarm.wunderbun.com for reliable access.
 """
 import os
 import asyncio
+import random
 import tempfile
 from pathlib import Path
 import structlog
@@ -105,9 +106,18 @@ class VastAIOrchestrator:
         # Extract VastaiVideoConfig parameters with config defaults
         steps = vastai_config.get("steps", settings.swarmui_default_steps)
         frames = vastai_config.get("frames", settings.swarmui_default_frames)
-        fps = vastai_config.get("fps", settings.swarmui_default_fps)
         cfg_scale = vastai_config.get("cfg_scale", settings.swarmui_default_cfg)
         seed = vastai_config.get("seed", -1)
+
+        # FPS handling - supports fixed or randomized for batch variety
+        fps_randomize = vastai_config.get("fps_randomize", settings.swarmui_fps_randomize)
+        if fps_randomize:
+            fps_min = vastai_config.get("fps_min", settings.swarmui_fps_min)
+            fps_max = vastai_config.get("fps_max", settings.swarmui_fps_max)
+            fps = random.randint(fps_min, fps_max)
+            logger.debug("Randomized FPS", fps=fps, range=f"{fps_min}-{fps_max}")
+        else:
+            fps = vastai_config.get("fps", settings.swarmui_default_fps)
 
         # Model selection - use config defaults
         model = vastai_config.get("model") or settings.swarmui_model

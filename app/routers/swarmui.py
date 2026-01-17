@@ -48,7 +48,10 @@ class VideoGenerateRequest(BaseModel):
         le=257,
         description="Number of frames (80 default for Wan 2.2)",
     )
-    fps: int = Field(default=16, ge=8, le=60, description="Output frame rate")
+    fps: int = Field(default=16, ge=8, le=60, description="Output frame rate (ignored if fps_randomize=True)")
+    fps_randomize: bool = Field(default=False, description="Randomize FPS for batch variety")
+    fps_min: int = Field(default=14, ge=8, le=60, description="Min FPS when randomizing")
+    fps_max: int = Field(default=18, ge=8, le=60, description="Max FPS when randomizing")
     steps: int = Field(default=10, ge=1, le=50, description="Image gen steps")
     cfg_scale: float = Field(
         default=7.0,
@@ -144,11 +147,21 @@ async def generate_video(
     4. Caches the result to R2
     5. Returns the public video URL
     """
+    import random
+
     # Use config defaults if not specified
     model = request.model or settings.swarmui_model
     swap_model = request.swap_model or settings.swarmui_swap_model
-    lora_high = request.lora_high or settings.swarmui_lora_high
-    lora_low = request.lora_low or settings.swarmui_lora_low
+    # LoRAs are optional - only use if explicitly provided (not from config defaults)
+    lora_high = request.lora_high if request.lora_high else None
+    lora_low = request.lora_low if request.lora_low else None
+
+    # FPS handling - fixed or randomized for batch variety
+    if request.fps_randomize:
+        fps = random.randint(request.fps_min, request.fps_max)
+        logger.debug("Randomized FPS", fps=fps, range=f"{request.fps_min}-{request.fps_max}")
+    else:
+        fps = request.fps
 
     logger.info(
         "Starting SwarmUI video generation (WebSocket)",
@@ -173,7 +186,7 @@ async def generate_video(
             negative_prompt=request.negative_prompt,
             model=model,
             num_frames=request.num_frames,
-            fps=request.fps,
+            fps=fps,  # Uses randomized or fixed FPS
             steps=request.steps,
             cfg_scale=request.cfg_scale,
             seed=request.seed,

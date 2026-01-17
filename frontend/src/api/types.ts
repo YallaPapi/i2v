@@ -10,10 +10,10 @@ export type VideoProvider = 'fal' | 'vastai'
 
 // Vast.ai open source video models
 export type VastaiVideoModel =
-  | 'vastai-wan22-i2v'      // Wan 2.2 I2V 14B (Q4 GGUF) - main model
-  | 'vastai-wan22-t2v'      // Wan 2.2 T2V 14B (future)
-  | 'vastai-cogvideox'      // CogVideoX-5B (future)
-  | 'vastai-svd'            // Stable Video Diffusion (future)
+  | 'vastai-wan22-remix-i2v'  // Wan 2.2 Remix I2V 14B - main model
+  | 'vastai-wan22-t2v'        // Wan 2.2 T2V 14B (future)
+  | 'vastai-cogvideox'        // CogVideoX-5B (future)
+  | 'vastai-svd'              // Stable Video Diffusion (future)
 
 // fal.ai proprietary/cloud video models
 export type FalVideoModel =
@@ -62,8 +62,21 @@ export interface VastaiVideoConfig {
   steps?: number             // Inference steps, default 4 (with 4-step LoRA)
   cfg_scale?: number         // CFG scale 1.0-20.0, default 1.0
   frames?: number            // Number of frames (17-81 for Wan 2.2)
-  fps?: number               // Output FPS, default 16
+  fps?: number               // Output FPS, default 16 (ignored if fps_randomize=true)
+  fps_randomize?: boolean    // Randomize FPS for batch variety (makes videos look less uniform)
+  fps_min?: number           // Min FPS when randomizing, default 14
+  fps_max?: number           // Max FPS when randomizing, default 18
   seed?: number              // Random seed for reproducibility
+  // Advanced Wan 2.2 I2V params
+  video_steps?: number       // Video diffusion steps (5 with lightning LoRA)
+  video_cfg?: number         // Video CFG scale (1.0 for Wan)
+  swap_model?: string        // Model to swap to at swap_percent
+  swap_percent?: number      // When to swap (0.6 = 60%)
+  interpolation_method?: string  // Frame interpolation method (e.g., "RIFE")
+  interpolation_multiplier?: number  // Interpolation factor (2x frames)
+  // Post-processing options
+  caption?: string           // Caption text for overlay
+  apply_spoof?: boolean      // Apply spoofing transforms
 }
 
 export interface CreateVideoJobRequest {
@@ -289,12 +302,12 @@ export const FAL_VIDEO_MODELS: VideoModelInfo[] = [
 // Vast.ai Self-Hosted Models (open source, GPU rental cost only)
 export const VASTAI_VIDEO_MODELS: VideoModelInfo[] = [
   {
-    value: 'vastai-wan22-i2v',
-    label: 'Wan 2.2 I2V (Self-hosted)',
-    pricing: '~$0.17/hr GPU',
+    value: 'vastai-wan22-remix-i2v',
+    label: 'Wan 2.2 Remix I2V (Self-hosted)',
+    pricing: '~$1.70/hr GPU',
     provider: 'vastai',
     openSource: true,
-    description: 'Wan 2.2 14B Image-to-Video, 4-step LoRA accelerated'
+    description: 'Wan 2.2 Remix 14B Image-to-Video, 4-step LoRA accelerated'
   },
   {
     value: 'vastai-wan22-t2v',
@@ -328,16 +341,10 @@ export const VIDEO_MODELS: VideoModelInfo[] = [...FAL_VIDEO_MODELS, ...VASTAI_VI
 // Available LoRA sets for Vast.ai models (each set has high+low pair)
 export const VASTAI_LORAS = [
   {
-    value: 'kijai',
-    label: 'Kijai Lightning (Recommended)',
+    value: 'seko',
+    label: 'Seko Lightning (Recommended)',
     steps: 4,
-    description: 'Kijai 4-step Lightning LoRA - fastest, well-tested'
-  },
-  {
-    value: 'civitai',
-    label: 'Civitai Lightning',
-    steps: 4,
-    description: 'Civitai 4-step variant - alternative style'
+    description: 'Seko 4-step Lightning LoRA - fastest, high quality'
   },
   {
     value: 'none',
@@ -349,13 +356,9 @@ export const VASTAI_LORAS = [
 
 // LoRA set mappings (high-noise + low-noise pairs)
 export const LORA_SET_MAP: Record<string, { high: string; low: string }> = {
-  kijai: {
-    high: 'wan2.2-lightning_i2v-a14b-4steps-lora_high_fp16',
-    low: 'wan2.2-lightning_i2v-a14b-4steps-lora_low_fp16',
-  },
-  civitai: {
-    high: 'wan2.2-lightning_i2v_civitai_high',
-    low: 'wan2.2-lightning_i2v_civitai_low',
+  seko: {
+    high: 'Wan2-2-I2V-A14B-4steps-lora-rank64-Seko-V1_-_Seko_lora_high_noise',
+    low: 'Wan2-2-I2V-A14B-4steps-lora-rank64-Seko-V1_-_Seko_lora_low_noise',
   },
 }
 
@@ -366,6 +369,11 @@ export const VASTAI_FRAME_OPTIONS = [
   { value: 49, label: '49 frames (~3s @ 16fps)' },
   { value: 65, label: '65 frames (~4s @ 16fps)' },
   { value: 81, label: '81 frames (~5s @ 16fps)' },
+  { value: 97, label: '97 frames (~6s @ 16fps)' },
+  { value: 113, label: '113 frames (~7s @ 16fps)' },
+  { value: 129, label: '129 frames (~8s @ 16fps)' },
+  { value: 145, label: '145 frames (~9s @ 16fps)' },
+  { value: 161, label: '161 frames (~10s @ 16fps)' },
 ]
 
 export const IMAGE_MODELS: { value: ImageModel; label: string; pricing: string; nsfw?: boolean }[] = [

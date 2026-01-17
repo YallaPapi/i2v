@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { FileUpload } from '@/components/ui/file-upload'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { useCreateVideoJob, useVideoJobs } from '@/hooks/useJobs'
 import {
   FAL_VIDEO_MODELS,
@@ -22,7 +23,6 @@ import {
   LORA_SET_MAP,
   VASTAI_FRAME_OPTIONS,
   isVastaiModel,
-  getProviderForModel,
 } from '@/api/types'
 import type { VideoJob, VideoModel, VastaiVideoConfig } from '@/api/types'
 import { Video, CheckCircle, XCircle, Clock, ExternalLink, Link, Upload, Cpu, Cloud } from 'lucide-react'
@@ -39,6 +39,11 @@ const videoJobSchema = z.object({
   vastai_steps: z.number().optional(),
   vastai_cfg: z.number().optional(),
   vastai_frames: z.number().optional(),
+  // FPS randomization for batch variety
+  vastai_fps_randomize: z.boolean().optional(),
+  // Post-processing options
+  vastai_caption: z.string().optional(),
+  vastai_apply_spoof: z.boolean().optional(),
 })
 
 type VideoJobFormData = z.infer<typeof videoJobSchema>
@@ -58,7 +63,7 @@ function getStatusBadge(status: string) {
 }
 
 export function VideoGeneration() {
-  const [selectedModel, setSelectedModel] = useState<VideoModel>('kling')
+  const [selectedModel, setSelectedModel] = useState<VideoModel>('vastai-wan22-remix-i2v')
   const [inputMode, setInputMode] = useState<'url' | 'upload'>('url')
   const [uploadedUrl, setUploadedUrl] = useState<string>('')
   const createJob = useCreateVideoJob()
@@ -74,13 +79,16 @@ export function VideoGeneration() {
   } = useForm<VideoJobFormData>({
     resolver: zodResolver(videoJobSchema),
     defaultValues: {
-      resolution: '1080p',
+      resolution: '720p',   // 720p default for Vast.ai (9:16 portrait)
       duration_sec: '5',
-      model: 'kling',
-      vastai_lora: 'kijai',  // Default to Kijai Lightning LoRA set
-      vastai_steps: 4,
+      model: 'vastai-wan22-remix-i2v',  // Default to Vast.ai model
+      vastai_lora: 'seko',  // Seko 4-step Lightning LoRA
+      vastai_steps: 5,      // 5 video steps with Seko LoRA
       vastai_cfg: 1.0,
-      vastai_frames: 81,  // ~5 seconds at 16fps
+      vastai_frames: 81,    // ~5 seconds at 16fps
+      vastai_fps_randomize: false,  // Fixed FPS by default
+      vastai_caption: '',   // No caption by default
+      vastai_apply_spoof: false,  // Spoof disabled by default
     },
   })
 
@@ -105,7 +113,11 @@ export function VideoGeneration() {
         steps: data.vastai_steps,
         cfg_scale: data.vastai_cfg,
         frames: data.vastai_frames,
-        fps: 16,
+        fps: 16,  // Base FPS (ignored if fps_randomize is true)
+        fps_randomize: data.vastai_fps_randomize || false,  // Randomize 14-18 FPS for variety
+        // Post-processing options
+        caption: data.vastai_caption || undefined,
+        apply_spoof: data.vastai_apply_spoof || false,
       } : undefined
 
       await createJob.mutateAsync({
@@ -211,53 +223,30 @@ export function VideoGeneration() {
                 />
               </div>
 
-              {/* Model Selection - Grouped by Provider */}
-              <div className="space-y-3">
-                <Label>Video Model</Label>
-
-                {/* fal.ai Cloud Models */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Cloud className="h-4 w-4" />
-                    <span>Cloud (fal.ai)</span>
-                  </div>
-                  <Select
-                    id="model-fal"
-                    options={FAL_VIDEO_MODELS.map((m) => ({
+              {/* Model Selection - Single dropdown with Vast.ai at TOP */}
+              <div className="space-y-2">
+                <Label htmlFor="model">Video Model</Label>
+                <Select
+                  id="model"
+                  options={[
+                    // Vast.ai Self-hosted models FIRST (at top)
+                    ...VASTAI_VIDEO_MODELS.filter(m => !m.label.includes('Coming Soon')).map((m) => ({
                       value: m.value,
-                      label: `${m.label} (${m.pricing})`,
-                    }))}
-                    {...register('model', {
-                      onChange: (e) => setSelectedModel(e.target.value as VideoModel),
-                    })}
-                  />
-                </div>
-
-                {/* Vast.ai Self-hosted Models */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Cpu className="h-4 w-4" />
-                    <span>Self-hosted (Vast.ai GPU)</span>
-                  </div>
-                  <Select
-                    id="model-vastai"
-                    options={VASTAI_VIDEO_MODELS.filter(m => !m.label.includes('Coming Soon')).map((m) => ({
+                      label: `⚡ ${m.label} (${m.pricing})`,
+                    })),
+                    // fal.ai Cloud models below
+                    ...FAL_VIDEO_MODELS.map((m) => ({
                       value: m.value,
-                      label: `${m.label} (${m.pricing})`,
-                    }))}
-                    value={isVastai ? watchedModel : ''}
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        setValue('model', e.target.value)
-                        setSelectedModel(e.target.value as VideoModel)
-                      }
-                    }}
-                  />
-                </div>
-
+                      label: `☁️ ${m.label} (${m.pricing})`,
+                    })),
+                  ]}
+                  {...register('model', {
+                    onChange: (e) => setSelectedModel(e.target.value as VideoModel),
+                  })}
+                />
                 {modelInfo && (
                   <p className="text-xs text-muted-foreground">
-                    {modelInfo.description || modelInfo.pricing}
+                    {isVastai ? '⚡ Self-hosted on Vast.ai GPU' : '☁️ Cloud via fal.ai'} — {modelInfo.description || modelInfo.pricing}
                   </p>
                 )}
               </div>
@@ -320,6 +309,45 @@ export function VideoGeneration() {
                         {...register('vastai_cfg', { valueAsNumber: true })}
                       />
                       <p className="text-xs text-muted-foreground">1.0 recommended</p>
+                    </div>
+                  </div>
+
+                  {/* Post-processing Options */}
+                  <div className="space-y-4 pt-2 border-t">
+                    <p className="text-sm font-medium text-muted-foreground">Post-processing</p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="vastai_caption">Caption Overlay (Optional)</Label>
+                      <Input
+                        id="vastai_caption"
+                        placeholder="Text to overlay on video..."
+                        {...register('vastai_caption')}
+                      />
+                      <p className="text-xs text-muted-foreground">Adds text caption to the output video</p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="vastai_fps_randomize">Randomize FPS</Label>
+                        <p className="text-xs text-muted-foreground">Vary FPS (14-18) for batch variety</p>
+                      </div>
+                      <Switch
+                        id="vastai_fps_randomize"
+                        checked={watch('vastai_fps_randomize') || false}
+                        onCheckedChange={(checked) => setValue('vastai_fps_randomize', checked)}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="vastai_apply_spoof">Apply Spoof</Label>
+                        <p className="text-xs text-muted-foreground">Apply spoofing transforms to output</p>
+                      </div>
+                      <Switch
+                        id="vastai_apply_spoof"
+                        checked={watch('vastai_apply_spoof') || false}
+                        onCheckedChange={(checked) => setValue('vastai_apply_spoof', checked)}
+                      />
                     </div>
                   </div>
                 </div>
